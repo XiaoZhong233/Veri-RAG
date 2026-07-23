@@ -2,10 +2,12 @@ package com.example.verirag.service.impl;
 
 import com.example.verirag.common.JwtUtil;
 import com.example.verirag.common.PageResult;
+import com.example.verirag.common.ResultCode;
 import com.example.verirag.dto.LoginRequest;
 import com.example.verirag.dto.LoginResponse;
 import com.example.verirag.dto.UserSaveRequest;
 import com.example.verirag.entity.AppUser;
+import com.example.verirag.exception.BusinessException;
 import com.example.verirag.mapper.AppUserMapper;
 import com.example.verirag.service.AppUserService;
 import com.example.verirag.service.FileStorageService;
@@ -42,10 +44,10 @@ public class AppUserServiceImpl implements AppUserService {
         String username = required(req.getUsername(), "Username must not be blank");
         AppUser user = appUserMapper.findByUsername(username);
         if (user == null || !md5(req.getPassword()).equalsIgnoreCase(user.getPassword())) {
-            throw new IllegalArgumentException("Invalid username or password");
+            throw new BusinessException(ResultCode.UNAUTHORIZED.getCode(), "Invalid username or password");
         }
         if (!Integer.valueOf(1).equals(user.getStatus())) {
-            throw new IllegalStateException("This account has been disabled");
+            throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "This account has been disabled");
         }
 
         String token = jwtUtil.createToken(user.getId(), user.getUsername(), user.getRole());

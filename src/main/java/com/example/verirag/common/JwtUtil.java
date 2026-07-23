@@ -68,6 +68,11 @@ public class JwtUtil {
             if (pl == null) {
                 return null;
             }
+            Long expiration = pl.getLong("exp");
+            long nowSec = System.currentTimeMillis() / 1000;
+            if (expiration == null || expiration <= nowSec) {
+                return null;
+            }
             Long uid = pl.getLong("uid");
             String username = pl.getStr("username");
             if (username == null || username.isEmpty()) {

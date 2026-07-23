@@ -41,6 +41,7 @@ CREATE TABLE t_document (
   upload_user_id BIGINT       DEFAULT NULL COMMENT '上传用户ID',
   create_time    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   PRIMARY KEY (id),
+  CONSTRAINT fk_document_category FOREIGN KEY (category_id) REFERENCES t_category(id) ON DELETE RESTRICT,
   KEY idx_category (category_id),
   KEY idx_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识文档';

@@ -6,6 +6,7 @@ import com.example.verirag.common.ResultCode;
 import com.example.verirag.entity.Document;
 import com.example.verirag.exception.BusinessException;
 import com.example.verirag.mapper.DocumentMapper;
+import com.example.verirag.mapper.CategoryMapper;
 import com.example.verirag.service.DocumentService;
 import com.example.verirag.service.FileStorageService;
 import com.example.verirag.service.RagIngestService;
@@ -30,6 +31,7 @@ public class DocumentServiceImpl implements DocumentService {
     @Value("${file.upload.path}")
     private String uploadRoot;
     private final DocumentMapper documentMapper;
+    private final CategoryMapper categoryMapper;
     private final FileStorageService fileStorageService;
     private final RagIngestService ragIngestService;
 
@@ -37,6 +39,9 @@ public class DocumentServiceImpl implements DocumentService {
     public Document upload(MultipartFile file, Long categoryId, String title, Long uploadUserId) throws Exception {
         if (!FileTypeUtil.allowed(file)) {
             throw new BusinessException("Only TXT, PDF, DOC, DOCX, and Markdown files are supported");
+        }
+        if (categoryId == null || categoryMapper.selectById(categoryId) == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "Category not found");
         }
 
         String originalFileName = file.getOriginalFilename();

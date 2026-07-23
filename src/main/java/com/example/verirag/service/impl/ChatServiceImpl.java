@@ -11,6 +11,7 @@ import com.example.verirag.service.ChatService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
@@ -18,6 +19,7 @@ import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.filter.Filter;
 import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -34,6 +36,7 @@ import java.util.stream.Collectors;
 @Slf4j
 public class ChatServiceImpl implements ChatService {
     private static final int RAG_TOP_K = 3;
+    private static final double DEFAULT_SIMILARITY_THRESHOLD = 0.5;
     /**
 
      * 系统提示：要求仅依据上下文、Markdown 输出。
@@ -55,41 +58,66 @@ public class ChatServiceImpl implements ChatService {
 
     private final ObjectMapper objectMapper;
 
+    private final TransactionTemplate transactionTemplate;
+
+    @Value("${rag.retrieval.similarity-threshold:" + DEFAULT_SIMILARITY_THRESHOLD + "}")
+    private double similarityThreshold;
+
     @Override
     public ChatAskResult ask(Long userId, ChatAskRequest req) throws Exception {
-        Long sessionId = req.getSessionId();
-        if(sessionId==null){
-            ChatSession s = new ChatSession();
-            s.setUserId(userId);
-            String t = req.getQuestion().trim();
-            s.setTitle(t.length() > 30 ? t.substring(0, 30) + "…" : t);
-            chatSessionMapper.insert(s);
-            sessionId = s.getId();
-        }else {
-            ChatSession exist = chatSessionMapper.selectById(sessionId);
-            if (exist == null || !exist.getUserId().equals(userId)) {
-                throw new BusinessException("Session not exist or no permission");
-            }
+        Long requestedSessionId = req.getSessionId();
+        if (requestedSessionId != null) {
+            assertSessionOwner(userId, requestedSessionId);
         }
+
         //检索计时
         long retrievalStart = System.nanoTime();
         List<Document> cited = retrieveForCategories(req.getQuestion(), req.getCategoryIds());
         long retrievalMillis = (System.nanoTime() - retrievalStart) / 1_000_000;
         log.info("RAG retrieval completed: sessionId={}, chunks={}, duration={}ms",
-                sessionId, cited.size(), retrievalMillis);
+                requestedSessionId, cited.size(), retrievalMillis);
 
         long llmStart = System.nanoTime();
         String userTurn = buildRagUserMessage(req.getQuestion(), cited);
         String answer = chatClient.prompt().system(SYSTEM_PROMPT).user(userTurn).call().content();
         long llmMs = (System.nanoTime() - llmStart) / 1_000_000L;
-        log.info("LLM completed: sessionId={},, duration={}ms",
-                sessionId, llmMs);
+        log.info("LLM completed: sessionId={}, duration={}ms", requestedSessionId, llmMs);
         List<Map<String, Object>> refs = toRefs(cited);
         String refsJson = objectMapper.writeValueAsString(refs);
+
+        Long sessionId = transactionTemplate.execute(status ->
+                persistConversation(userId, requestedSessionId, req.getQuestion(), answer, refsJson));
+        if (sessionId == null) {
+            throw new IllegalStateException("Failed to persist chat conversation");
+        }
+
+        ChatAskResult res = new ChatAskResult();
+        res.setSessionId(sessionId);
+        res.setAnswer(answer);
+        res.setReferences(refs);
+        return res;
+    }
+
+    /** 持久化发生在一个短事务内，避免在 LLM 调用期间长时间占用数据库事务。 */
+    private Long persistConversation(Long userId, Long requestedSessionId, String question, String answer, String refsJson) {
+        Long sessionId = requestedSessionId;
+        if (sessionId == null) {
+            ChatSession session = new ChatSession();
+            session.setUserId(userId);
+            String title = question.trim();
+            session.setTitle(title.length() > 30 ? title.substring(0, 30) + "…" : title);
+            chatSessionMapper.insert(session);
+            sessionId = session.getId();
+        }
+        else {
+            // 在写消息前再次校验，避免会话在模型生成期间被其他请求删除。
+            assertSessionOwner(userId, sessionId);
+        }
+
         ChatMessage cm = new ChatMessage();
         cm.setSessionId(sessionId);
         cm.setRole("USER");
-        cm.setContent(req.getQuestion());
+        cm.setContent(question);
         cm.setRefs(null);
 
         ChatMessage am = new ChatMessage();
@@ -100,12 +128,15 @@ public class ChatServiceImpl implements ChatService {
 
         chatMessageMapper.insert(cm);
         chatMessageMapper.insert(am);
+        chatSessionMapper.touchUpdateTime(sessionId);
+        return sessionId;
+    }
 
-        ChatAskResult res = new ChatAskResult();
-        res.setSessionId(sessionId);
-        res.setAnswer(answer);
-        res.setReferences(refs);
-        return res;
+    private void assertSessionOwner(Long userId, Long sessionId) {
+        ChatSession session = chatSessionMapper.selectById(sessionId);
+        if (session == null || !session.getUserId().equals(userId)) {
+            throw new BusinessException("Session does not exist or you do not have permission to access it");
+        }
     }
 
     /**
@@ -142,7 +173,7 @@ public class ChatServiceImpl implements ChatService {
         SearchRequest.Builder builder = SearchRequest.builder()
                 .query(question)
                 .topK(RAG_TOP_K)
-                .similarityThreshold(0.0);
+                .similarityThreshold(similarityThreshold);
         if (filter != null) {
             builder.filterExpression(filter);
         }

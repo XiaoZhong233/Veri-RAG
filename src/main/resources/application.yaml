@@ -55,3 +55,7 @@ mybatis-plus:
 jwt:
   secret: VYdac/JBAW+noUscEgYffr/TlUgPwCHZkFkULziZ8kTZOb6sF6ylZYgXj4XisLr4
   expire-hours: 24
+
+rag:
+  retrieval:
+    similarity-threshold: ${RAG_SIMILARITY_THRESHOLD:0.5}

@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="api-base" content="/veri-rag">
+    <title>VeriRAG · Knowledge Console</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<main class="app-shell">
+    <section id="login-view" class="login-view" aria-labelledby="login-title">
+        <div class="brand-panel">
+            <p class="eyebrow">VERIRAG / KNOWLEDGE CONSOLE</p>
+            <h1>让答案有据可查。</h1>
+            <p>登录后管理知识库用户，控制谁可以访问内部文档与智能问答。</p>
+            <div class="brand-orb" aria-hidden="true"></div>
+        </div>
+        <form id="login-form" class="login-card">
+            <div>
+                <p class="eyebrow">WELCOME BACK</p>
+                <h2 id="login-title">登录系统</h2>
+                <p class="muted">使用您的后台账号继续。</p>
+            </div>
+            <label>
+                用户名
+                <input id="login-username" name="username" autocomplete="username" placeholder="例如：admin" required>
+            </label>
+            <label>
+                密码
+                <input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="请输入密码" required>
+            </label>
+            <p id="login-error" class="form-error" role="alert"></p>
+            <button id="login-submit" class="primary-button" type="submit">登录</button>
+            <p class="tip">初始化账号可在 <code>init.sql</code> 中查看。</p>
+        </form>
+    </section>
+
+    <section id="console-view" class="console-view hidden" aria-label="用户管理控制台">
+        <aside class="sidebar">
+            <a class="logo" href="#"><span>V</span> VeriRAG</a>
+            <nav>
+                <a class="nav-item active" href="#users">用户管理</a>
+                <a class="nav-item disabled" href="#">知识库 <small>Coming soon</small></a>
+                <a class="nav-item disabled" href="#">问答会话 <small>Coming soon</small></a>
+            </nav>
+            <button id="logout-button" class="logout-button" type="button">退出登录</button>
+        </aside>
+        <div class="content">
+            <header class="topbar">
+                <div>
+                    <p class="eyebrow">ADMINISTRATION</p>
+                    <h1>用户管理</h1>
+                </div>
+                <button id="avatar-upload-button" class="current-user" type="button" title="点击上传头像">
+                    <span id="current-avatar" class="avatar avatar-large" aria-hidden="true"></span>
+                    <span id="current-user-name"></span>
+                </button>
+                <input id="avatar-input" type="file" accept="image/jpeg,image/png,image/gif" hidden>
+            </header>
+
+            <section id="permission-notice" class="notice hidden">
+                当前账号不是管理员。你可以成功登录，但没有用户管理权限。
+            </section>
+
+            <section id="user-management" class="panel">
+                <div class="toolbar">
+                    <label class="search-box">
+                        <span>⌕</span>
+                        <input id="keyword" type="search" placeholder="按用户名或姓名搜索">
+                    </label>
+                    <button id="search-button" class="secondary-button" type="button">搜索</button>
+                    <button id="create-button" class="primary-button" type="button">+ 新增用户</button>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                        <tr>
+                            <th>用户</th><th>姓名</th><th>角色</th><th>状态</th><th>创建时间</th><th>操作</th>
+                        </tr>
+                        </thead>
+                        <tbody id="user-table-body"></tbody>
+                    </table>
+                    <p id="empty-state" class="empty-state hidden">没有找到用户。</p>
+                </div>
+                <footer class="pagination">
+                    <span id="pagination-info">共 0 位用户</span>
+                    <div>
+                        <button id="prev-page" class="page-button" type="button">上一页</button>
+                        <span id="page-number">1</span>
+                        <button id="next-page" class="page-button" type="button">下一页</button>
+                    </div>
+                </footer>
+            </section>
+        </div>
+    </section>
+</main>
+
+<dialog id="user-dialog" class="user-dialog">
+    <form id="user-form" method="dialog">
+        <div class="dialog-heading"><div><p class="eyebrow">USER</p><h2 id="dialog-title">新增用户</h2></div>
+            <button id="close-dialog" class="icon-button" type="button" aria-label="关闭">×</button></div>
+        <input id="user-id" type="hidden">
+        <div class="form-grid">
+            <label>用户名<input id="user-username" required maxlength="64"></label>
+            <label>姓名<input id="user-real-name" maxlength="64"></label>
+            <label>角色<select id="user-role"><option value="USER">USER</option><option value="ADMIN">ADMIN</option></select></label>
+            <label>状态<select id="user-status"><option value="1">正常</option><option value="0">禁用</option></select></label>
+            <label class="full-width">密码 <span class="optional">（编辑时留空则不修改）</span>
+                <input id="user-password" type="password" minlength="6" autocomplete="new-password"></label>
+        </div>
+        <p id="dialog-error" class="form-error" role="alert"></p>
+        <div class="dialog-actions"><button id="cancel-dialog" class="secondary-button" type="button">取消</button>
+            <button class="primary-button" type="submit">保存用户</button></div>
+    </form>
+</dialog>
+
+<div id="toast" class="toast" role="status"></div>
+<script src="app.js"></script>
+</body>
+</html>

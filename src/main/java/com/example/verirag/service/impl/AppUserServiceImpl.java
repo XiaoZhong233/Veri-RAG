@@ -9,8 +9,9 @@ import com.example.verirag.entity.AppUser;
 import com.example.verirag.mapper.AppUserMapper;
 import com.example.verirag.service.AppUserService;
 import com.example.verirag.service.FileStorageService;
-import com.github.pagehelper.PageHelper;
-import com.github.pagehelper.PageInfo;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.DigestUtils;
@@ -20,7 +21,6 @@ import org.springframework.web.multipart.MultipartFile;
 import javax.imageio.ImageIO;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
@@ -55,7 +55,7 @@ public class AppUserServiceImpl implements AppUserService {
 
     @Override
     public AppUser getById(Long id) {
-        return id == null ? null : appUserMapper.findById(id);
+        return id == null ? null : appUserMapper.selectById(id);
     }
 
     @Override
@@ -63,10 +63,16 @@ public class AppUserServiceImpl implements AppUserService {
         int safePage = Math.max(page, 1);
         int safeSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
         String query = keyword == null ? "" : keyword.trim();
-        PageHelper.startPage(safePage, safeSize);
-        List<AppUser> records = appUserMapper.findPage(query);
-        PageInfo<AppUser> pageInfo = new PageInfo<>(records);
-        return PageResult.of(pageInfo.getTotal(), pageInfo.getList());
+        LambdaQueryWrapper<AppUser> wrapper = new LambdaQueryWrapper<AppUser>()
+                .orderByDesc(AppUser::getId);
+        if (StringUtils.hasText(query)) {
+            wrapper.and(condition -> condition
+                    .like(AppUser::getUsername, query)
+                    .or()
+                    .like(AppUser::getRealName, query));
+        }
+        Page<AppUser> result = appUserMapper.selectPage(new Page<>(safePage, safeSize), wrapper);
+        return PageResult.of(result.getTotal(), result.getRecords());
     }
 
     @Override
@@ -99,9 +105,9 @@ public class AppUserServiceImpl implements AppUserService {
         }
 
         requireExisting(req.getId());
-        appUserMapper.update(user);
+        appUserMapper.updateById(user);
         if (StringUtils.hasText(req.getPassword())) {
-            appUserMapper.updatePassword(req.getId(), md5(req.getPassword()));
+            updatePassword(req.getId(), md5(req.getPassword()));
         }
     }
 
@@ -114,7 +120,9 @@ public class AppUserServiceImpl implements AppUserService {
     @Override
     public void updateProfile(Long userId, String realName) {
         requireExisting(userId);
-        appUserMapper.updateProfile(userId, trimToNull(realName));
+        appUserMapper.update(null, new LambdaUpdateWrapper<AppUser>()
+                .eq(AppUser::getId, userId)
+                .set(AppUser::getRealName, trimToNull(realName)));
     }
 
     @Override
@@ -141,7 +149,9 @@ public class AppUserServiceImpl implements AppUserService {
 
         try {
             FileStorageService.StoredFile storedFile = fileStorageService.save(file);
-            appUserMapper.updateAvatar(userId, storedFile.relativePath());
+            appUserMapper.update(null, new LambdaUpdateWrapper<AppUser>()
+                    .eq(AppUser::getId, userId)
+                    .set(AppUser::getAvatar, storedFile.relativePath()));
             return storedFile.relativePath();
         } catch (IOException e) {
             throw new IllegalStateException("Failed to store avatar file", e);
@@ -154,18 +164,24 @@ public class AppUserServiceImpl implements AppUserService {
         if (!md5(oldPassword).equalsIgnoreCase(user.getPassword())) {
             throw new IllegalArgumentException("Current password is incorrect");
         }
-        appUserMapper.updatePassword(userId, md5(required(newPassword, "New password must not be blank")));
+        updatePassword(userId, md5(required(newPassword, "New password must not be blank")));
     }
 
     private AppUser requireExisting(Long id) {
         if (id == null) {
             throw new IllegalArgumentException("User id must not be null");
         }
-        AppUser user = appUserMapper.findById(id);
+        AppUser user = appUserMapper.selectById(id);
         if (user == null) {
             throw new IllegalArgumentException("User not found");
         }
         return user;
+    }
+
+    private void updatePassword(Long userId, String password) {
+        appUserMapper.update(null, new LambdaUpdateWrapper<AppUser>()
+                .eq(AppUser::getId, userId)
+                .set(AppUser::getPassword, password));
     }
 
     private String md5(String value) {

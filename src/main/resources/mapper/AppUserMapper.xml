@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.verirag.mapper.AppUserMapper">
+
+    <sql id="UserColumns">
+        id, username, password, real_name, avatar, role, status, create_time
+    </sql>
+
+    <sql id="KeywordCondition">
+        <if test="keyword != null and keyword != ''">
+            AND (
+                username LIKE CONCAT('%', #{keyword}, '%')
+                OR real_name LIKE CONCAT('%', #{keyword}, '%')
+            )
+        </if>
+    </sql>
+
+    <select id="findById" resultType="com.example.verirag.entity.AppUser">
+        SELECT <include refid="UserColumns" />
+        FROM t_user
+        WHERE id = #{id}
+    </select>
+
+    <select id="findByUsername" resultType="com.example.verirag.entity.AppUser">
+        SELECT <include refid="UserColumns" />
+        FROM t_user
+        WHERE username = #{username}
+    </select>
+
+    <select id="findPage" resultType="com.example.verirag.entity.AppUser">
+        SELECT <include refid="UserColumns" />
+        FROM t_user
+        <where>
+            1 = 1
+            <include refid="KeywordCondition" />
+        </where>
+        ORDER BY id DESC
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO t_user (username, password, real_name, role, status)
+        VALUES (#{username}, #{password}, #{realName}, #{role}, #{status})
+    </insert>
+
+    <update id="update">
+        UPDATE t_user
+        SET username = #{username},
+            real_name = #{realName},
+            role = #{role},
+            status = #{status}
+        WHERE id = #{id}
+    </update>
+
+    <update id="updatePassword">
+        UPDATE t_user SET password = #{password} WHERE id = #{id}
+    </update>
+
+    <update id="updateProfile">
+        UPDATE t_user SET real_name = #{realName} WHERE id = #{id}
+    </update>
+
+    <update id="updateAvatar">
+        UPDATE t_user SET avatar = #{avatar} WHERE id = #{id}
+    </update>
+
+    <delete id="deleteById">
+        DELETE FROM t_user WHERE id = #{id}
+    </delete>
+</mapper>

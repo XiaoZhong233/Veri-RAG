@@ -19,6 +19,11 @@ spring:
     redis:
       url: redis://localhost:6380
       client-type: jedis
+  datasource:
+    url: jdbc:mysql://localhost:3306/db_java1234_rag?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+    username: root
+    password: 123456
+    driver-class-name: com.mysql.cj.jdbc.Driver
 
 
 server:
@@ -36,4 +41,19 @@ logging:
   level:
     root: ${ROOT_LOG_LEVEL:INFO}
     com.example.verirag: ${APP_LOG_LEVEL:DEBUG}
-    org.springframework.ai: debug
+    org.springframework.ai: DEBUG
+    org.mybatis: DEBUG
+mybatis:
+  mapper-locations:
+    - classpath:mapper/**/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+
+pagehelper:
+  helper-dialect: mysql
+  reasonable: true
+  support-methods-arguments: true
+
+jwt:
+  secret: VYdac/JBAW+noUscEgYffr/TlUgPwCHZkFkULziZ8kTZOb6sF6ylZYgXj4XisLr4
+  expire-hours: 24

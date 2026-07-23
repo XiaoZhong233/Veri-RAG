@@ -17,7 +17,7 @@ CREATE TABLE t_user (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户表';
 
 -- 知识库分类表
-CREATE TABLE t_kb_category (
+CREATE TABLE t_category (
   id          BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
   name        VARCHAR(128) NOT NULL COMMENT '分类名称',
   description VARCHAR(512) DEFAULT NULL COMMENT '描述',
@@ -28,12 +28,12 @@ CREATE TABLE t_kb_category (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识库分类';
 
 -- 知识文档元数据表
-CREATE TABLE t_kb_document (
+CREATE TABLE t_document (
   id             BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
   category_id    BIGINT       NOT NULL COMMENT '分类ID',
   title          VARCHAR(255) NOT NULL COMMENT '显示标题',
   file_name      VARCHAR(255) NOT NULL COMMENT '原始文件名',
-  file_path      VARCHAR(512) NOT NULL COMMENT '磁盘相对路径（相对 uploads 根）',
+  file_path      VARCHAR(512) NOT NULL COMMENT '磁盘相对路径',
   file_type      VARCHAR(16)  NOT NULL COMMENT '扩展名小写',
   file_size      BIGINT       NOT NULL DEFAULT 0 COMMENT '字节大小',
   status         VARCHAR(16)  NOT NULL DEFAULT 'PROCESSING' COMMENT 'PROCESSING/SUCCESS/FAIL',

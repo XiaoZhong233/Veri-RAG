@@ -3,7 +3,7 @@ package com.example.verirag.controller;
 import com.example.verirag.common.R;
 import com.example.verirag.dto.LoginRequest;
 import com.example.verirag.dto.LoginResponse;
-import com.example.verirag.service.impl.AppUserService;
+import com.example.verirag.service.AppUserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.PostMapping;

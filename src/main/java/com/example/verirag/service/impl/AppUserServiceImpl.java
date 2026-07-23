@@ -7,10 +7,11 @@ import com.example.verirag.dto.LoginResponse;
 import com.example.verirag.dto.UserSaveRequest;
 import com.example.verirag.entity.AppUser;
 import com.example.verirag.mapper.AppUserMapper;
+import com.example.verirag.service.AppUserService;
+import com.example.verirag.service.FileStorageService;
 import com.github.pagehelper.PageHelper;
 import com.github.pagehelper.PageInfo;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.DigestUtils;
 import org.springframework.util.StringUtils;
@@ -19,14 +20,9 @@ import org.springframework.web.multipart.MultipartFile;
 import javax.imageio.ImageIO;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.time.YearMonth;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
-import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -39,9 +35,7 @@ public class AppUserServiceImpl implements AppUserService {
 
     private final AppUserMapper appUserMapper;
     private final JwtUtil jwtUtil;
-
-    @Value("${file.upload.path:./file}")
-    private String uploadRoot;
+    private final FileStorageService fileStorageService;
 
     @Override
     public LoginResponse login(LoginRequest req) {
@@ -145,20 +139,13 @@ public class AppUserServiceImpl implements AppUserService {
             throw new IllegalStateException("Failed to validate avatar file", e);
         }
 
-        String relativePath = "avatars/" + YearMonth.now() + "/" + UUID.randomUUID() + "." + extension;
-        Path target = Paths.get(uploadRoot).resolve(relativePath).normalize();
-        Path root = Paths.get(uploadRoot).toAbsolutePath().normalize();
-        if (!target.toAbsolutePath().normalize().startsWith(root)) {
-            throw new IllegalArgumentException("Invalid avatar path");
-        }
         try {
-            Files.createDirectories(target.getParent());
-            file.transferTo(target);
+            FileStorageService.StoredFile storedFile = fileStorageService.save(file);
+            appUserMapper.updateAvatar(userId, storedFile.relativePath());
+            return storedFile.relativePath();
         } catch (IOException e) {
             throw new IllegalStateException("Failed to store avatar file", e);
         }
-        appUserMapper.updateAvatar(userId, relativePath);
-        return relativePath;
     }
 
     @Override

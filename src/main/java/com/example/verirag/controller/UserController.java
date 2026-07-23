@@ -6,7 +6,7 @@ import com.example.verirag.dto.ProfileUpdateRequest;
 import com.example.verirag.dto.UserSaveRequest;
 import com.example.verirag.entity.AppUser;
 import com.example.verirag.exception.BusinessException;
-import com.example.verirag.service.impl.AppUserService;
+import com.example.verirag.service.AppUserService;
 import com.example.verirag.util.SecurityUtils;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;

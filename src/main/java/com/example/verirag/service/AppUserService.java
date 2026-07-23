@@ -1,4 +1,4 @@
-package com.example.verirag.service.impl;
+package com.example.verirag.service;
 
 import com.example.verirag.common.PageResult;
 import com.example.verirag.dto.LoginRequest;

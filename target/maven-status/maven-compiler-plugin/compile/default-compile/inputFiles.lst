@@ -24,7 +24,9 @@
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/mapper/AppUserMapper.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/security/JwtAuthFilter.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/security/LoginUserDetails.java
-/Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/service/impl/AppUserService.java
+/Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/service/AppUserService.java
+/Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/service/FileStorageService.java
+/Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/service/FileStorageServiceImpl.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/service/impl/AppUserServiceImpl.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/util/DocumentParseUtil.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/util/SecurityUtils.java

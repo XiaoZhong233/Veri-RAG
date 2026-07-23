@@ -6,7 +6,7 @@ spring:
       api-key: ${DASHSCOPE_API_KEY}
       base-url: https://llm-1yauwtsqkmv66e2w.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
       chat:
-        model: qwen3.7-plus
+        model: qwen3.6-flash
       embedding:
         model: qwen3.7-text-embedding
         dimensions: 1024
@@ -41,8 +41,9 @@ logging:
   level:
     root: ${ROOT_LOG_LEVEL:INFO}
     com.example.verirag: ${APP_LOG_LEVEL:DEBUG}
+    com.example.verirag.mapper: WARN
     org.springframework.ai: DEBUG
-    org.mybatis: DEBUG
+    org.mybatis: WARN
 mybatis-plus:
   mapper-locations:
     - classpath:mapper/**/*.xml
@@ -57,5 +58,13 @@ jwt:
   expire-hours: 24
 
 rag:
+  ingest:
+    chunk-size: ${RAG_CHUNK_SIZE:800}
+    max-num-chunks: ${RAG_MAX_NUM_CHUNKS:10000}
   retrieval:
     similarity-threshold: ${RAG_SIMILARITY_THRESHOLD:0.5}
+  answer-cache:
+    enabled: ${RAG_ANSWER_CACHE_ENABLED:true}
+    similarity-threshold: ${RAG_ANSWER_CACHE_SIMILARITY_THRESHOLD:0.93}
+    ttl-minutes: ${RAG_ANSWER_CACHE_TTL_MINUTES:15}
+    max-entries: ${RAG_ANSWER_CACHE_MAX_ENTRIES:200}

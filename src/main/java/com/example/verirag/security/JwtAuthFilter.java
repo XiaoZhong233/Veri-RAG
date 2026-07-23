@@ -24,6 +24,15 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
     private final JwtUtil jwtUtil;
 
+    /**
+     * SSE/Flux 在 Spring MVC 中会触发异步 redispatch。
+     * 默认 OncePerRequestFilter 会跳过该阶段，导致 SecurityContext 丢失并被当成匿名用户。
+     */
+    @Override
+    protected boolean shouldNotFilterAsyncDispatch() {
+        return false;
+    }
+
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {

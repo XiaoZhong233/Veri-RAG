@@ -46,6 +46,15 @@ public class DocumentController {
     }
 
     /**
+     * 基于磁盘中已保存的原文件重建当前文档的向量。
+     */
+    @PreAuthorize("hasRole('ADMIN')")
+    @PostMapping("/{id}/reingest")
+    public R<Document> reingest(@PathVariable Long id) throws Exception {
+        return R.ok(documentService.reingest(id));
+    }
+
+    /**
      * 删除文档及向量（管理员）。
      */
     @PreAuthorize("hasRole('ADMIN')")

@@ -10,5 +10,8 @@ public interface DocumentService {
 
     PageResult<Document> page(String keyword, Long categoryId, int page, int size);
 
+    /** 删除旧向量并基于已保存的原文件重新分块、向量化。 */
+    Document reingest(Long id) throws Exception;
+
     void delete(Long id) throws Exception;
 }

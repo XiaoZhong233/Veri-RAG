@@ -1,13 +1,16 @@
 package com.example.verirag.service.impl;
 
+import com.example.verirag.advisor.RetrievalTimingAdvisor;
 import com.example.verirag.dto.ChatAskRequest;
 import com.example.verirag.dto.ChatAskResult;
+import com.example.verirag.dto.ChatStreamEvent;
 import com.example.verirag.entity.ChatMessage;
 import com.example.verirag.entity.ChatSession;
 import com.example.verirag.exception.BusinessException;
 import com.example.verirag.mapper.ChatMessageMapper;
 import com.example.verirag.mapper.ChatSessionMapper;
 import com.example.verirag.service.ChatService;
+import com.example.verirag.service.RagAnswerCache;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,9 +23,12 @@ import org.springframework.ai.vectorstore.filter.Filter;
 import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -35,17 +41,19 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 @Slf4j
 public class ChatServiceImpl implements ChatService {
-    private static final int RAG_TOP_K = 3;
+    private static final int RAG_TOP_K = 2;
     private static final double DEFAULT_SIMILARITY_THRESHOLD = 0.5;
     /**
 
-     * 系统提示：要求仅依据上下文、Markdown 输出。
+     * 系统提示：要求仅依据上下文作答；引用由接口单独返回。
 
      */
     public static final String SYSTEM_PROMPT = """
             你是「RAG 企业知识库」的智能助手。请严格根据检索到的上下文回答问题。
             若上下文不足以回答，请明确说明「知识库中未找到相关信息」，不要编造。
-            回答请使用清晰的 Markdown（可适当使用标题、列表）。结尾可简要列出依据的文档标题。
+            回答正文请使用清晰的 Markdown（可适当使用标题、列表）。
+            不要在正文中附加、复述或罗列知识片段、文档标题、引用编号或“参考资料”；
+            引用信息会由服务端通过 references 字段单独返回并由前端展示。
             """;
 
     private final ChatClient chatClient;
@@ -60,6 +68,10 @@ public class ChatServiceImpl implements ChatService {
 
     private final TransactionTemplate transactionTemplate;
 
+    private final RagAnswerCache ragAnswerCache;
+
+    private final RetrievalTimingAdvisor retrievalTimingAdvisor;
+
     @Value("${rag.retrieval.similarity-threshold:" + DEFAULT_SIMILARITY_THRESHOLD + "}")
     private double similarityThreshold;
 
@@ -70,12 +82,25 @@ public class ChatServiceImpl implements ChatService {
             assertSessionOwner(userId, requestedSessionId);
         }
 
+        var cached = ragAnswerCache.find(req.getQuestion(), req.getCategoryIds());
+        if (cached.isPresent()) {
+            RagAnswerCache.Hit hit = cached.get();
+            String refsJson = objectMapper.writeValueAsString(hit.references());
+            Long sessionId = transactionTemplate.execute(status ->
+                    persistConversation(userId, requestedSessionId, req.getQuestion(), hit.answer(), refsJson));
+            if (sessionId == null) {
+                throw new IllegalStateException("Failed to persist cached chat conversation");
+            }
+            ChatAskResult result = new ChatAskResult();
+            result.setSessionId(sessionId);
+            result.setAnswer(hit.answer());
+            result.setReferences(hit.references());
+            return result;
+        }
+
         //检索计时
-        long retrievalStart = System.nanoTime();
-        List<Document> cited = retrieveForCategories(req.getQuestion(), req.getCategoryIds());
-        long retrievalMillis = (System.nanoTime() - retrievalStart) / 1_000_000;
-        log.info("RAG retrieval completed: sessionId={}, chunks={}, duration={}ms",
-                requestedSessionId, cited.size(), retrievalMillis);
+        List<Document> cited = retrievalTimingAdvisor.advise(requestedSessionId,
+                () -> retrieveForCategories(req.getQuestion(), req.getCategoryIds()));
 
         long llmStart = System.nanoTime();
         String userTurn = buildRagUserMessage(req.getQuestion(), cited);
@@ -84,6 +109,7 @@ public class ChatServiceImpl implements ChatService {
         log.info("LLM completed: sessionId={}, duration={}ms", requestedSessionId, llmMs);
         List<Map<String, Object>> refs = toRefs(cited);
         String refsJson = objectMapper.writeValueAsString(refs);
+        ragAnswerCache.put(req.getQuestion(), req.getCategoryIds(), answer, refs);
 
         Long sessionId = transactionTemplate.execute(status ->
                 persistConversation(userId, requestedSessionId, req.getQuestion(), answer, refsJson));
@@ -96,6 +122,73 @@ public class ChatServiceImpl implements ChatService {
         res.setAnswer(answer);
         res.setReferences(refs);
         return res;
+    }
+
+    @Override
+    public Flux<ChatStreamEvent> streamAsk(Long userId, ChatAskRequest req) {
+        Long requestedSessionId = req.getSessionId();
+        if (requestedSessionId != null) {
+            assertSessionOwner(userId, requestedSessionId);
+        }
+
+        var cached = ragAnswerCache.find(req.getQuestion(), req.getCategoryIds());
+        if (cached.isPresent()) {
+            RagAnswerCache.Hit hit = cached.get();
+            Long sessionId = transactionTemplate.execute(status ->
+                    persistUserMessage(userId, requestedSessionId, req.getQuestion()));
+            if (sessionId == null) {
+                return Flux.error(new IllegalStateException("Failed to create chat session"));
+            }
+            final String refsJson;
+            try {
+                refsJson = objectMapper.writeValueAsString(hit.references());
+            }
+            catch (Exception ex) {
+                return Flux.error(ex);
+            }
+            Long finalSessionId = sessionId;
+            return Flux.just(ChatStreamEvent.meta(sessionId), ChatStreamEvent.chunk(hit.answer()))
+                    .concatWith(Mono.fromCallable(() -> {
+                        transactionTemplate.executeWithoutResult(status ->
+                                persistAssistantMessage(finalSessionId, hit.answer(), refsJson));
+                        return ChatStreamEvent.done(finalSessionId, hit.references());
+                    }));
+        }
+
+        List<Document> cited = retrievalTimingAdvisor.advise(requestedSessionId,
+                () -> retrieveForCategories(req.getQuestion(), req.getCategoryIds()));
+
+        List<Map<String, Object>> references = toRefs(cited);
+        final String referencesJson;
+        try {
+            referencesJson = objectMapper.writeValueAsString(references);
+        }
+        catch (Exception ex) {
+            return Flux.error(ex);
+        }
+
+        Long sessionId = transactionTemplate.execute(status ->
+                persistUserMessage(userId, requestedSessionId, req.getQuestion()));
+        if (sessionId == null) {
+            return Flux.error(new IllegalStateException("Failed to create chat session"));
+        }
+
+        String userTurn = buildRagUserMessage(req.getQuestion(), cited);
+        StringBuilder fullAnswer = new StringBuilder();
+        long llmStart = System.nanoTime();
+        return chatClient.prompt().system(SYSTEM_PROMPT).user(userTurn).stream().content()
+                .doOnNext(fullAnswer::append)
+                .map(ChatStreamEvent::chunk)
+                .startWith(ChatStreamEvent.meta(sessionId))
+                .concatWith(Mono.fromCallable(() -> {
+                    Long finalSessionId = sessionId;
+                    transactionTemplate.executeWithoutResult(status ->
+                            persistAssistantMessage(finalSessionId, fullAnswer.toString(), referencesJson));
+                    ragAnswerCache.put(req.getQuestion(), req.getCategoryIds(), fullAnswer.toString(), references);
+                    long llmMillis = (System.nanoTime() - llmStart) / 1_000_000;
+                    log.info("LLM streaming completed: sessionId={}, duration={}ms", finalSessionId, llmMillis);
+                    return ChatStreamEvent.done(finalSessionId, references);
+                }));
     }
 
     /** 持久化发生在一个短事务内，避免在 LLM 调用期间长时间占用数据库事务。 */
@@ -130,6 +223,40 @@ public class ChatServiceImpl implements ChatService {
         chatMessageMapper.insert(am);
         chatSessionMapper.touchUpdateTime(sessionId);
         return sessionId;
+    }
+
+    /** 在流开始前以短事务创建/校验会话，并持久化用户消息。 */
+    private Long persistUserMessage(Long userId, Long requestedSessionId, String question) {
+        Long sessionId = requestedSessionId;
+        if (sessionId == null) {
+            ChatSession session = new ChatSession();
+            session.setUserId(userId);
+            String title = question.trim();
+            session.setTitle(title.length() > 30 ? title.substring(0, 30) + "…" : title);
+            chatSessionMapper.insert(session);
+            sessionId = session.getId();
+        }
+        else {
+            assertSessionOwner(userId, sessionId);
+        }
+        ChatMessage message = new ChatMessage();
+        message.setSessionId(sessionId);
+        message.setRole("USER");
+        message.setContent(question);
+        chatMessageMapper.insert(message);
+        chatSessionMapper.touchUpdateTime(sessionId);
+        return sessionId;
+    }
+
+    /** 流正常完成后，以独立短事务持久化完整回答与引用。 */
+    private void persistAssistantMessage(Long sessionId, String answer, String refsJson) {
+        ChatMessage message = new ChatMessage();
+        message.setSessionId(sessionId);
+        message.setRole("ASSISTANT");
+        message.setContent(answer);
+        message.setRefs(refsJson);
+        chatMessageMapper.insert(message);
+        chatSessionMapper.touchUpdateTime(sessionId);
     }
 
     private void assertSessionOwner(Long userId, Long sessionId) {
@@ -178,7 +305,15 @@ public class ChatServiceImpl implements ChatService {
             builder.filterExpression(filter);
         }
         List<Document> documents = vectorStore.similaritySearch(builder.build());
-        return documents == null ? Collections.emptyList() : documents;
+        if (documents == null || documents.isEmpty()) {
+            return Collections.emptyList();
+        }
+        // Redis KNN 通常已经按距离排序；这里显式按 Spring AI 归一化后的 score
+        // 降序再排一次，确保上下文和对外 references 均按相关性从高到低展示。
+        return documents.stream()
+                .sorted(Comparator.comparing(Document::getScore,
+                        Comparator.nullsLast(Comparator.reverseOrder())))
+                .toList();
     }
 
     private static Filter.Expression buildCategoryIdFilter(Set<String> categoryIds) {

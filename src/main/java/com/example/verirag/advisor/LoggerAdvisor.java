@@ -12,6 +12,7 @@ import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
 
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Component
 public class LoggerAdvisor implements CallAdvisor, StreamAdvisor {
@@ -37,8 +38,14 @@ public class LoggerAdvisor implements CallAdvisor, StreamAdvisor {
     public Flux<ChatClientResponse> adviseStream(ChatClientRequest request, StreamAdvisorChain chain) {
         return Flux.defer(() -> {
             long start = System.nanoTime();
+            AtomicBoolean firstChunk = new AtomicBoolean(true);
             log.debug("AI stream started");
             return chain.nextStream(request)
+                    .doOnNext(response -> {
+                        if (firstChunk.compareAndSet(true, false)) {
+                            log.info("AI stream first chunk in {} ms", elapsedMillis(start));
+                        }
+                    })
                     .doOnComplete(() -> log.info("AI stream completed in {} ms", elapsedMillis(start)))
                     .doOnError(exception -> log.error(
                             "AI stream failed after {} ms", elapsedMillis(start), exception));

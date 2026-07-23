@@ -3,6 +3,7 @@ package com.example.verirag.controller;
 import com.example.verirag.common.R;
 import com.example.verirag.dto.ChatAskRequest;
 import com.example.verirag.dto.ChatAskResult;
+import com.example.verirag.dto.ChatStreamEvent;
 import com.example.verirag.entity.ChatMessage;
 import com.example.verirag.entity.ChatSession;
 import com.example.verirag.service.ChatService;
@@ -10,6 +11,9 @@ import com.example.verirag.util.SecurityUtils;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.http.MediaType;
+import org.springframework.http.codec.ServerSentEvent;
+import reactor.core.publisher.Flux;
 
 import java.util.List;
 
@@ -30,6 +34,16 @@ public class ChatController {
     public R<ChatAskResult> ask(@Valid @RequestBody ChatAskRequest req) throws Exception {
         var u = SecurityUtils.requireUser();
         return R.ok(chatService.ask(u.getUserId(), req));
+    }
+
+    /**
+     * 流式问答：依次发送 meta、chunk、done 三类 SSE 事件。
+     */
+    @PostMapping(value = "/ask/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ServerSentEvent<ChatStreamEvent>> streamAsk(@Valid @RequestBody ChatAskRequest req) {
+        var u = SecurityUtils.requireUser();
+        return chatService.streamAsk(u.getUserId(), req)
+                .map(event -> ServerSentEvent.builder(event).event(event.getType()).build());
     }
 
     /**

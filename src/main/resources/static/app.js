@@ -1,17 +1,18 @@
 const API_BASE = document.querySelector('meta[name="api-base"]').content.replace(/\/$/, '');
-const state = { token: localStorage.getItem('veri-rag-token'), user: null, page: 1, size: 10, total: 0 };
-
+const state = {
+    token: localStorage.getItem('veri-rag-token'), user: null, view: 'chat',
+    userPage: 1, userSize: 10, userTotal: 0,
+    documentPage: 1, documentSize: 10, documentTotal: 0,
+    categories: [], activeSessionId: null
+};
 const $ = (selector) => document.querySelector(selector);
-const loginView = $('#login-view');
-const consoleView = $('#console-view');
-const dialog = $('#user-dialog');
 
 async function request(path, options = {}) {
     const isFormData = options.body instanceof FormData;
-    const headers = { ...(options.body && !isFormData ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) };
+    const headers = { ...(options.body && !isFormData ? {'Content-Type': 'application/json'} : {}), ...(options.headers || {}) };
     if (state.token) headers.Authorization = `Bearer ${state.token}`;
-    const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
-    const payload = await response.json().catch(() => ({ code: response.status, message: '服务器返回了无效响应' }));
+    const response = await fetch(`${API_BASE}${path}`, {...options, headers});
+    const payload = await response.json().catch(() => ({code: response.status, message: '服务器返回了无效响应'}));
     if (!response.ok || payload.code !== 200) {
         if (response.status === 401 || payload.code === 401) logout(false);
         throw new Error(payload.message || '请求失败');
@@ -19,149 +20,266 @@ async function request(path, options = {}) {
     return payload.data;
 }
 
-function showToast(message) {
-    const toast = $('#toast'); toast.textContent = message; toast.classList.add('show');
-    window.clearTimeout(showToast.timer); showToast.timer = window.setTimeout(() => toast.classList.remove('show'), 2400);
-}
-
-function formatDate(value) {
-    if (!value) return '-';
-    return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
-}
-
-function avatarUrl(relativePath) {
-    const encodedPath = relativePath.split('/').map(encodeURIComponent).join('/');
-    return `${API_BASE}/files/${encodedPath}`;
-}
-
-function initials(user) {
-    return (user.realName || user.username || '?').trim().slice(0, 1).toUpperCase();
-}
-
-function avatarMarkup(user, extraClass = '') {
-    const classes = `avatar ${extraClass}`.trim();
-    return user.avatar
-        ? `<span class="${classes}"><img src="${avatarUrl(user.avatar)}" alt="${escapeHtml(user.username)} 的头像"></span>`
-        : `<span class="${classes}">${escapeHtml(initials(user))}</span>`;
-}
-
-function renderCurrentUser() {
-    const user = state.user;
-    const avatar = $('#current-avatar');
-    avatar.replaceChildren(); avatar.textContent = initials(user);
-    if (user.avatar) {
-        const image = new Image(); image.src = avatarUrl(user.avatar); image.alt = '';
-        image.onerror = () => { avatar.replaceChildren(); avatar.textContent = initials(user); };
-        avatar.replaceChildren(image);
+async function streamRequest(path, body, onEvent) {
+    const response = await fetch(`${API_BASE}${path}`, {
+        method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${state.token}`}, body: JSON.stringify(body)
+    });
+    if (!response.ok || !response.body) {
+        const payload = await response.json().catch(() => ({message: '流式请求失败'}));
+        if (response.status === 401 || payload.code === 401) logout(false);
+        throw new Error(payload.message || '流式请求失败');
     }
-    $('#current-user-name').textContent = `${user.realName || user.username} · ${user.role}`;
+    const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
+    while (true) {
+        const {done, value} = await reader.read();
+        buffer += decoder.decode(value || new Uint8Array(), {stream: !done}).replace(/\r\n/g, '\n');
+        let boundary;
+        while ((boundary = buffer.indexOf('\n\n')) >= 0) {
+            const frame = buffer.slice(0, boundary); buffer = buffer.slice(boundary + 2);
+            let event = 'message'; const data = [];
+            frame.split('\n').forEach(line => { if (line.startsWith('event:')) event = line.slice(6).trim(); if (line.startsWith('data:')) data.push(line.slice(5).trimStart()); });
+            if (data.length) onEvent(event, JSON.parse(data.join('\n')));
+        }
+        if (done) break;
+    }
 }
+
+function escapeHtml(value = '') { const element = document.createElement('div'); element.textContent = String(value); return element.innerHTML; }
+function formatDate(value) { return value ? new Intl.DateTimeFormat('zh-CN', {dateStyle: 'medium', timeStyle: 'short'}).format(new Date(value)) : '-'; }
+function initials(user) { return (user.realName || user.username || '?').trim().slice(0, 1).toUpperCase(); }
+function avatarUrl(path) { return `${API_BASE}/files/${path.split('/').map(encodeURIComponent).join('/')}`; }
+function avatarMarkup(user, extraClass = '') { return user.avatar ? `<span class="avatar ${extraClass}"><img src="${avatarUrl(user.avatar)}" alt=""></span>` : `<span class="avatar ${extraClass}">${escapeHtml(initials(user))}</span>`; }
+function showToast(message) { const toast = $('#toast'); toast.textContent = message; toast.classList.add('show'); clearTimeout(showToast.timer); showToast.timer = setTimeout(() => toast.classList.remove('show'), 2600); }
+function isAdmin() { return state.user?.role === 'ADMIN'; }
 
 function setLoginError(message = '') { $('#login-error').textContent = message; }
-
 async function login(event) {
     event.preventDefault(); setLoginError();
-    const submit = $('#login-submit'); submit.disabled = true; submit.textContent = '正在登录…';
+    const button = $('#login-submit'); button.disabled = true; button.textContent = '正在登录…';
     try {
-        const data = await request('/api/auth/login', { method: 'POST', body: JSON.stringify({ username: $('#login-username').value.trim(), password: $('#login-password').value }) });
-        state.token = data.token; state.user = data.user; localStorage.setItem('veri-rag-token', data.token); localStorage.setItem('veri-rag-user', JSON.stringify(data.user));
-        showConsole();
+        const data = await request('/api/auth/login', {method: 'POST', body: JSON.stringify({username: $('#login-username').value.trim(), password: $('#login-password').value})});
+        state.token = data.token; state.user = data.user;
+        localStorage.setItem('veri-rag-token', data.token); localStorage.setItem('veri-rag-user', JSON.stringify(data.user));
+        await showConsole();
     } catch (error) { setLoginError(error.message); }
-    finally { submit.disabled = false; submit.textContent = '登录'; }
+    finally { button.disabled = false; button.textContent = '登录'; }
 }
-
 function logout(showMessage = true) {
-    state.token = null; state.user = null; localStorage.removeItem('veri-rag-token'); localStorage.removeItem('veri-rag-user');
-    consoleView.classList.add('hidden'); loginView.classList.remove('hidden'); $('#login-form').reset();
+    state.token = null; state.user = null; state.activeSessionId = null;
+    localStorage.removeItem('veri-rag-token'); localStorage.removeItem('veri-rag-user');
+    $('#console-view').classList.add('hidden'); $('#login-view').classList.remove('hidden'); $('#login-form').reset();
     if (showMessage) showToast('已退出登录');
 }
-
-function showConsole() {
-    loginView.classList.add('hidden'); consoleView.classList.remove('hidden');
-    const user = state.user || JSON.parse(localStorage.getItem('veri-rag-user') || 'null'); state.user = user;
-    renderCurrentUser();
-    const isAdmin = user.role === 'ADMIN'; $('#user-management').classList.toggle('hidden', !isAdmin); $('#permission-notice').classList.toggle('hidden', isAdmin);
-    if (isAdmin) loadUsers();
-    refreshCurrentUser();
+async function showConsole() {
+    state.user = state.user || JSON.parse(localStorage.getItem('veri-rag-user') || 'null');
+    if (!state.user) return logout(false);
+    $('#login-view').classList.add('hidden'); $('#console-view').classList.remove('hidden');
+    document.querySelectorAll('.admin-only').forEach(item => item.classList.toggle('hidden', !isAdmin()));
+    renderCurrentUser(); await Promise.all([refreshCurrentUser(), loadCategories(), loadSessions()]); showView('chat');
+}
+async function refreshCurrentUser() {
+    try { state.user = await request('/api/users/me'); localStorage.setItem('veri-rag-user', JSON.stringify(state.user)); renderCurrentUser(); }
+    catch (error) { if (state.token) showToast(error.message); }
+}
+function renderCurrentUser() {
+    const avatar = $('#current-avatar'); avatar.replaceChildren(); avatar.textContent = initials(state.user);
+    if (state.user.avatar) { const image = new Image(); image.src = avatarUrl(state.user.avatar); image.alt = ''; image.onerror = () => { avatar.replaceChildren(); avatar.textContent = initials(state.user); }; avatar.replaceChildren(image); }
+    $('#current-user-name').textContent = `${state.user.realName || state.user.username} · ${state.user.role}`;
+    $('#profile-real-name').value = state.user.realName || '';
 }
 
-async function refreshCurrentUser() {
+const viewInfo = {chat: ['VERIRAG', '智能问答'], knowledge: ['KNOWLEDGE BASE', '知识库'], users: ['ADMINISTRATION', '用户管理'], profile: ['ACCOUNT', '个人设置']};
+function showView(view) {
+    if (view === 'users' && !isAdmin()) { showToast('没有用户管理权限'); return; }
+    state.view = view;
+    Object.keys(viewInfo).forEach(name => $(`#${name}-view`).classList.toggle('hidden', name !== view));
+    document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.view === view));
+    $('#view-eyebrow').textContent = viewInfo[view][0]; $('#view-title').textContent = viewInfo[view][1];
+    if (view === 'users') loadUsers();
+    if (view === 'knowledge') { renderCategories(); loadDocuments(); }
+}
+
+async function loadCategories() {
+    try { state.categories = await request('/api/categories'); renderCategories(); renderCategoryInputs(); }
+    catch (error) { showToast(error.message); }
+}
+function renderCategoryInputs() {
+    const optionHtml = state.categories.map(c => `<option value="${c.id}">${escapeHtml(c.icon || '▤')} ${escapeHtml(c.name)}</option>`).join('');
+    $('#document-category').innerHTML = `<option value="">全部分类</option>${optionHtml}`;
+    $('#upload-category').innerHTML = `<option value="">请选择分类</option>${optionHtml}`;
+    $('#chat-category-filter').innerHTML = `<button class="filter-chip active" data-category="" type="button">全部知识库</button>${state.categories.map(c => `<button class="filter-chip" data-category="${c.id}" type="button">${escapeHtml(c.icon || '▤')} ${escapeHtml(c.name)}</button>`).join('')}`;
+}
+function renderCategories() {
+    const list = $('#category-list');
+    list.innerHTML = state.categories.length ? state.categories.map(c => `<article class="category-card"><span class="category-icon">${escapeHtml(c.icon || '▤')}</span><div><strong>${escapeHtml(c.name)}</strong><p>${escapeHtml(c.description || '暂无描述')}</p></div>${isAdmin() ? `<button class="text-button danger delete-category" data-id="${c.id}" type="button">删除</button>` : ''}</article>`).join('') : '<p class="empty-state">还没有知识分类。</p>';
+}
+async function saveCategory(event) {
+    event.preventDefault(); $('#category-error').textContent = '';
+    const payload = {name: $('#category-name').value.trim(), description: $('#category-description').value.trim(), icon: $('#category-icon').value.trim(), sortOrder: Number($('#category-sort-order').value || 0)};
+    try { await request('/api/categories', {method: 'POST', body: JSON.stringify(payload)}); $('#category-dialog').close(); event.target.reset(); showToast('分类已保存'); loadCategories(); }
+    catch (error) { $('#category-error').textContent = error.message; }
+}
+
+async function loadDocuments() {
+    if (state.view !== 'knowledge') return;
     try {
-        state.user = await request('/api/users/me');
-        localStorage.setItem('veri-rag-user', JSON.stringify(state.user));
-        renderCurrentUser();
+        const query = new URLSearchParams({keyword: $('#document-keyword').value.trim(), page: state.documentPage, size: state.documentSize});
+        if ($('#document-category').value) query.set('categoryId', $('#document-category').value);
+        const result = await request(`/api/documents/page?${query}`); state.documentTotal = result.total; renderDocuments(result.records);
+        const pages = Math.max(Math.ceil(result.total / state.documentSize), 1); $('#document-pagination-info').textContent = `共 ${result.total} 个文档`; $('#document-page-number').textContent = `${state.documentPage} / ${pages}`;
+        $('#document-prev').disabled = state.documentPage <= 1; $('#document-next').disabled = state.documentPage >= pages;
+    } catch (error) { showToast(error.message); }
+}
+function renderDocuments(records) {
+    const categories = new Map(state.categories.map(c => [c.id, c.name]));
+    $('#document-list').innerHTML = records.length ? records.map(d => `<article class="document-row"><span class="file-badge">${escapeHtml((d.fileType || '?').toUpperCase())}</span><div class="document-main"><strong>${escapeHtml(d.title)}</strong><p>${escapeHtml(categories.get(d.categoryId) || '未分类')} · ${escapeHtml(d.fileName || '')} · ${d.vectorCount ?? 0} 个片段</p></div><span class="status-tag ${String(d.status).toLowerCase()}">${escapeHtml(d.status)}</span><span class="muted">${formatDate(d.createTime)}</span>${isAdmin() ? `<span class="document-actions"><button class="text-button reingest-document" data-id="${d.id}" data-title="${escapeHtml(d.title)}" type="button">重新向量化</button><button class="text-button danger delete-document" data-id="${d.id}" data-title="${escapeHtml(d.title)}" type="button">删除</button></span>` : ''}</article>`).join('') : '<p class="empty-state">没有找到文档。</p>';
+}
+async function uploadDocument(event) {
+    event.preventDefault(); $('#document-error').textContent = '';
+    const form = new FormData(); form.append('file', $('#document-file').files[0]); form.append('categoryId', $('#upload-category').value); if ($('#document-title').value.trim()) form.append('title', $('#document-title').value.trim());
+    const button = $('#document-submit'); button.disabled = true; button.textContent = '正在上传…';
+    try { await request('/api/documents', {method: 'POST', body: form}); $('#document-dialog').close(); event.target.reset(); showToast('文档已上传并完成向量化'); loadDocuments(); }
+    catch (error) { $('#document-error').textContent = error.message; }
+    finally { button.disabled = false; button.textContent = '上传并向量化'; }
+}
+
+async function loadSessions() {
+    try {
+        const sessions = await request('/api/chat/sessions'); const list = $('#session-list');
+        list.innerHTML = sessions.length ? sessions.map(s => `<button class="session-item ${s.id === state.activeSessionId ? 'active' : ''}" data-id="${s.id}" type="button"><span>${escapeHtml(s.title || '未命名会话')}</span><small>${formatDate(s.createTime)}</small><i data-delete-session="${s.id}" title="删除会话">×</i></button>`).join('') : '<p class="session-empty">暂无历史会话</p>';
+    } catch (error) { showToast(error.message); }
+}
+async function openSession(id) {
+    state.activeSessionId = Number(id); $('#chat-empty').classList.add('hidden'); await loadSessions();
+    try { const messages = await request(`/api/chat/sessions/${id}/messages`); renderMessages(messages); }
+    catch (error) { showToast(error.message); }
+}
+function newChat() { state.activeSessionId = null; $('#message-list').replaceChildren(); $('#chat-empty').classList.remove('hidden'); loadSessions(); $('#chat-question').focus(); }
+function renderMessages(messages) {
+    const list = $('#message-list'); list.replaceChildren(); messages.forEach(message => appendMessage(message.role, message.content, parseRefs(message.refs))); list.scrollTop = list.scrollHeight;
+}
+function parseRefs(value) { try { return value ? JSON.parse(value) : []; } catch { return []; } }
+
+/**
+ * 将模型输出安全地渲染为一个有限的 Markdown 子集。
+ * 不把模型文本直接赋给 innerHTML，避免不可信模型输出带来 XSS；解析异常则回退成纯文本。
+ */
+function renderMarkdown(container, markdown) {
+    try {
+        if (typeof markdown !== 'string') throw new TypeError('Markdown content must be a string');
+        const lines = markdown.replace(/\r\n?/g, '\n').split('\n');
+        const fragment = document.createDocumentFragment();
+        let index = 0;
+        while (index < lines.length) {
+            const line = lines[index];
+            if (!line.trim()) { index++; continue; }
+            if (line.startsWith('```')) {
+                const language = line.slice(3).trim(); const code = []; index++;
+                while (index < lines.length && !lines[index].startsWith('```')) code.push(lines[index++]);
+                if (index < lines.length) index++;
+                const pre = document.createElement('pre'); const codeNode = document.createElement('code');
+                if (language) codeNode.dataset.language = language;
+                codeNode.textContent = code.join('\n'); pre.appendChild(codeNode); fragment.appendChild(pre); continue;
+            }
+            const heading = line.match(/^(#{1,6})\s+(.+)$/);
+            if (heading) { const node = document.createElement(`h${heading[1].length}`); appendInlineMarkdown(node, heading[2]); fragment.appendChild(node); index++; continue; }
+            if (/^\s*[-*+]\s+/.test(line)) {
+                const list = document.createElement('ul');
+                while (index < lines.length && /^\s*[-*+]\s+/.test(lines[index])) { const item = document.createElement('li'); appendInlineMarkdown(item, lines[index].replace(/^\s*[-*+]\s+/, '')); list.appendChild(item); index++; }
+                fragment.appendChild(list); continue;
+            }
+            if (/^\s*\d+[.)]\s+/.test(line)) {
+                const list = document.createElement('ol');
+                while (index < lines.length && /^\s*\d+[.)]\s+/.test(lines[index])) { const item = document.createElement('li'); appendInlineMarkdown(item, lines[index].replace(/^\s*\d+[.)]\s+/, '')); list.appendChild(item); index++; }
+                fragment.appendChild(list); continue;
+            }
+            if (line.startsWith('>')) { const quote = document.createElement('blockquote'); appendInlineMarkdown(quote, line.replace(/^>\s?/, '')); fragment.appendChild(quote); index++; continue; }
+            if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { fragment.appendChild(document.createElement('hr')); index++; continue; }
+            const paragraph = [];
+            while (index < lines.length && lines[index].trim() && !lines[index].startsWith('```') && !/^(#{1,6})\s+/.test(lines[index]) && !/^\s*[-*+]\s+/.test(lines[index]) && !/^\s*\d+[.)]\s+/.test(lines[index]) && !lines[index].startsWith('>')) paragraph.push(lines[index++]);
+            const node = document.createElement('p');
+            paragraph.forEach((text, position) => { if (position) node.appendChild(document.createElement('br')); appendInlineMarkdown(node, text); });
+            fragment.appendChild(node);
+        }
+        container.replaceChildren(fragment);
     } catch (error) {
-        if (state.token) showToast(error.message);
+        console.warn('Markdown rendering failed; falling back to plain text.', error);
+        container.textContent = String(markdown ?? '');
     }
 }
 
-function renderUsers(records) {
-    const body = $('#user-table-body'); body.innerHTML = '';
-    records.forEach(user => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td><div class="user-cell">${avatarMarkup(user)}<span class="username">${escapeHtml(user.username)}</span></div></td><td>${escapeHtml(user.realName || '-')}</td><td><span class="role-tag ${user.role === 'ADMIN' ? 'admin' : 'user'}">${user.role}</span></td><td><span class="status-tag ${user.status === 1 ? 'active' : 'disabled'}">${user.status === 1 ? '正常' : '禁用'}</span></td><td>${formatDate(user.createTime)}</td><td><div class="row-actions"><button class="text-button" data-action="edit" data-id="${user.id}">编辑</button><button class="text-button danger" data-action="delete" data-id="${user.id}">删除</button></div></td>`;
-        tr.dataset.user = JSON.stringify(user); body.appendChild(tr);
-    });
-    $('#empty-state').classList.toggle('hidden', records.length !== 0);
+function appendInlineMarkdown(container, text) {
+    const pattern = /(\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|\[[^\]]+\]\([^\s)]+\)|\*[^*]+\*|_[^_]+_)/g;
+    let cursor = 0;
+    for (const match of text.matchAll(pattern)) {
+        container.append(document.createTextNode(text.slice(cursor, match.index)));
+        const token = match[0];
+        if ((token.startsWith('**') && token.endsWith('**')) || (token.startsWith('__') && token.endsWith('__'))) { const strong = document.createElement('strong'); strong.textContent = token.slice(2, -2); container.appendChild(strong); }
+        else if (token.startsWith('`')) { const code = document.createElement('code'); code.textContent = token.slice(1, -1); container.appendChild(code); }
+        else if (token.startsWith('[')) { const end = token.indexOf(']('); const label = token.slice(1, end); const href = token.slice(end + 2, -1); const link = document.createElement('a'); link.textContent = label; if (/^(https?:|mailto:)/i.test(href)) { link.href = href; link.target = '_blank'; link.rel = 'noopener noreferrer'; } container.appendChild(link); }
+        else { const emphasis = document.createElement('em'); emphasis.textContent = token.slice(1, -1); container.appendChild(emphasis); }
+        cursor = match.index + token.length;
+    }
+    container.append(document.createTextNode(text.slice(cursor)));
+}
+
+function appendMessage(role, content, references = []) {
+    const list = $('#message-list'); const item = document.createElement('article'); item.className = `message ${role === 'USER' ? 'user-message' : 'assistant-message'}`;
+    const label = role === 'USER' ? '你' : 'VeriRAG';
+    item.innerHTML = `<span class="message-role">${label}</span><div class="message-content"></div>`;
+    const messageContent = item.querySelector('.message-content');
+    if (role === 'ASSISTANT') renderMarkdown(messageContent, content || '');
+    else messageContent.textContent = content || '';
+    renderReferences(item, references); list.appendChild(item); list.scrollTop = list.scrollHeight;
+    return item;
+}
+
+function renderReferences(messageItem, references) {
+    messageItem.querySelector('.references')?.remove();
+    if (!references?.length) return;
+    const refs = document.createElement('details'); refs.className = 'references';
+    refs.innerHTML = `<summary>引用来源（${references.length}）</summary>${references.map((ref, index) => `<div><strong>[${index + 1}] ${escapeHtml(ref.title || '无标题')}</strong><p>${escapeHtml(ref.snippet || '')}</p></div>`).join('')}`;
+    messageItem.appendChild(refs);
+}
+
+async function askQuestion(event) {
+    event.preventDefault(); const question = $('#chat-question').value.trim(); if (!question) return;
+    const selectedCategories = [...document.querySelectorAll('.filter-chip.active[data-category]')].map(b => b.dataset.category).filter(Boolean).map(Number);
+    $('#chat-empty').classList.add('hidden'); appendMessage('USER', question); $('#chat-question').value = '';
+    const button = $('#chat-send'); button.disabled = true; button.textContent = '思考中…';
+    const assistantItem = appendMessage('ASSISTANT', ''); const content = assistantItem.querySelector('.message-content'); content.textContent = '正在思考'; content.classList.add('thinking'); let answer = '';
+    try {
+        await streamRequest('/api/chat/ask/stream', {question, sessionId: state.activeSessionId, categoryIds: selectedCategories}, (eventName, data) => {
+            if (eventName === 'meta') state.activeSessionId = data.sessionId;
+            if (eventName === 'chunk') { answer += data.content || ''; content.classList.remove('thinking'); content.textContent = answer; $('#message-list').scrollTop = $('#message-list').scrollHeight; }
+            if (eventName === 'done') { state.activeSessionId = data.sessionId; content.classList.remove('thinking'); renderMarkdown(content, answer); renderReferences(assistantItem, data.references || []); loadSessions(); }
+        });
+    }
+    catch (error) { content.classList.remove('thinking'); content.textContent = `请求失败：${error.message}`; }
+    finally { button.disabled = false; button.textContent = '发送'; }
 }
 
 async function loadUsers() {
-    try {
-        const query = new URLSearchParams({ keyword: $('#keyword').value.trim(), page: state.page, size: state.size });
-        const result = await request(`/api/users/page?${query}`); state.total = result.total; renderUsers(result.records);
-        const pages = Math.max(Math.ceil(state.total / state.size), 1); $('#pagination-info').textContent = `共 ${state.total} 位用户`;
-        $('#page-number').textContent = `${state.page} / ${pages}`; $('#prev-page').disabled = state.page <= 1; $('#next-page').disabled = state.page >= pages;
-    } catch (error) { showToast(error.message); }
+    if (!isAdmin()) return;
+    try { const query = new URLSearchParams({keyword: $('#keyword').value.trim(), page: state.userPage, size: state.userSize}); const result = await request(`/api/users/page?${query}`); state.userTotal = result.total; renderUsers(result.records); const pages = Math.max(Math.ceil(result.total / state.userSize), 1); $('#pagination-info').textContent = `共 ${result.total} 位用户`; $('#page-number').textContent = `${state.userPage} / ${pages}`; $('#prev-page').disabled = state.userPage <= 1; $('#next-page').disabled = state.userPage >= pages; } catch (error) { showToast(error.message); }
 }
-
-function openUserDialog(user = null) {
-    $('#user-form').reset(); $('#dialog-error').textContent = ''; $('#user-id').value = user?.id || ''; $('#dialog-title').textContent = user ? '编辑用户' : '新增用户';
-    $('#user-username').value = user?.username || ''; $('#user-real-name').value = user?.realName || ''; $('#user-role').value = user?.role || 'USER'; $('#user-status').value = String(user?.status ?? 1); $('#user-password').required = !user;
-    dialog.showModal(); $('#user-username').focus();
+function renderUsers(records) {
+    const body = $('#user-table-body'); body.innerHTML = records.map(user => { const tr = document.createElement('tr'); tr.dataset.user = JSON.stringify(user); tr.innerHTML = `<td><div class="user-cell">${avatarMarkup(user)}<span class="username">${escapeHtml(user.username)}</span></div></td><td>${escapeHtml(user.realName || '-')}</td><td><span class="role-tag ${user.role === 'ADMIN' ? 'admin' : 'user'}">${user.role}</span></td><td><span class="status-tag ${user.status === 1 ? 'active' : 'disabled'}">${user.status === 1 ? '正常' : '禁用'}</span></td><td>${formatDate(user.createTime)}</td><td><div class="row-actions"><button class="text-button" data-user-action="edit">编辑</button><button class="text-button danger" data-user-action="delete">删除</button></div></td>`; return tr.outerHTML; }).join(''); $('#empty-state').classList.toggle('hidden', records.length !== 0);
 }
+function openUserDialog(user = null) { $('#user-form').reset(); $('#dialog-error').textContent = ''; $('#user-id').value = user?.id || ''; $('#dialog-title').textContent = user ? '编辑用户' : '新增用户'; $('#user-username').value = user?.username || ''; $('#user-real-name').value = user?.realName || ''; $('#user-role').value = user?.role || 'USER'; $('#user-status').value = String(user?.status ?? 1); $('#user-password').required = !user; $('#user-dialog').showModal(); }
+async function saveUser(event) { event.preventDefault(); const id = $('#user-id').value; const payload = {id: id ? Number(id) : null, username: $('#user-username').value.trim(), realName: $('#user-real-name').value.trim(), role: $('#user-role').value, status: Number($('#user-status').value), password: $('#user-password').value || null}; try { await request('/api/users', {method: 'POST', body: JSON.stringify(payload)}); $('#user-dialog').close(); showToast('用户已保存'); loadUsers(); } catch (error) { $('#dialog-error').textContent = error.message; } }
 
-async function saveUser(event) {
-    event.preventDefault(); $('#dialog-error').textContent = '';
-    const id = $('#user-id').value;
-    const payload = { id: id ? Number(id) : null, username: $('#user-username').value.trim(), realName: $('#user-real-name').value.trim(), role: $('#user-role').value, status: Number($('#user-status').value), password: $('#user-password').value || null };
-    try { await request('/api/users', { method: 'POST', body: JSON.stringify(payload) }); dialog.close(); showToast('用户已保存'); loadUsers(); }
-    catch (error) { $('#dialog-error').textContent = error.message; }
-}
+async function uploadAvatar(event) { const [file] = event.target.files; if (!file) return; const form = new FormData(); form.append('file', file); try { state.user.avatar = await request('/api/users/me/avatar', {method: 'POST', body: form}); localStorage.setItem('veri-rag-user', JSON.stringify(state.user)); renderCurrentUser(); showToast('头像已更新'); } catch (error) { showToast(error.message); } finally { event.target.value = ''; } }
+async function saveProfile(event) { event.preventDefault(); try { await request('/api/users/me/profile', {method: 'PUT', body: JSON.stringify({realName: $('#profile-real-name').value.trim()})}); await refreshCurrentUser(); showToast('资料已保存'); } catch (error) { showToast(error.message); } }
+async function changePassword(event) { event.preventDefault(); const query = new URLSearchParams({oldPassword: $('#old-password').value, newPassword: $('#new-password').value}); try { await request(`/api/users/me/password?${query}`, {method: 'PUT'}); event.target.reset(); showToast('密码已更新'); } catch (error) { showToast(error.message); } }
 
-async function uploadAvatar(event) {
-    const [file] = event.target.files;
-    if (!file) return;
-    if (file.size > 5 * 1024 * 1024) { showToast('头像不能超过 5 MB'); event.target.value = ''; return; }
-    const data = new FormData(); data.append('file', file);
-    try {
-        const relativePath = await request('/api/users/me/avatar', { method: 'POST', body: data });
-        state.user.avatar = relativePath;
-        localStorage.setItem('veri-rag-user', JSON.stringify(state.user));
-        renderCurrentUser();
-        showToast('头像已更新');
-        if (state.user.role === 'ADMIN') loadUsers();
-    } catch (error) { showToast(error.message); }
-    finally { event.target.value = ''; }
-}
-
-function escapeHtml(value) { const div = document.createElement('div'); div.textContent = value; return div.innerHTML; }
-
-$('#login-form').addEventListener('submit', login);
-$('#logout-button').addEventListener('click', () => logout());
-$('#avatar-upload-button').addEventListener('click', () => $('#avatar-input').click());
-$('#avatar-input').addEventListener('change', uploadAvatar);
-$('#search-button').addEventListener('click', () => { state.page = 1; loadUsers(); });
-$('#keyword').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); state.page = 1; loadUsers(); } });
-$('#create-button').addEventListener('click', () => openUserDialog());
-$('#close-dialog').addEventListener('click', () => dialog.close()); $('#cancel-dialog').addEventListener('click', () => dialog.close()); $('#user-form').addEventListener('submit', saveUser);
-$('#prev-page').addEventListener('click', () => { if (state.page > 1) { state.page--; loadUsers(); } }); $('#next-page').addEventListener('click', () => { if (state.page * state.size < state.total) { state.page++; loadUsers(); } });
-$('#user-table-body').addEventListener('click', async event => {
-    const button = event.target.closest('button[data-action]'); if (!button) return;
-    const user = JSON.parse(button.closest('tr').dataset.user);
-    if (button.dataset.action === 'edit') return openUserDialog(user);
-    if (!confirm(`确定删除用户“${user.username}”吗？`)) return;
-    try { await request(`/api/users/${user.id}`, { method: 'DELETE' }); showToast('用户已删除'); if ($('#user-table-body').children.length === 1 && state.page > 1) state.page--; loadUsers(); }
-    catch (error) { showToast(error.message); }
-});
-
-if (state.token) { showConsole(); }
+$('#login-form').addEventListener('submit', login); $('#logout-button').addEventListener('click', () => logout()); $('#avatar-upload-button').addEventListener('click', () => $('#avatar-input').click()); $('#avatar-input').addEventListener('change', uploadAvatar);
+document.querySelectorAll('.nav-item').forEach(item => item.addEventListener('click', () => showView(item.dataset.view)));
+$('#new-chat-button').addEventListener('click', newChat); $('#chat-form').addEventListener('submit', askQuestion);
+$('#session-list').addEventListener('click', async event => { const deleteButton = event.target.closest('[data-delete-session]'); if (deleteButton) { event.stopPropagation(); const id = deleteButton.dataset.deleteSession; if (!confirm('确定删除这个会话吗？')) return; try { await request(`/api/chat/sessions/${id}`, {method: 'DELETE'}); if (state.activeSessionId === Number(id)) newChat(); showToast('会话已删除'); loadSessions(); } catch (error) { showToast(error.message); } return; } const item = event.target.closest('.session-item'); if (item) openSession(item.dataset.id); });
+$('#chat-category-filter').addEventListener('click', event => { const chip = event.target.closest('.filter-chip'); if (!chip) return; document.querySelectorAll('.filter-chip').forEach(button => button.classList.remove('active')); chip.classList.add('active'); });
+$('#new-category-button').addEventListener('click', () => $('#category-dialog').showModal()); $('#category-form').addEventListener('submit', saveCategory); $('#category-list').addEventListener('click', async event => { const button = event.target.closest('.delete-category'); if (!button || !confirm('确定删除该分类吗？')) return; try { await request(`/api/categories/${button.dataset.id}`, {method: 'DELETE'}); showToast('分类已删除'); loadCategories(); } catch (error) { showToast(error.message); } });
+$('#upload-document-button').addEventListener('click', () => $('#document-dialog').showModal()); $('#document-form').addEventListener('submit', uploadDocument); $('#document-search-button').addEventListener('click', () => { state.documentPage = 1; loadDocuments(); }); $('#document-category').addEventListener('change', () => { state.documentPage = 1; loadDocuments(); }); $('#document-prev').addEventListener('click', () => { if (state.documentPage > 1) { state.documentPage--; loadDocuments(); } }); $('#document-next').addEventListener('click', () => { if (state.documentPage * state.documentSize < state.documentTotal) { state.documentPage++; loadDocuments(); } }); $('#document-list').addEventListener('click', async event => { const reingest = event.target.closest('.reingest-document'); if (reingest) { if (!confirm(`确定重新向量化文档“${reingest.dataset.title}”吗？`)) return; reingest.disabled = true; reingest.textContent = '处理中…'; try { await request(`/api/documents/${reingest.dataset.id}/reingest`, {method: 'POST'}); showToast('文档已重新向量化'); loadDocuments(); } catch (error) { showToast(error.message); reingest.disabled = false; reingest.textContent = '重新向量化'; } return; } const button = event.target.closest('.delete-document'); if (!button || !confirm(`确定删除文档“${button.dataset.title}”吗？`)) return; try { await request(`/api/documents/${button.dataset.id}`, {method: 'DELETE'}); showToast('文档和向量已删除'); loadDocuments(); } catch (error) { showToast(error.message); } });
+$('#search-button').addEventListener('click', () => { state.userPage = 1; loadUsers(); }); $('#create-button').addEventListener('click', () => openUserDialog()); $('#prev-page').addEventListener('click', () => { if (state.userPage > 1) { state.userPage--; loadUsers(); } }); $('#next-page').addEventListener('click', () => { if (state.userPage * state.userSize < state.userTotal) { state.userPage++; loadUsers(); } }); $('#user-form').addEventListener('submit', saveUser); $('#close-dialog').addEventListener('click', () => $('#user-dialog').close()); $('#cancel-dialog').addEventListener('click', () => $('#user-dialog').close()); $('#user-table-body').addEventListener('click', async event => { const button = event.target.closest('[data-user-action]'); if (!button) return; const user = JSON.parse(button.closest('tr').dataset.user); if (button.dataset.userAction === 'edit') return openUserDialog(user); if (!confirm(`确定删除用户“${user.username}”吗？`)) return; try { await request(`/api/users/${user.id}`, {method: 'DELETE'}); showToast('用户已删除'); loadUsers(); } catch (error) { showToast(error.message); } });
+$('#profile-form').addEventListener('submit', saveProfile); $('#password-form').addEventListener('submit', changePassword); document.querySelectorAll('[data-close-dialog]').forEach(button => button.addEventListener('click', () => $(`#${button.dataset.closeDialog}`).close()));
+if (state.token) showConsole();

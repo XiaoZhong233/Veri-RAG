@@ -33,6 +33,7 @@ public class RagIngestServiceImpl implements RagIngestService {
     private static final int REDIS_DELETE_BATCH_LIMIT = 10_000;
 
     private final RedisVectorStore redisVectorStore;
+    private final TokenTextSplitter tokenTextSplitter;
     @Value("${spring.ai.vectorstore.redis.index-name:spring-ai-index}")
     private String redisVectorIndexName;
     @Value("${spring.ai.vectorstore.redis.prefix:embedding:}")
@@ -44,8 +45,7 @@ public class RagIngestServiceImpl implements RagIngestService {
     @Override
     public int ingest(Path absolutePath, String ext, Long documentId, Long categoryId, String title) {
         List<Document> loaded = loadDocuments(absolutePath, ext);
-        TokenTextSplitter splitter = TokenTextSplitter.builder().build();
-        List<Document> chunks = splitter.apply(loaded);
+        List<Document> chunks = tokenTextSplitter.apply(loaded);
         List<Document> toAdd = new ArrayList<>();
         for (Document ch : chunks) {
             Map<String, Object> meta = new HashMap<>(ch.getMetadata());

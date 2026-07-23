@@ -10,112 +10,40 @@
 <body>
 <main class="app-shell">
     <section id="login-view" class="login-view" aria-labelledby="login-title">
-        <div class="brand-panel">
-            <p class="eyebrow">VERIRAG / KNOWLEDGE CONSOLE</p>
-            <h1>让答案有据可查。</h1>
-            <p>登录后管理知识库用户，控制谁可以访问内部文档与智能问答。</p>
-            <div class="brand-orb" aria-hidden="true"></div>
-        </div>
-        <form id="login-form" class="login-card">
-            <div>
-                <p class="eyebrow">WELCOME BACK</p>
-                <h2 id="login-title">登录系统</h2>
-                <p class="muted">使用您的后台账号继续。</p>
-            </div>
-            <label>
-                用户名
-                <input id="login-username" name="username" autocomplete="username" placeholder="例如：admin" required>
-            </label>
-            <label>
-                密码
-                <input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="请输入密码" required>
-            </label>
-            <p id="login-error" class="form-error" role="alert"></p>
-            <button id="login-submit" class="primary-button" type="submit">登录</button>
-            <p class="tip">初始化账号可在 <code>init.sql</code> 中查看。</p>
-        </form>
+        <div class="brand-panel"><p class="eyebrow">VERIRAG / KNOWLEDGE CONSOLE</p><h1>让答案有据可查。</h1><p>上传内部知识，建立可追溯的智能问答系统。</p><div class="brand-orb" aria-hidden="true"></div></div>
+        <form id="login-form" class="login-card"><div><p class="eyebrow">WELCOME BACK</p><h2 id="login-title">登录系统</h2><p class="muted">使用您的后台账号继续。</p></div><label>用户名<input id="login-username" autocomplete="username" placeholder="例如：admin" required></label><label>密码<input id="login-password" type="password" autocomplete="current-password" placeholder="请输入密码" required></label><p id="login-error" class="form-error" role="alert"></p><button id="login-submit" class="primary-button" type="submit">登录</button></form>
     </section>
 
-    <section id="console-view" class="console-view hidden" aria-label="用户管理控制台">
-        <aside class="sidebar">
-            <a class="logo" href="#"><span>V</span> VeriRAG</a>
-            <nav>
-                <a class="nav-item active" href="#users">用户管理</a>
-                <a class="nav-item disabled" href="#">知识库 <small>Coming soon</small></a>
-                <a class="nav-item disabled" href="#">问答会话 <small>Coming soon</small></a>
-            </nav>
-            <button id="logout-button" class="logout-button" type="button">退出登录</button>
-        </aside>
+    <section id="console-view" class="console-view hidden">
+        <aside class="sidebar"><a class="logo" href="#chat"><span>V</span> VeriRAG</a><nav>
+            <button class="nav-item active" data-view="chat">✦ 智能问答</button>
+            <button class="nav-item" data-view="knowledge">▤ 知识库</button>
+            <button class="nav-item admin-only" data-view="users">♙ 用户管理</button>
+            <button class="nav-item" data-view="profile">◉ 个人设置</button>
+        </nav><button id="logout-button" class="logout-button" type="button">退出登录</button></aside>
         <div class="content">
-            <header class="topbar">
-                <div>
-                    <p class="eyebrow">ADMINISTRATION</p>
-                    <h1>用户管理</h1>
-                </div>
-                <button id="avatar-upload-button" class="current-user" type="button" title="点击上传头像">
-                    <span id="current-avatar" class="avatar avatar-large" aria-hidden="true"></span>
-                    <span id="current-user-name"></span>
-                </button>
-                <input id="avatar-input" type="file" accept="image/jpeg,image/png,image/gif" hidden>
-            </header>
+            <header class="topbar"><div><p id="view-eyebrow" class="eyebrow">VERIRAG</p><h1 id="view-title">智能问答</h1></div><button id="avatar-upload-button" class="current-user" type="button" title="点击上传头像"><span id="current-avatar" class="avatar avatar-large"></span><span id="current-user-name"></span></button><input id="avatar-input" type="file" accept="image/jpeg,image/png,image/gif" hidden></header>
 
-            <section id="permission-notice" class="notice hidden">
-                当前账号不是管理员。你可以成功登录，但没有用户管理权限。
+            <section id="chat-view" class="view-panel chat-layout">
+                <aside class="session-panel"><div class="session-heading"><strong>会话历史</strong><button id="new-chat-button" class="icon-button" title="新建会话" type="button">+</button></div><div id="session-list" class="session-list"></div></aside>
+                <section class="chat-panel"><div id="chat-empty" class="chat-empty"><span>✦</span><h2>开始一次有依据的对话</h2><p>选择知识库分类后提问，回答将附带检索到的引用片段。</p></div><div id="message-list" class="message-list"></div><form id="chat-form" class="chat-composer"><div id="chat-category-filter" class="category-filter"></div><div class="compose-row"><textarea id="chat-question" rows="2" placeholder="输入你的问题…" required></textarea><button id="chat-send" class="primary-button" type="submit">发送</button></div></form></section>
             </section>
 
-            <section id="user-management" class="panel">
-                <div class="toolbar">
-                    <label class="search-box">
-                        <span>⌕</span>
-                        <input id="keyword" type="search" placeholder="按用户名或姓名搜索">
-                    </label>
-                    <button id="search-button" class="secondary-button" type="button">搜索</button>
-                    <button id="create-button" class="primary-button" type="button">+ 新增用户</button>
-                </div>
-                <div class="table-wrap">
-                    <table>
-                        <thead>
-                        <tr>
-                            <th>用户</th><th>姓名</th><th>角色</th><th>状态</th><th>创建时间</th><th>操作</th>
-                        </tr>
-                        </thead>
-                        <tbody id="user-table-body"></tbody>
-                    </table>
-                    <p id="empty-state" class="empty-state hidden">没有找到用户。</p>
-                </div>
-                <footer class="pagination">
-                    <span id="pagination-info">共 0 位用户</span>
-                    <div>
-                        <button id="prev-page" class="page-button" type="button">上一页</button>
-                        <span id="page-number">1</span>
-                        <button id="next-page" class="page-button" type="button">下一页</button>
-                    </div>
-                </footer>
-            </section>
+            <section id="knowledge-view" class="view-panel hidden"><div class="knowledge-grid">
+                <div class="panel"><div class="section-heading"><div><h2>知识分类</h2><p class="muted">用于整理文档和限定检索范围。</p></div><button id="new-category-button" class="primary-button admin-only" type="button">+ 新建分类</button></div><div id="category-list" class="category-list"></div></div>
+                <div class="panel"><div class="section-heading"><div><h2>文档管理</h2><p class="muted">上传后会自动解析并写入向量库。</p></div><button id="upload-document-button" class="primary-button admin-only" type="button">+ 上传文档</button></div><div class="toolbar"><label class="search-box"><span>⌕</span><input id="document-keyword" type="search" placeholder="搜索文档"></label><select id="document-category"><option value="">全部分类</option></select><button id="document-search-button" class="secondary-button" type="button">搜索</button></div><div id="document-list" class="document-list"></div><footer class="pagination"><span id="document-pagination-info">共 0 个文档</span><div><button id="document-prev" class="page-button" type="button">上一页</button><span id="document-page-number">1</span><button id="document-next" class="page-button" type="button">下一页</button></div></footer></div>
+            </div></section>
+
+            <section id="users-view" class="view-panel hidden"><section id="permission-notice" class="notice hidden">当前账号不是管理员，没有用户管理权限。</section><section id="user-management" class="panel"><div class="toolbar"><label class="search-box"><span>⌕</span><input id="keyword" type="search" placeholder="按用户名或姓名搜索"></label><button id="search-button" class="secondary-button" type="button">搜索</button><button id="create-button" class="primary-button" type="button">+ 新增用户</button></div><div class="table-wrap"><table><thead><tr><th>用户</th><th>姓名</th><th>角色</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="user-table-body"></tbody></table><p id="empty-state" class="empty-state hidden">没有找到用户。</p></div><footer class="pagination"><span id="pagination-info">共 0 位用户</span><div><button id="prev-page" class="page-button" type="button">上一页</button><span id="page-number">1</span><button id="next-page" class="page-button" type="button">下一页</button></div></footer></section></section>
+
+            <section id="profile-view" class="view-panel hidden"><div class="panel profile-panel"><h2>个人设置</h2><form id="profile-form"><label>姓名<input id="profile-real-name" maxlength="64" placeholder="请输入姓名"></label><button class="primary-button" type="submit">保存资料</button></form><hr><form id="password-form"><h3>修改密码</h3><label>当前密码<input id="old-password" type="password" required></label><label>新密码<input id="new-password" type="password" minlength="6" required></label><button class="secondary-button" type="submit">更新密码</button></form></div></section>
         </div>
     </section>
 </main>
 
-<dialog id="user-dialog" class="user-dialog">
-    <form id="user-form" method="dialog">
-        <div class="dialog-heading"><div><p class="eyebrow">USER</p><h2 id="dialog-title">新增用户</h2></div>
-            <button id="close-dialog" class="icon-button" type="button" aria-label="关闭">×</button></div>
-        <input id="user-id" type="hidden">
-        <div class="form-grid">
-            <label>用户名<input id="user-username" required maxlength="64"></label>
-            <label>姓名<input id="user-real-name" maxlength="64"></label>
-            <label>角色<select id="user-role"><option value="USER">USER</option><option value="ADMIN">ADMIN</option></select></label>
-            <label>状态<select id="user-status"><option value="1">正常</option><option value="0">禁用</option></select></label>
-            <label class="full-width">密码 <span class="optional">（编辑时留空则不修改）</span>
-                <input id="user-password" type="password" minlength="6" autocomplete="new-password"></label>
-        </div>
-        <p id="dialog-error" class="form-error" role="alert"></p>
-        <div class="dialog-actions"><button id="cancel-dialog" class="secondary-button" type="button">取消</button>
-            <button class="primary-button" type="submit">保存用户</button></div>
-    </form>
-</dialog>
-
-<div id="toast" class="toast" role="status"></div>
-<script src="app.js"></script>
+<dialog id="user-dialog" class="user-dialog"><form id="user-form"><div class="dialog-heading"><div><p class="eyebrow">USER</p><h2 id="dialog-title">新增用户</h2></div><button id="close-dialog" class="icon-button" type="button">×</button></div><input id="user-id" type="hidden"><div class="form-grid"><label>用户名<input id="user-username" required maxlength="64"></label><label>姓名<input id="user-real-name" maxlength="64"></label><label>角色<select id="user-role"><option value="USER">USER</option><option value="ADMIN">ADMIN</option></select></label><label>状态<select id="user-status"><option value="1">正常</option><option value="0">禁用</option></select></label><label class="full-width">密码 <span class="optional">（编辑时留空则不修改）</span><input id="user-password" type="password" minlength="6"></label></div><p id="dialog-error" class="form-error"></p><div class="dialog-actions"><button id="cancel-dialog" class="secondary-button" type="button">取消</button><button class="primary-button" type="submit">保存用户</button></div></form></dialog>
+<dialog id="category-dialog" class="user-dialog"><form id="category-form"><div class="dialog-heading"><div><p class="eyebrow">CATEGORY</p><h2>新建分类</h2></div><button class="icon-button" data-close-dialog="category-dialog" type="button">×</button></div><div class="form-grid"><label class="full-width">名称<input id="category-name" required maxlength="64"></label><label class="full-width">描述<input id="category-description" maxlength="255"></label><label>图标<input id="category-icon" maxlength="32" placeholder="例如：📄"></label><label>排序<input id="category-sort-order" type="number" value="0"></label></div><p id="category-error" class="form-error"></p><div class="dialog-actions"><button class="secondary-button" data-close-dialog="category-dialog" type="button">取消</button><button class="primary-button" type="submit">保存分类</button></div></form></dialog>
+<dialog id="document-dialog" class="user-dialog"><form id="document-form"><div class="dialog-heading"><div><p class="eyebrow">DOCUMENT</p><h2>上传知识文档</h2></div><button class="icon-button" data-close-dialog="document-dialog" type="button">×</button></div><div class="form-grid"><label class="full-width">选择文件<input id="document-file" type="file" accept=".txt,.pdf,.doc,.docx,.md" required></label><label>所属分类<select id="upload-category" required></select></label><label>标题（可选）<input id="document-title" maxlength="255" placeholder="默认使用文件名"></label></div><p id="document-error" class="form-error"></p><div class="dialog-actions"><button class="secondary-button" data-close-dialog="document-dialog" type="button">取消</button><button id="document-submit" class="primary-button" type="submit">上传并向量化</button></div></form></dialog>
+<div id="toast" class="toast" role="status"></div><script src="app.js"></script>
 </body>
 </html>

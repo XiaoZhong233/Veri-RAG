@@ -10,6 +10,7 @@ import com.example.verirag.mapper.CategoryMapper;
 import com.example.verirag.service.DocumentService;
 import com.example.verirag.service.FileStorageService;
 import com.example.verirag.service.RagIngestService;
+import com.example.verirag.service.RagAnswerCache;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
@@ -34,6 +35,7 @@ public class DocumentServiceImpl implements DocumentService {
     private final CategoryMapper categoryMapper;
     private final FileStorageService fileStorageService;
     private final RagIngestService ragIngestService;
+    private final RagAnswerCache ragAnswerCache;
 
     @Override
     public Document upload(MultipartFile file, Long categoryId, String title, Long uploadUserId) throws Exception {
@@ -66,6 +68,7 @@ public class DocumentServiceImpl implements DocumentService {
             document.setVectorCount(chunkCount);
             document.setStatus("SUCCESS");
             documentMapper.updateById(document);
+            ragAnswerCache.evictAll();
         }
         catch (Exception ex) {
             document.setStatus("FAIL");
@@ -98,6 +101,46 @@ public class DocumentServiceImpl implements DocumentService {
     }
 
     @Override
+    public Document reingest(Long id) throws Exception {
+        if (id == null) {
+            throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "Document id must not be null");
+        }
+        Document document = documentMapper.selectById(id);
+        if (document == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "Document not found");
+        }
+
+        Path sourceFile = resolveOriginalFile(document.getFilePath());
+        if (!Files.isRegularFile(sourceFile)) {
+            throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "Original document file not found");
+        }
+
+        document.setStatus("PROCESSING");
+        document.setVectorCount(0);
+        documentMapper.updateById(document);
+        try {
+            ragIngestService.deleteVectorsByDocumentId(id);
+            String extension = document.getFileType();
+            if (extension == null || extension.isBlank()) {
+                extension = FileTypeUtil.ext(document.getFileName());
+            }
+            int chunkCount = ragIngestService.ingest(
+                    sourceFile, extension, id, document.getCategoryId(), document.getTitle());
+            document.setVectorCount(chunkCount);
+            document.setStatus("SUCCESS");
+            documentMapper.updateById(document);
+            ragAnswerCache.evictAll();
+            return documentMapper.selectById(id);
+        }
+        catch (Exception ex) {
+            document.setStatus("FAIL");
+            documentMapper.updateById(document);
+            log.error("Document {} re-ingestion failed", id, ex);
+            throw ex;
+        }
+    }
+
+    @Override
     public void delete(Long id) throws Exception {
         if (id == null) {
             throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "Document id must not be null");
@@ -111,6 +154,7 @@ public class DocumentServiceImpl implements DocumentService {
         // 若 Redis 向量删除失败，直接中止，以保留数据库记录和原文件供后续重试。
         ragIngestService.deleteVectorsByDocumentId(id);
         documentMapper.deleteById(id);
+        ragAnswerCache.evictAll();
         deleteOriginalFile(document.getFilePath());
 
     }
@@ -138,5 +182,17 @@ public class DocumentServiceImpl implements DocumentService {
             // 数据库与向量库已清理，文件清理失败只记录告警，避免向客户端返回伪失败。
             log.warn("Document record was removed but original file could not be deleted: {}", file, ex);
         }
+    }
+
+    private Path resolveOriginalFile(String relativePath) {
+        if (relativePath == null || relativePath.isBlank()) {
+            throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "Original document file not found");
+        }
+        Path root = Paths.get(uploadRoot).toAbsolutePath().normalize();
+        Path file = root.resolve(relativePath).normalize();
+        if (!file.startsWith(root) || file.equals(root) || Files.isDirectory(file)) {
+            throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "Invalid stored document path");
+        }
+        return file;
     }
 }

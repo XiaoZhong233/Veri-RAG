@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.verirag.mapper.ChatMessageMapper">
+
+    <sql id="MessageColumns">
+        id, session_id, role, content, refs, create_time
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO t_chat_message (session_id, role, content, refs)
+        VALUES (#{sessionId}, #{role}, #{content}, #{refs})
+    </insert>
+
+    <select id="listBySessionId" resultType="com.example.verirag.entity.ChatMessage">
+        SELECT <include refid="MessageColumns" />
+        FROM t_chat_message
+        WHERE session_id = #{sessionId}
+        ORDER BY create_time ASC, id ASC
+    </select>
+
+    <delete id="deleteBySessionId">
+        DELETE FROM t_chat_message WHERE session_id = #{sessionId}
+    </delete>
+
+    <select id="countAssistantToday" resultType="long">
+        SELECT COUNT(*)
+        FROM t_chat_message
+        WHERE role = 'ASSISTANT'
+          AND create_time >= CURDATE()
+          AND create_time &lt; DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+    </select>
+
+    <select id="countAssistantByDayLast7" resultType="map">
+        SELECT DATE_FORMAT(DATE(create_time), '%Y-%m-%d') AS dayKey, COUNT(*) AS cnt
+        FROM t_chat_message
+        WHERE role = 'ASSISTANT'
+          AND create_time >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+        GROUP BY DATE_FORMAT(DATE(create_time), '%Y-%m-%d')
+        ORDER BY dayKey ASC
+    </select>
+</mapper>

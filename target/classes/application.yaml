@@ -43,16 +43,14 @@ logging:
     com.example.verirag: ${APP_LOG_LEVEL:DEBUG}
     org.springframework.ai: DEBUG
     org.mybatis: DEBUG
-mybatis:
+mybatis-plus:
   mapper-locations:
     - classpath:mapper/**/*.xml
   configuration:
     map-underscore-to-camel-case: true
-
-pagehelper:
-  helper-dialect: mysql
-  reasonable: true
-  support-methods-arguments: true
+  global-config:
+    db-config:
+      id-type: auto
 
 jwt:
   secret: VYdac/JBAW+noUscEgYffr/TlUgPwCHZkFkULziZ8kTZOb6sF6ylZYgXj4XisLr4

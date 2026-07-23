@@ -82,10 +82,8 @@ CREATE TABLE t_system_log (
 -- ========== 测试数据 ==========
 -- 密码均为 123456 的 MD5
 INSERT INTO t_user (username, password, real_name, role, status) VALUES
-('admin', 'e10adc3949ba59abbe56e057f20f883e', '系统管理员', 'ADMIN', 1),
-('user1', 'e10adc3949ba59abbe56e057f20f883e', '张三', 'USER', 1),
-('user2', 'e10adc3949ba59abbe56e057f20f883e', '李四', 'USER', 1),
-('user3', 'e10adc3949ba59abbe56e057f20f883e', '王五', 'USER', 1);
+('admin', 'e10adc3949ba59abbe56e057f20f883e', 'Admin', 'ADMIN', 1),
+('user1', 'e10adc3949ba59abbe56e057f20f883e', 'Howell', 'USER', 1);
 
 INSERT INTO t_kb_category (name, description, icon, sort_order) VALUES
 ('技术文档', '研发与接口说明类文档', 'Document', 1),

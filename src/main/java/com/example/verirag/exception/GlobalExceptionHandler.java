@@ -3,6 +3,7 @@ package com.example.verirag.exception;
 
 import com.example.verirag.common.R;
 import com.example.verirag.common.ResultCode;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -14,6 +15,7 @@ import java.util.stream.Collectors;
  * 全局异常处理。
  */
 @RestControllerAdvice
+@Slf4j
 public class GlobalExceptionHandler {
 
     /**
@@ -40,6 +42,8 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(Exception.class)
     public R<Void> handleAny(Exception e) {
-        return R.fail(ResultCode.ERROR, e.getMessage() != null ? e.getMessage() : ResultCode.ERROR.getMessage());
+        log.error("Unhandled request exception", e);
+        return R.fail(ResultCode.ERROR,
+                e.getMessage() != null ? e.getMessage() : ResultCode.ERROR.getMessage());
     }
 }

@@ -20,7 +20,7 @@ spring:
       url: redis://localhost:6380
       client-type: jedis
   datasource:
-    url: jdbc:mysql://localhost:3306/db_java1234_rag?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+    url: jdbc:mysql://localhost:3306/veri_rag?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
     username: root
     password: 123456
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -33,7 +33,7 @@ server:
 
 file:
   upload:
-    path: ./file
+    path: file
 
 logging:
   file:

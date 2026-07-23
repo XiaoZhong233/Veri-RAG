@@ -62,7 +62,7 @@ rag:
     chunk-size: ${RAG_CHUNK_SIZE:800}
     max-num-chunks: ${RAG_MAX_NUM_CHUNKS:10000}
   retrieval:
-    similarity-threshold: ${RAG_SIMILARITY_THRESHOLD:0.5}
+    similarity-threshold: ${RAG_SIMILARITY_THRESHOLD:0.70}
   answer-cache:
     enabled: ${RAG_ANSWER_CACHE_ENABLED:true}
     similarity-threshold: ${RAG_ANSWER_CACHE_SIMILARITY_THRESHOLD:0.93}

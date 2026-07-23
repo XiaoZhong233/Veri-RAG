@@ -7,12 +7,14 @@ import org.springframework.ai.chat.client.advisor.api.CallAdvisorChain;
 import org.springframework.ai.chat.client.advisor.api.StreamAdvisor;
 import org.springframework.ai.chat.client.advisor.api.StreamAdvisorChain;
 import org.springframework.stereotype.Component;
+import org.springframework.core.Ordered;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
 
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 
 @Component
 public class LoggerAdvisor implements CallAdvisor, StreamAdvisor {
@@ -22,7 +24,7 @@ public class LoggerAdvisor implements CallAdvisor, StreamAdvisor {
     @Override
     public ChatClientResponse adviseCall(ChatClientRequest request, CallAdvisorChain chain) {
         long start = System.nanoTime();
-        log.debug("AI call started, request: {}", request);
+        log.debug("AI call started: {}", promptSummary(request));
         try {
             ChatClientResponse response = chain.nextCall(request);
             log.info("AI call completed in {} ms", elapsedMillis(start));
@@ -39,7 +41,7 @@ public class LoggerAdvisor implements CallAdvisor, StreamAdvisor {
         return Flux.defer(() -> {
             long start = System.nanoTime();
             AtomicBoolean firstChunk = new AtomicBoolean(true);
-            log.debug("AI stream started");
+            log.debug("AI stream started: {}", promptSummary(request));
             return chain.nextStream(request)
                     .doOnNext(response -> {
                         if (firstChunk.compareAndSet(true, false)) {
@@ -59,10 +61,17 @@ public class LoggerAdvisor implements CallAdvisor, StreamAdvisor {
 
     @Override
     public int getOrder() {
-        return 0;
+        return Ordered.LOWEST_PRECEDENCE;
     }
 
     private long elapsedMillis(long start) {
         return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+    }
+
+    private static String promptSummary(ChatClientRequest request) {
+        String roles = request.prompt().getInstructions().stream()
+                .map(message -> message.getMessageType().name())
+                .collect(Collectors.joining(","));
+        return "messageCount=" + request.prompt().getInstructions().size() + ", roles=" + roles;
     }
 }

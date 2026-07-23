@@ -9,6 +9,7 @@ import com.example.verirag.entity.ChatSession;
 import com.example.verirag.exception.BusinessException;
 import com.example.verirag.mapper.ChatMessageMapper;
 import com.example.verirag.mapper.ChatSessionMapper;
+import com.example.verirag.prompt.RagPromptManager;
 import com.example.verirag.service.ChatService;
 import com.example.verirag.service.RagAnswerCache;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -16,6 +17,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
@@ -34,6 +36,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -42,20 +45,8 @@ import java.util.stream.Collectors;
 @Slf4j
 public class ChatServiceImpl implements ChatService {
     private static final int RAG_TOP_K = 2;
-    private static final double DEFAULT_SIMILARITY_THRESHOLD = 0.5;
-    /**
-
-     * 系统提示：要求仅依据上下文作答；引用由接口单独返回。
-
-     */
-    public static final String SYSTEM_PROMPT = """
-            你是「RAG 企业知识库」的智能助手。请严格根据检索到的上下文回答问题。
-            若上下文不足以回答，请明确说明「知识库中未找到相关信息」，不要编造。
-            回答正文请使用清晰的 Markdown（可适当使用标题、列表）。
-            不要在正文中附加、复述或罗列知识片段、文档标题、引用编号或“参考资料”；
-            引用信息会由服务端通过 references 字段单独返回并由前端展示。
-            """;
-
+    private static final double DEFAULT_SIMILARITY_THRESHOLD = 0.70;
+    private static final int HISTORY_MAX_MESSAGES = 6;
     private final ChatClient chatClient;
 
     private final VectorStore vectorStore;
@@ -72,6 +63,8 @@ public class ChatServiceImpl implements ChatService {
 
     private final RetrievalTimingAdvisor retrievalTimingAdvisor;
 
+    private final RagPromptManager promptManager;
+
     @Value("${rag.retrieval.similarity-threshold:" + DEFAULT_SIMILARITY_THRESHOLD + "}")
     private double similarityThreshold;
 
@@ -81,8 +74,12 @@ public class ChatServiceImpl implements ChatService {
         if (requestedSessionId != null) {
             assertSessionOwner(userId, requestedSessionId);
         }
+        List<ChatMessage> history = loadRecentHistory(requestedSessionId);
 
-        var cached = ragAnswerCache.find(req.getQuestion(), req.getCategoryIds());
+        // 追问的答案依赖前文，不参与跨会话回答缓存，避免上下文错配。
+        var cached = requestedSessionId == null
+                ? ragAnswerCache.find(req.getQuestion(), req.getCategoryIds())
+                : Optional.<RagAnswerCache.Hit>empty();
         if (cached.isPresent()) {
             RagAnswerCache.Hit hit = cached.get();
             String refsJson = objectMapper.writeValueAsString(hit.references());
@@ -100,16 +97,20 @@ public class ChatServiceImpl implements ChatService {
 
         //检索计时
         List<Document> cited = retrievalTimingAdvisor.advise(requestedSessionId,
-                () -> retrieveForCategories(req.getQuestion(), req.getCategoryIds()));
+                () -> retrieveForCategories(buildRetrievalQuery(req.getQuestion(), history), req.getCategoryIds()));
 
         long llmStart = System.nanoTime();
-        String userTurn = buildRagUserMessage(req.getQuestion(), cited);
-        String answer = chatClient.prompt().system(SYSTEM_PROMPT).user(userTurn).call().content();
+        String ragContext = buildRagContext(cited);
+        String answer = chatClient.prompt()
+                .advisors(advisors -> advisors.param(ChatMemory.CONVERSATION_ID, String.valueOf(requestedSessionId)))
+                .system(promptManager.systemPrompt() + "\n\n" + ragContext).user(req.getQuestion()).call().content();
         long llmMs = (System.nanoTime() - llmStart) / 1_000_000L;
         log.info("LLM completed: sessionId={}, duration={}ms", requestedSessionId, llmMs);
         List<Map<String, Object>> refs = toRefs(cited);
         String refsJson = objectMapper.writeValueAsString(refs);
-        ragAnswerCache.put(req.getQuestion(), req.getCategoryIds(), answer, refs);
+        if (requestedSessionId == null) {
+            ragAnswerCache.put(req.getQuestion(), req.getCategoryIds(), answer, refs);
+        }
 
         Long sessionId = transactionTemplate.execute(status ->
                 persistConversation(userId, requestedSessionId, req.getQuestion(), answer, refsJson));
@@ -130,8 +131,11 @@ public class ChatServiceImpl implements ChatService {
         if (requestedSessionId != null) {
             assertSessionOwner(userId, requestedSessionId);
         }
+        List<ChatMessage> history = loadRecentHistory(requestedSessionId);
 
-        var cached = ragAnswerCache.find(req.getQuestion(), req.getCategoryIds());
+        var cached = requestedSessionId == null
+                ? ragAnswerCache.find(req.getQuestion(), req.getCategoryIds())
+                : Optional.<RagAnswerCache.Hit>empty();
         if (cached.isPresent()) {
             RagAnswerCache.Hit hit = cached.get();
             Long sessionId = transactionTemplate.execute(status ->
@@ -156,7 +160,7 @@ public class ChatServiceImpl implements ChatService {
         }
 
         List<Document> cited = retrievalTimingAdvisor.advise(requestedSessionId,
-                () -> retrieveForCategories(req.getQuestion(), req.getCategoryIds()));
+                () -> retrieveForCategories(buildRetrievalQuery(req.getQuestion(), history), req.getCategoryIds()));
 
         List<Map<String, Object>> references = toRefs(cited);
         final String referencesJson;
@@ -173,10 +177,12 @@ public class ChatServiceImpl implements ChatService {
             return Flux.error(new IllegalStateException("Failed to create chat session"));
         }
 
-        String userTurn = buildRagUserMessage(req.getQuestion(), cited);
+        String ragContext = buildRagContext(cited);
         StringBuilder fullAnswer = new StringBuilder();
         long llmStart = System.nanoTime();
-        return chatClient.prompt().system(SYSTEM_PROMPT).user(userTurn).stream().content()
+        return chatClient.prompt()
+                .advisors(advisors -> advisors.param(ChatMemory.CONVERSATION_ID, String.valueOf(sessionId)))
+                .system(promptManager.systemPrompt() + "\n\n" + ragContext).user(req.getQuestion()).stream().content()
                 .doOnNext(fullAnswer::append)
                 .map(ChatStreamEvent::chunk)
                 .startWith(ChatStreamEvent.meta(sessionId))
@@ -184,7 +190,9 @@ public class ChatServiceImpl implements ChatService {
                     Long finalSessionId = sessionId;
                     transactionTemplate.executeWithoutResult(status ->
                             persistAssistantMessage(finalSessionId, fullAnswer.toString(), referencesJson));
-                    ragAnswerCache.put(req.getQuestion(), req.getCategoryIds(), fullAnswer.toString(), references);
+                    if (requestedSessionId == null) {
+                        ragAnswerCache.put(req.getQuestion(), req.getCategoryIds(), fullAnswer.toString(), references);
+                    }
                     long llmMillis = (System.nanoTime() - llmStart) / 1_000_000;
                     log.info("LLM streaming completed: sessionId={}, duration={}ms", finalSessionId, llmMillis);
                     return ChatStreamEvent.done(finalSessionId, references);
@@ -267,8 +275,8 @@ public class ChatServiceImpl implements ChatService {
     }
 
     /**
-     * 有分类时优先限制在指定分类中检索；无命中或 Redis 过滤异常时，回退到全库检索。
-     * 分类过滤仅用于提升召回体验，不能作为权限边界。
+     * 有分类时只在指定分类中检索；无足够相关命中时直接返回空结果。
+     * 不将其它分类的低相关片段作为兜底上下文，避免模型产生无依据引用。
      */
     private List<Document> retrieveForCategories(String question, List<Long> categoryIds) {
         if (categoryIds == null || categoryIds.isEmpty()) {
@@ -288,12 +296,12 @@ public class ChatServiceImpl implements ChatService {
             if (!filtered.isEmpty()) {
                 return filtered;
             }
-            log.info("No vector hit for categoryIds {}; falling back to all categories", categoryKeys);
+            log.info("No sufficiently relevant vector hit for categoryIds {}; returning no context", categoryKeys);
         }
         catch (Exception ex) {
-            log.warn("Category-filtered vector search failed; falling back to all categories: {}", ex.toString());
+            log.warn("Category-filtered vector search failed; returning no context: {}", ex.toString());
         }
-        return vectorSimilaritySearch(question, null);
+        return Collections.emptyList();
     }
 
     private List<Document> vectorSimilaritySearch(String question, Filter.Expression filter) {
@@ -311,6 +319,7 @@ public class ChatServiceImpl implements ChatService {
         // Redis KNN 通常已经按距离排序；这里显式按 Spring AI 归一化后的 score
         // 降序再排一次，确保上下文和对外 references 均按相关性从高到低展示。
         return documents.stream()
+                .filter(document -> document.getScore() != null && document.getScore() >= similarityThreshold)
                 .sorted(Comparator.comparing(Document::getScore,
                         Comparator.nullsLast(Comparator.reverseOrder())))
                 .toList();
@@ -327,20 +336,38 @@ public class ChatServiceImpl implements ChatService {
     /**
      * 将检索到的 chunk 作为上下文拼进用户消息，供模型基于知识库回答。
      */
-    private static String buildRagUserMessage(String question, List<Document> cited) {
-        String normalizedQuestion = question == null ? "" : question.strip();
-        if (cited == null || cited.isEmpty()) {
-            return """
-                    知识库没有检索到足够相关的片段。请根据系统说明明确告知用户，
-                    不要编造知识库中不存在的内容。
+    private List<ChatMessage> loadRecentHistory(Long sessionId) {
+        if (sessionId == null) {
+            return Collections.emptyList();
+        }
+        List<ChatMessage> messages = chatMessageMapper.listBySessionId(sessionId);
+        if (messages == null || messages.isEmpty()) {
+            return Collections.emptyList();
+        }
+        int from = Math.max(messages.size() - HISTORY_MAX_MESSAGES, 0);
+        return messages.subList(from, messages.size());
+    }
 
-                    用户问题：
-                    """ + normalizedQuestion;
+    /** 用上一轮用户问题补足“这个/它/哪里”等指代不明的追问检索语义。 */
+    private static String buildRetrievalQuery(String question, List<ChatMessage> history) {
+        if (history != null) {
+            for (int i = history.size() - 1; i >= 0; i--) {
+                ChatMessage message = history.get(i);
+                if ("USER".equals(message.getRole()) && message.getContent() != null && !message.getContent().isBlank()) {
+                    return message.getContent().strip() + "\n后续问题：" + question.strip();
+                }
+            }
+        }
+        return question;
+    }
+
+    private String buildRagContext(List<Document> cited) {
+        if (cited == null || cited.isEmpty()) {
+            return promptManager.noContext();
         }
 
         StringBuilder prompt = new StringBuilder();
-        prompt.append("以下是从知识库检索到的片段。请严格依据这些片段回答；")
-                .append("若片段互相冲突，优先采用与问题最直接相关的表述。\n\n");
+        prompt.append(promptManager.contextPrefix()).append("\n\n");
 
         int number = 1;
         for (Document document : cited) {
@@ -354,13 +381,12 @@ public class ChatServiceImpl implements ChatService {
                     ? "(untitled document)"
                     : String.valueOf(titleValue);
 
-            prompt.append("### 片段 ").append(number++).append(" · ").append(title).append("\n")
-                    .append(text.strip()).append("\n\n");
+            prompt.append(promptManager.contextItem(number++, title, text.strip())).append("\n\n");
         }
 
-        prompt.append("---\n用户问题：\n").append(normalizedQuestion);
         return prompt.toString();
     }
+
 
     /**
      * 将命中的向量 chunk 按检索顺序逐条转为对外引用。

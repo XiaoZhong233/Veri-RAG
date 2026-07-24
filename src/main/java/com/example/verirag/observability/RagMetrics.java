@@ -54,6 +54,7 @@ public class RagMetrics {
                 .record(Math.max(chunkCount, 0));
     }
 
+    /** 记录流式响应的首个 Token 到达耗时（TTFT）。 */
     public void recordLlmFirstToken(Duration duration) {
         Timer.builder("rag.llm.first-token.duration")
                 .description("Time to first streamed LLM token")

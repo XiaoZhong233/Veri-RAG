@@ -29,7 +29,7 @@ OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://observability:4318/v1/metrics
 | `rag.cache.requests` | 回答缓存命中和未命中次数。 |
 | `rag.retrieval.duration` | embedding 与 Redis 向量检索耗时，`outcome` 为 hit/empty/error。 |
 | `rag.retrieval.chunks` | 每次检索返回的相关 Chunk 数。 |
-| `rag.llm.first-token.duration` | 流式回答的首 token 延迟。 |
+| `rag.llm.first-token.duration` | 流式回答的首 Token 延迟（TTFT）。 |
 | `rag.llm.duration` | 大模型调用总耗时，按 stream/sync 与 success/error 区分。 |
 
 避免把 `sessionId`、用户问题、文档标题等高基数字段作为 Metrics tag。它们只出现在应用日志中。

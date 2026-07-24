@@ -17,6 +17,7 @@ import com.example.verirag.service.RagAnswerCache;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
@@ -48,9 +49,12 @@ import java.util.stream.Collectors;
 @Slf4j
 public class ChatServiceImpl implements ChatService {
     private static final int DEFAULT_RAG_TOP_K = 2;
-    private static final double DEFAULT_SIMILARITY_THRESHOLD = 0.70;
-    private static final int HISTORY_MAX_MESSAGES = 4;
+    private static final double DEFAULT_SIMILARITY_THRESHOLD = 0.75;
+    private static final int DEFAULT_HISTORY_MAX_MESSAGES = 6;
     private final ChatClient chatClient;
+
+    @Qualifier("manualHistoryChatClient")
+    private final ChatClient manualHistoryChatClient;
 
     private final VectorStore vectorStore;
 
@@ -77,6 +81,14 @@ public class ChatServiceImpl implements ChatService {
 
     @Value("${rag.retrieval.top-k:" + DEFAULT_RAG_TOP_K + "}")
     private int retrievalTopK;
+
+    /** 用于检索改写和手动拼接的最近对话消息数量。 */
+    @Value("${rag.chat.history-max-messages:" + DEFAULT_HISTORY_MAX_MESSAGES + "}")
+    private int historyMaxMessages;
+
+    /** 是否将会话摘要和历史手动压成 user message，而非由 ChatMemory 注入多角色消息。 */
+    @Value("${rag.chat.manual-history-enabled:false}")
+    private boolean manualHistoryEnabled;
 
     @Override
     public ChatAskResult ask(Long userId, ChatAskRequest req) throws Exception {
@@ -116,9 +128,11 @@ public class ChatServiceImpl implements ChatService {
         String ragContext = buildRagContext(cited);
         String answer;
         try {
-            answer = chatClient.prompt()
-                    .advisors(advisors -> advisors.param(ChatMemory.CONVERSATION_ID, String.valueOf(requestedSessionId)))
-                    .system(promptManager.systemPrompt() + "\n\n" + ragContext).user(req.getQuestion()).call().content();
+            answer = newChatPrompt(requestedSessionId)
+                    .system(buildModelSystemPrompt(ragContext))
+                    .user(buildModelUserMessage(req.getQuestion(), requestedSessionId, history, ragContext))
+                    .call()
+                    .content();
         }
         catch (RuntimeException ex) {
             ragMetrics.recordLlm(java.time.Duration.ofNanos(System.nanoTime() - llmStart), "sync", "error");
@@ -211,14 +225,16 @@ public class ChatServiceImpl implements ChatService {
         StringBuilder fullAnswer = new StringBuilder();
         long llmStart = System.nanoTime();
         AtomicBoolean firstToken = new AtomicBoolean(true);
-        return chatClient.prompt()
-                .advisors(advisors -> advisors.param(ChatMemory.CONVERSATION_ID, String.valueOf(sessionId)))
-                .system(promptManager.systemPrompt() + "\n\n" + ragContext).user(req.getQuestion()).stream().content()
+        return newChatPrompt(sessionId)
+                .system(buildModelSystemPrompt(ragContext))
+                .user(buildModelUserMessage(req.getQuestion(), requestedSessionId, history, ragContext))
+                .stream().content()
                 .doOnNext(chunk -> {
                     fullAnswer.append(chunk);
                     if (firstToken.compareAndSet(true, false)) {
-                        ragMetrics.recordLlmFirstToken(
-                                java.time.Duration.ofNanos(System.nanoTime() - llmStart));
+                        long firstTokenMillis = (System.nanoTime() - llmStart) / 1_000_000L;
+                        ragMetrics.recordLlmFirstToken(java.time.Duration.ofMillis(firstTokenMillis));
+                        log.info("LLM first token: sessionId={}, duration={}ms", sessionId, firstTokenMillis);
                     }
                 })
                 .doOnComplete(() -> ragMetrics.recordLlm(
@@ -390,7 +406,7 @@ public class ChatServiceImpl implements ChatService {
         if (messages == null || messages.isEmpty()) {
             return Collections.emptyList();
         }
-        int from = Math.max(messages.size() - HISTORY_MAX_MESSAGES, 0);
+        int from = Math.max(messages.size() - Math.max(historyMaxMessages, 0), 0);
         return messages.subList(from, messages.size());
     }
 
@@ -405,6 +421,53 @@ public class ChatServiceImpl implements ChatService {
             }
         }
         return question;
+    }
+
+    /**
+     * 常规模型交给 ChatMemory Advisor 注入原生 role 历史；兼容性模式则只使用无 Advisor 的客户端。
+     */
+    private ChatClient.ChatClientRequestSpec newChatPrompt(Long conversationId) {
+        if (manualHistoryEnabled) {
+            return manualHistoryChatClient.prompt();
+        }
+        return chatClient.prompt()
+                .advisors(advisors -> advisors.param(ChatMemory.CONVERSATION_ID, String.valueOf(conversationId)));
+    }
+
+    private String buildModelSystemPrompt(String ragContext) {
+        // 手动模式的知识库和历史都被收敛到 user message，最终请求严格只有 system + user。
+        return manualHistoryEnabled ? promptManager.systemPrompt() : promptManager.systemPrompt() + "\n\n" + ragContext;
+    }
+
+    private String buildModelUserMessage(String question, Long sessionId, List<ChatMessage> history, String ragContext) {
+        if (!manualHistoryEnabled) {
+            return question;
+        }
+
+        StringBuilder input = new StringBuilder();
+        ChatSession session = sessionId == null ? null : chatSessionMapper.selectById(sessionId);
+        if (session != null && session.getMemorySummary() != null && !session.getMemorySummary().isBlank()) {
+            input.append("【较早对话摘要】\n")
+                    .append(session.getMemorySummary().strip())
+                    .append("\n\n");
+        }
+        if (history != null && !history.isEmpty()) {
+            input.append("【最近对话记录】\n");
+            for (ChatMessage message : history) {
+                String content = message.getContent();
+                if (content == null || content.isBlank()) {
+                    continue;
+                }
+                String speaker = "ASSISTANT".equals(message.getRole()) ? "助手" : "用户";
+                input.append(speaker).append("：").append(content.strip()).append("\n");
+            }
+            input.append("\n");
+        }
+        input.append("【知识库资料】\n")
+                .append(ragContext.strip())
+                .append("\n\n【本次问题】\n")
+                .append(question.strip());
+        return input.toString();
     }
 
     private String buildRagContext(List<Document> cited) {
@@ -432,7 +495,6 @@ public class ChatServiceImpl implements ChatService {
 
         return prompt.toString();
     }
-
 
     /**
      * 将命中的向量 chunk 按检索顺序逐条转为对外引用。

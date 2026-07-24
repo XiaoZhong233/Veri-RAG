@@ -6,9 +6,9 @@
                     source="logging.file.path" defaultValue="logs"/>
 
     <property name="CONSOLE_PATTERN"
-              value="%d{yyyy-MM-dd HH:mm:ss.SSS} %highlight(%-5level) [%thread] %cyan(%logger{36}) - %msg%n%ex"/>
+              value="%d{yyyy-MM-dd HH:mm:ss.SSS} %highlight(%-5level) [trace=%X{traceId:-} span=%X{spanId:-}] [%thread] %cyan(%logger{36}) - %msg%n%ex"/>
     <property name="FILE_PATTERN"
-              value="%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n%ex"/>
+              value="%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [trace=%X{traceId:-} span=%X{spanId:-}] [%thread] %logger{36} - %msg%n%ex"/>
 
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>

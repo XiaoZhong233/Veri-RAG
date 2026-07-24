@@ -27,7 +27,7 @@ RAG_DEMO_USERNAME=your_user RAG_DEMO_PASSWORD=your_password \
 # 流式 LLM 调用次数
 rag_llm_duration_milliseconds_count{mode="stream",outcome="success"}
 
-# 流式 LLM 平均耗时（应用启动以来）
+# 流式 LLM 平均首 Token 耗时（应用启动以来）
 sum(rag_llm_duration_milliseconds_sum{mode="stream",outcome="success"})
 /
 sum(rag_llm_duration_milliseconds_count{mode="stream",outcome="success"})

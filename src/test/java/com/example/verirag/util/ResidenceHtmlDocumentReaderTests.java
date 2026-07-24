@@ -43,8 +43,17 @@ class ResidenceHtmlDocumentReaderTests {
                 """);
 
         var documents = reader.read(file);
+        var residences = reader.readResidenceData(file);
 
         assertThat(documents).hasSize(2);
+        assertThat(residences).singleElement().satisfies(residence -> {
+            assertThat(residence.sourceId()).isEqualTo("londonbridge");
+            assertThat(residence.name()).isEqualTo("London Bridge Residence");
+            assertThat(residence.address()).isEqualTo("42 Weston Street, SE1 3QD");
+            assertThat(residence.station()).contains("London Bridge");
+            assertThat(residence.latitude()).isEqualTo("51.5030297");
+            assertThat(residence.longitude()).isEqualTo("-0.0852184");
+        });
         assertThat(documents.getFirst().getText())
                 .contains("# Londonist 伦敦公寓位置总览",
                         "Londonist 在伦敦共有 **1 个公寓**",

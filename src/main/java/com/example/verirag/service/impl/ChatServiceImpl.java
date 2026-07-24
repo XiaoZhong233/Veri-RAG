@@ -12,8 +12,12 @@ import com.example.verirag.mapper.ChatSessionMapper;
 import com.example.verirag.memory.ConversationSummaryService;
 import com.example.verirag.observability.RagMetrics;
 import com.example.verirag.prompt.RagPromptManager;
+import com.example.verirag.prompt.PropertyToolPromptManager;
 import com.example.verirag.service.ChatService;
 import com.example.verirag.service.RagAnswerCache;
+import com.example.verirag.tool.PropertyQueryRouter;
+import com.example.verirag.tool.PropertyQueryTools;
+import com.example.verirag.tool.ToolCallEventContext;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,12 +34,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.io.InterruptedIOException;
-import java.text.Normalizer;
-import java.time.DateTimeException;
 import java.time.LocalDate;
-import java.time.YearMonth;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -49,8 +51,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Service
@@ -59,29 +59,7 @@ import java.util.stream.Collectors;
 public class ChatServiceImpl implements ChatService {
     private static final int DEFAULT_RAG_TOP_K = 8;
     private static final double DEFAULT_SIMILARITY_THRESHOLD = 0.75;
-    private static final double PORTFOLIO_OVERVIEW_SIMILARITY_THRESHOLD = 0.60;
     private static final int DEFAULT_HISTORY_MAX_MESSAGES = 6;
-    private static final String PORTFOLIO_OVERVIEW_QUERY_MARKER = "【全量公寓统计检索】";
-    private static final String SCHOOL_LOCATION_QUERY_MARKER = "【学校位置检索】";
-    private static final Pattern UCL_DISTANCE_PATTERN = Pattern.compile(
-            "(?i)(?:university\\s+college\\s+london\\s*\\(ucl\\)"
-                    + "|ucl\\s*\\(university\\s+college\\s+london\\))[^\\r\\n\\d]*(\\d+)\\s*(?:min|dk)");
-    private static final Pattern DURATION_MONTHS_PATTERN = Pattern.compile("(\\d+)\\s*个月");
-    private static final Pattern DURATION_WEEKS_PATTERN = Pattern.compile(
-            "(\\d+)\\s*(?:周|weeks?)", Pattern.CASE_INSENSITIVE);
-    private static final Pattern WEEK_RANGE_PATTERN = Pattern.compile(
-            "(\\d+)\\s*[-–—]\\s*(\\d+)\\s*weeks?", Pattern.CASE_INSENSITIVE);
-    private static final Pattern REQUEST_MONTH_PATTERN = Pattern.compile(
-            "(?<!\\d)(1[0-2]|0?[1-9])\\s*月份?");
-    private static final Pattern DATE_RANGE_PATTERN = Pattern.compile(
-            "(\\d{4})[./-](\\d{1,2})[./-](\\d{1,2})\\s*[-–—]{1,3}\\s*"
-                    + "(\\d{4})[./-](\\d{1,2})[./-](\\d{1,2})");
-    private static final Pattern AVAILABILITY_PATTERN = Pattern.compile(
-            "(?im)\\*\\*(?:room\\s+availability|库存|房态)\\*\\*\\s*:\\s*([^\\r\\n]+)");
-    private static final Pattern MARKDOWN_HEADING_PATTERN = Pattern.compile(
-            "(?m)^##\\s+(.+?)\\s*$");
-    private static final Pattern PROMOTION_DEADLINE_PATTERN = Pattern.compile(
-            "(?:截止(?:到)?|有效期至)\\s*(?:(\\d{4})[./年-])?(\\d{1,2})[.月/-](\\d{1,2})日?");
     private static final ZoneId LONDON_TIME_ZONE = ZoneId.of("Europe/London");
     private final ChatClient chatClient;
 
@@ -108,26 +86,15 @@ public class ChatServiceImpl implements ChatService {
 
     private final RagPromptManager promptManager;
 
+    private final PropertyToolPromptManager propertyToolPromptManager;
+
+    private final PropertyQueryTools propertyQueryTools;
+
     @Value("${rag.retrieval.similarity-threshold:" + DEFAULT_SIMILARITY_THRESHOLD + "}")
     private double similarityThreshold;
 
     @Value("${rag.retrieval.top-k:" + DEFAULT_RAG_TOP_K + "}")
     private int retrievalTopK;
-
-    @Value("${rag.retrieval.location-top-k:50}")
-    private int locationTopK;
-
-    @Value("${rag.retrieval.location-max-candidates:12}")
-    private int locationMaxCandidates;
-
-    @Value("${rag.retrieval.room-offer-top-k:80}")
-    private int roomOfferTopK;
-
-    @Value("${rag.retrieval.room-offer-max-results:32}")
-    private int roomOfferMaxResults;
-
-    @Value("${rag.retrieval.room-offer-max-per-residence:6}")
-    private int roomOfferMaxPerResidence;
 
     /** 用于检索改写和手动拼接的最近对话消息数量。 */
     @Value("${rag.chat.history-max-messages:" + DEFAULT_HISTORY_MAX_MESSAGES + "}")
@@ -145,9 +112,12 @@ public class ChatServiceImpl implements ChatService {
             assertSessionOwner(userId, requestedSessionId);
         }
         List<ChatMessage> history = loadRecentHistory(requestedSessionId);
+        boolean structuredPropertyQuery = PropertyQueryRouter
+                .isStructuredPropertyQuery(req.getQuestion(), history);
 
         // 追问的答案依赖前文，不参与跨会话回答缓存，避免上下文错配。
-        var cached = requestedSessionId == null
+        // 房情随导入变化，结构化查询也不使用跨会话缓存。
+        var cached = requestedSessionId == null && !structuredPropertyQuery
                 ? ragAnswerCache.find(req.getQuestion(), req.getCategoryIds())
                 : Optional.<RagAnswerCache.Hit>empty();
         ragMetrics.recordCache(cached.isPresent());
@@ -167,17 +137,28 @@ public class ChatServiceImpl implements ChatService {
             return result;
         }
 
-        //检索计时
         List<Document> cited = retrievalTimingAdvisor.advise(requestedSessionId,
-                () -> retrieveForCategories(buildRetrievalQuery(req.getQuestion(), history), req.getCategoryIds()));
+                () -> retrieveKnowledge(
+                        req.getQuestion(), history, req.getCategoryIds(),
+                        structuredPropertyQuery));
 
         long llmStart = System.nanoTime();
         String ragContext = buildRagContext(cited);
         String answer;
         try {
-            answer = newChatPrompt(requestedSessionId)
-                    .system(buildModelSystemPrompt(ragContext))
-                    .user(buildModelUserMessage(req.getQuestion(), requestedSessionId, history, ragContext))
+            ChatClient.ChatClientRequestSpec prompt = newChatPrompt(requestedSessionId);
+            if (structuredPropertyQuery) {
+                prompt = prompt.tools(propertyQueryTools);
+            }
+            answer = prompt
+                    .system(structuredPropertyQuery
+                            ? buildPropertyToolSystemPrompt(ragContext)
+                            : buildModelSystemPrompt(ragContext))
+                    .user(structuredPropertyQuery
+                            ? buildPropertyToolUserMessage(
+                                    req.getQuestion(), requestedSessionId, history)
+                            : buildModelUserMessage(req.getQuestion(),
+                                    requestedSessionId, history, ragContext))
                     .call()
                     .content();
         }
@@ -190,7 +171,7 @@ public class ChatServiceImpl implements ChatService {
         log.info("LLM completed: sessionId={}, duration={}ms", requestedSessionId, llmMs);
         List<Map<String, Object>> refs = toRefs(req.getQuestion(), cited);
         String refsJson = objectMapper.writeValueAsString(refs);
-        if (requestedSessionId == null) {
+        if (requestedSessionId == null && !structuredPropertyQuery) {
             ragAnswerCache.put(req.getQuestion(), req.getCategoryIds(), answer, refs);
         }
 
@@ -217,8 +198,10 @@ public class ChatServiceImpl implements ChatService {
             assertSessionOwner(userId, requestedSessionId);
         }
         List<ChatMessage> history = loadRecentHistory(requestedSessionId);
+        boolean structuredPropertyQuery = PropertyQueryRouter
+                .isStructuredPropertyQuery(req.getQuestion(), history);
 
-        var cached = requestedSessionId == null
+        var cached = requestedSessionId == null && !structuredPropertyQuery
                 ? ragAnswerCache.find(req.getQuestion(), req.getCategoryIds())
                 : Optional.<RagAnswerCache.Hit>empty();
         ragMetrics.recordCache(cached.isPresent());
@@ -251,7 +234,9 @@ public class ChatServiceImpl implements ChatService {
         }
 
         List<Document> cited = retrievalTimingAdvisor.advise(requestedSessionId,
-                () -> retrieveForCategories(buildRetrievalQuery(req.getQuestion(), history), req.getCategoryIds()));
+                () -> retrieveKnowledge(
+                        req.getQuestion(), history, req.getCategoryIds(),
+                        structuredPropertyQuery));
 
         List<Map<String, Object>> references = toRefs(req.getQuestion(), cited);
         final String referencesJson;
@@ -273,9 +258,23 @@ public class ChatServiceImpl implements ChatService {
         long llmStart = System.nanoTime();
         AtomicBoolean firstToken = new AtomicBoolean(true);
         AtomicBoolean streamFailed = new AtomicBoolean(false);
-        return newChatPrompt(sessionId)
-                .system(buildModelSystemPrompt(ragContext))
-                .user(buildModelUserMessage(req.getQuestion(), requestedSessionId, history, ragContext))
+        ChatClient.ChatClientRequestSpec prompt = newChatPrompt(sessionId);
+        if (structuredPropertyQuery) {
+            prompt = prompt.tools(propertyQueryTools);
+        }
+        prompt = prompt.system(structuredPropertyQuery
+                ? buildPropertyToolSystemPrompt(ragContext)
+                : buildModelSystemPrompt(ragContext))
+                .user(structuredPropertyQuery
+                ? buildPropertyToolUserMessage(
+                        req.getQuestion(), requestedSessionId, history)
+                : buildModelUserMessage(req.getQuestion(),
+                        requestedSessionId, history, ragContext));
+        if (structuredPropertyQuery) {
+            return streamPropertyToolAnswer(prompt, sessionId, references,
+                    referencesJson, llmStart, requestStart);
+        }
+        return prompt
                 .stream().content()
                 .doOnNext(chunk -> {
                     fullAnswer.append(chunk);
@@ -296,7 +295,7 @@ public class ChatServiceImpl implements ChatService {
                     transactionTemplate.executeWithoutResult(status ->
                             persistAssistantMessage(finalSessionId, fullAnswer.toString(), referencesJson));
                     conversationSummaryService.maybeSummarize(finalSessionId);
-                    if (requestedSessionId == null) {
+                    if (requestedSessionId == null && !structuredPropertyQuery) {
                         ragAnswerCache.put(req.getQuestion(), req.getCategoryIds(), fullAnswer.toString(), references);
                     }
                     long llmMillis = (System.nanoTime() - llmStart) / 1_000_000;
@@ -323,6 +322,92 @@ public class ChatServiceImpl implements ChatService {
                         streamFailed.get() ? "stream_error" : "success"))
                 .doOnError(error -> ragMetrics.recordRequest(
                         java.time.Duration.ofNanos(System.nanoTime() - requestStart), "error"));
+    }
+
+    /**
+     * Tool calling uses a non-streaming model request because some OpenAI-compatible
+     * providers omit the function name in continuation chunks. The outer API remains
+     * SSE and publishes local tool progress events while the blocking call runs.
+     */
+    private Flux<ChatStreamEvent> streamPropertyToolAnswer(
+            ChatClient.ChatClientRequestSpec prompt,
+            Long sessionId,
+            List<Map<String, Object>> references,
+            String referencesJson,
+            long llmStart,
+            long requestStart) {
+        AtomicBoolean failed = new AtomicBoolean(false);
+        return Flux.deferContextual(contextView -> Flux.<ChatStreamEvent>create(sink -> {
+            sink.next(ChatStreamEvent.meta(sessionId));
+            var task = Mono.fromRunnable(() -> {
+                try {
+                    String answer = ToolCallEventContext.withListener(
+                            event -> {
+                                if (!sink.isCancelled()) {
+                                    sink.next(toToolProgressEvent(event));
+                                }
+                            },
+                            () -> prompt.call().content());
+                    long llmMillis = (System.nanoTime() - llmStart) / 1_000_000L;
+                    ragMetrics.recordLlmFirstToken(java.time.Duration.ofMillis(llmMillis));
+                    ragMetrics.recordLlm(java.time.Duration.ofMillis(llmMillis),
+                            "sync_tool", "success");
+                    log.info("LLM tool response completed: sessionId={}, duration={}ms",
+                            sessionId, llmMillis);
+                    if (sink.isCancelled()) {
+                        return;
+                    }
+                    sink.next(ChatStreamEvent.chunk(answer));
+                    transactionTemplate.executeWithoutResult(status ->
+                            persistAssistantMessage(sessionId, answer, referencesJson));
+                    conversationSummaryService.maybeSummarize(sessionId);
+                    sink.next(ChatStreamEvent.done(sessionId, references));
+                    sink.complete();
+                }
+                catch (RuntimeException error) {
+                    failed.set(true);
+                    ragMetrics.recordLlm(
+                            java.time.Duration.ofNanos(System.nanoTime() - llmStart),
+                            "sync_tool", "error");
+                    String message = friendlyStreamError(error);
+                    log.warn("LLM tool response interrupted: sessionId={}, error={}",
+                            sessionId, error.toString());
+                    if (sink.isCancelled()) {
+                        return;
+                    }
+                    transactionTemplate.executeWithoutResult(status ->
+                            persistAssistantMessage(sessionId, "> " + message, referencesJson));
+                    sink.next(ChatStreamEvent.error(sessionId, message));
+                    sink.complete();
+                }
+            }).subscribeOn(Schedulers.boundedElastic())
+                    .contextWrite(contextView)
+                    .subscribe();
+            sink.onCancel(task::dispose);
+        }))
+                .doOnComplete(() -> ragMetrics.recordRequest(
+                        java.time.Duration.ofNanos(System.nanoTime() - requestStart),
+                        failed.get() ? "stream_error" : "success"))
+                .doOnError(error -> ragMetrics.recordRequest(
+                        java.time.Duration.ofNanos(System.nanoTime() - requestStart), "error"));
+    }
+
+    private static ChatStreamEvent toToolProgressEvent(ToolCallEventContext.Event event) {
+        String label = switch (event.toolName()) {
+            case "search_room_offers" -> "房源、报价和库存";
+            case "quote_room_offer" -> "指定房型报价";
+            case "list_residences" -> "公寓地址";
+            case "get_inventory_summary" -> "公寓和库存统计";
+            default -> "房源数据";
+        };
+        return switch (event.phase()) {
+            case STARTED -> ChatStreamEvent.toolStart(
+                    event.toolName(), "正在查询" + label + "…");
+            case COMPLETED -> ChatStreamEvent.toolDone(
+                    event.toolName(), label + "查询完成，正在整理回答…");
+            case FAILED -> ChatStreamEvent.toolError(
+                    event.toolName(), label + "查询失败，正在处理错误…");
+        };
     }
 
     static String friendlyStreamError(Throwable error) {
@@ -411,13 +496,46 @@ public class ChatServiceImpl implements ChatService {
         }
     }
 
+    /** 房源查询同时检索静态知识并调用数据库 Tool；普通问答保持原 RAG 流程。 */
+    private List<Document> retrieveKnowledge(String question, List<ChatMessage> history,
+                                             List<Long> categoryIds,
+                                             boolean structuredPropertyQuery) {
+        String query = buildRetrievalQuery(question, history);
+        if (structuredPropertyQuery) {
+            query += "\n检索公寓的地址、区域、交通、设施、附近学校和周边地点等静态资料。"
+                    + "报价、租期和库存由数据库 Tool 提供。";
+        }
+        List<Document> documents = retrieveForCategories(query, categoryIds);
+        if (!structuredPropertyQuery) {
+            return documents;
+        }
+        List<Document> staticKnowledge = keepStaticPropertyKnowledge(documents);
+        log.info("Hybrid property RAG: retrieved={}, staticKnowledge={}",
+                documents.size(), staticKnowledge.size());
+        return staticKnowledge;
+    }
+
+    /**
+     * 结构化房源问答只把静态公寓资料交给模型。旧 Excel 房型向量包含 roomType
+     * 元数据，报价和库存已经由数据库 Tool 接管，避免两个来源互相冲突。
+     */
+    static List<Document> keepStaticPropertyKnowledge(List<Document> documents) {
+        if (documents == null || documents.isEmpty()) {
+            return Collections.emptyList();
+        }
+        return documents.stream()
+                .filter(Objects::nonNull)
+                .filter(document -> metadataValue(document.getMetadata(), "roomType") == null)
+                .toList();
+    }
+
     /**
      * 有分类时只在指定分类中检索；无足够相关命中时直接返回空结果。
      * 不将其它分类的低相关片段作为兜底上下文，避免模型产生无依据引用。
      */
     private List<Document> retrieveForCategories(String question, List<Long> categoryIds) {
         if (categoryIds == null || categoryIds.isEmpty()) {
-            return vectorSimilaritySearchWithLocationJoin(question, null);
+            return vectorSimilaritySearch(question, null);
         }
 
         Set<String> categoryKeys = categoryIds.stream()
@@ -429,7 +547,7 @@ public class ChatServiceImpl implements ChatService {
         }
 
         try {
-            List<Document> filtered = vectorSimilaritySearchWithLocationJoin(
+            List<Document> filtered = vectorSimilaritySearch(
                     question, buildCategoryIdFilter(categoryKeys));
             if (!filtered.isEmpty()) {
                 return filtered;
@@ -442,308 +560,11 @@ public class ChatServiceImpl implements ChatService {
         return Collections.emptyList();
     }
 
-    /**
-     * 学校附近房源需要跨两类资料：先从 HTML 位置库找到附近公寓，再用公寓名称
-     * 反查 XLSX 房型价表。其它问题仍只执行一次向量检索。
-     */
-    private List<Document> vectorSimilaritySearchWithLocationJoin(String question,
-                                                                  Filter.Expression filter) {
-        boolean schoolLocationQuery = question.contains(SCHOOL_LOCATION_QUERY_MARKER);
-        List<Document> initial = vectorSimilaritySearch(
-                question, filter, schoolLocationQuery ? locationTopK : retrievalTopK);
-        if (!schoolLocationQuery) {
-            return initial;
-        }
-
-        Map<String, Document> locationsByKey = new LinkedHashMap<>();
-        initial.stream()
-                .filter(ChatServiceImpl::isUclMainLocationDocument)
-                .sorted(Comparator.comparingInt(ChatServiceImpl::uclCommuteMinutes)
-                .thenComparing(Document::getScore,
-                                Comparator.nullsLast(Comparator.reverseOrder())))
-                .forEach(document -> {
-                    String name = residenceName(document);
-                    String key = canonicalResidenceName(name);
-                    if (!key.isBlank() && locationsByKey.size() < Math.max(locationMaxCandidates, 1)) {
-                        locationsByKey.putIfAbsent(key, document);
-                    }
-                });
-
-        List<Document> locationCandidates = new ArrayList<>(locationsByKey.values());
-        List<String> residenceNames = locationCandidates.stream()
-                .map(ChatServiceImpl::residenceName)
-                .filter(Objects::nonNull)
-                .toList();
-        if (residenceNames.isEmpty()) {
-            log.warn("School location join found no UCL location documents: initialDocuments={}",
-                    initial.size());
-            return Collections.emptyList();
-        }
-
-        Set<String> candidateKeys = new LinkedHashSet<>(locationsByKey.keySet());
-        String roomOfferQuery = question + "\n"
-                + "候选公寓名称：" + String.join("、", residenceNames) + "。"
-                + "这些名称可能在价表中带有 Chapter、Prestige、Fresh 等品牌前缀，"
-                + "或省略 Residence 后缀。"
-                + "请检索这些公寓对应的房型、入住日期、租期价格和库存。";
-        List<Document> retrievedOffers = vectorSimilaritySearch(
-                roomOfferQuery, filter, Math.max(roomOfferTopK, retrievalTopK));
-        List<Document> canonicalOffers = retrievedOffers.stream()
-                .filter(document -> matchesCandidateResidence(document, candidateKeys))
-                .toList();
-        List<Document> matchingOffers = canonicalOffers.stream()
-                .filter(document -> matchesRoomRequest(document, question))
-                .map(document -> annotateExpiredPromotion(
-                        document, LocalDate.now(LONDON_TIME_ZONE)))
-                .sorted(Comparator.comparing(ChatServiceImpl::isPromotionExpired))
-                .toList();
-        List<Document> roomOffers = limitRoomOffersByResidence(matchingOffers,
-                roomOfferMaxPerResidence, roomOfferMaxResults);
-        log.info("School location join: initial={}, locations={}, roomRetrieved={}, "
-                        + "nameMatched={}, requestMatched={}, selected={}",
-                initial.size(), locationCandidates.size(), retrievedOffers.size(),
-                canonicalOffers.size(), matchingOffers.size(), roomOffers.size());
-
-        Map<String, Document> merged = new LinkedHashMap<>();
-        Set<String> matchedKeys = roomOffers.stream()
-                .map(ChatServiceImpl::propertyName)
-                .filter(Objects::nonNull)
-                .map(ChatServiceImpl::canonicalResidenceName)
-                .collect(Collectors.toSet());
-        for (Map.Entry<String, Document> entry : locationsByKey.entrySet()) {
-            if (roomOffers.isEmpty() || matchedKeys.contains(entry.getKey())) {
-                merged.put(documentKey(entry.getValue()), entry.getValue());
-            }
-        }
-        for (Document document : roomOffers) {
-            merged.putIfAbsent(documentKey(document), document);
-        }
-        return new ArrayList<>(merged.values());
-    }
-
-    static boolean isUclMainLocationDocument(Document document) {
-        if (document == null) {
-            return false;
-        }
-        String text = Optional.ofNullable(document.getText()).orElse("");
-        String normalized = text.toLowerCase(Locale.ROOT);
-        boolean locationDocument = (document.getMetadata() != null
-                && metadataValue(document.getMetadata(), "residenceId") != null)
-                || (text.contains("### 附近大学")
-                && (text.contains("**地址**") || text.contains("**区域**")));
-        return locationDocument
-                && (normalized.contains("university college london (ucl)")
-                || normalized.contains("ucl (university college london)"));
-    }
-
-    static int uclCommuteMinutes(Document document) {
-        String text = document == null || document.getText() == null ? "" : document.getText();
-        Matcher matcher = UCL_DISTANCE_PATTERN.matcher(text);
-        return matcher.find() ? Integer.parseInt(matcher.group(1)) : Integer.MAX_VALUE;
-    }
-
-    static boolean matchesRoomRequest(Document document, String question) {
-        String text = document == null || document.getText() == null ? "" : document.getText();
-        Matcher availability = AVAILABILITY_PATTERN.matcher(text);
-        if (!availability.find()) {
-            return false;
-        }
-        String status = availability.group(1).strip().toLowerCase(Locale.ROOT);
-        if (status.isBlank()) {
-            return false;
-        }
-
-        int requestedWeeks = requestedDurationWeeks(question);
-        if (requestedWeeks > 0 && !supportsWeeks(text, requestedWeeks)) {
-            return false;
-        }
-        int requestedMonth = requestedStartMonth(question);
-        return requestedMonth <= 0 || supportsStartMonth(text, requestedMonth);
-    }
-
-    static Document annotateExpiredPromotion(Document document, LocalDate today) {
-        if (document == null || document.getText() == null || today == null) {
-            return document;
-        }
-        Matcher deadline = PROMOTION_DEADLINE_PATTERN.matcher(document.getText());
-        if (!deadline.find()) {
-            return document;
-        }
-        int year = deadline.group(1) == null
-                ? inferOfferYear(document.getText(), today.getYear())
-                : Integer.parseInt(deadline.group(1));
-        try {
-            LocalDate expiry = LocalDate.of(year,
-                    Integer.parseInt(deadline.group(2)), Integer.parseInt(deadline.group(3)));
-            if (!expiry.isBefore(today)) {
-                return document;
-            }
-            Map<String, Object> metadata = new LinkedHashMap<>(document.getMetadata());
-            metadata.put("promotionExpired", true);
-            String warning = "\n- **系统校验**: 限时优惠已于 " + expiry
-                    + " 过期；房型库存仍可作为候选，但表中价格不能视为当前有效报价，需重新确认。";
-            return document.mutate()
-                    .text(document.getText().stripTrailing() + warning)
-                    .metadata(metadata)
-                    .build();
-        }
-        catch (DateTimeException | NumberFormatException ex) {
-            return document;
-        }
-    }
-
-    private static int inferOfferYear(String text, int fallbackYear) {
-        Matcher range = DATE_RANGE_PATTERN.matcher(text);
-        return range.find() ? Integer.parseInt(range.group(1)) : fallbackYear;
-    }
-
-    private static boolean isPromotionExpired(Document document) {
-        return document != null
-                && Boolean.TRUE.equals(document.getMetadata().get("promotionExpired"));
-    }
-
-    private static int requestedDurationWeeks(String question) {
-        String value = question == null ? "" : question;
-        Matcher months = DURATION_MONTHS_PATTERN.matcher(value);
-        if (months.find()) {
-            return (int) Math.round(Integer.parseInt(months.group(1)) * 52.0 / 12.0);
-        }
-        Matcher weeks = DURATION_WEEKS_PATTERN.matcher(value);
-        return weeks.find() ? Integer.parseInt(weeks.group(1)) : -1;
-    }
-
-    private static boolean supportsWeeks(String text, int requestedWeeks) {
-        Matcher matcher = WEEK_RANGE_PATTERN.matcher(text);
-        boolean foundRange = false;
-        while (matcher.find()) {
-            foundRange = true;
-            int minimum = Integer.parseInt(matcher.group(1));
-            int maximum = Integer.parseInt(matcher.group(2));
-            if (requestedWeeks >= minimum && requestedWeeks <= maximum) {
-                return true;
-            }
-        }
-        return !foundRange;
-    }
-
-    private static int requestedStartMonth(String question) {
-        Matcher matcher = REQUEST_MONTH_PATTERN.matcher(question == null ? "" : question);
-        return matcher.find() ? Integer.parseInt(matcher.group(1)) : -1;
-    }
-
-    private static boolean supportsStartMonth(String text, int requestedMonth) {
-        Matcher matcher = DATE_RANGE_PATTERN.matcher(text);
-        if (!matcher.find()) {
-            return true;
-        }
-        try {
-            LocalDate start = LocalDate.of(Integer.parseInt(matcher.group(1)),
-                    Integer.parseInt(matcher.group(2)), Integer.parseInt(matcher.group(3)));
-            LocalDate end = LocalDate.of(Integer.parseInt(matcher.group(4)),
-                    Integer.parseInt(matcher.group(5)), Integer.parseInt(matcher.group(6)));
-            YearMonth cursor = YearMonth.from(start);
-            YearMonth last = YearMonth.from(end);
-            for (int count = 0; !cursor.isAfter(last) && count < 36; count++, cursor = cursor.plusMonths(1)) {
-                if (cursor.getMonthValue() == requestedMonth) {
-                    return true;
-                }
-            }
-            return false;
-        }
-        catch (DateTimeException | NumberFormatException ex) {
-            return true;
-        }
-    }
-
-    private static List<Document> limitRoomOffersByResidence(List<Document> offers,
-                                                             int maxPerResidence,
-                                                             int maxTotal) {
-        int perResidenceLimit = Math.max(maxPerResidence, 1);
-        int totalLimit = Math.max(maxTotal, 1);
-        Map<String, Integer> counts = new LinkedHashMap<>();
-        List<Document> selected = new ArrayList<>();
-        for (Document offer : offers) {
-            String propertyName = propertyName(offer);
-            String key = canonicalResidenceName(propertyName);
-            int count = counts.getOrDefault(key, 0);
-            if (key.isBlank() || count >= perResidenceLimit) {
-                continue;
-            }
-            selected.add(offer);
-            counts.put(key, count + 1);
-            if (selected.size() >= totalLimit) {
-                break;
-            }
-        }
-        return selected;
-    }
-
-    private static String residenceName(Document document) {
-        String metadataName = document == null || document.getMetadata() == null
-                ? null : metadataValue(document.getMetadata(), "residenceName");
-        return metadataName == null || metadataName.isBlank()
-                ? markdownHeading(document) : metadataName;
-    }
-
-    private static String propertyName(Document document) {
-        String metadataName = document == null || document.getMetadata() == null
-                ? null : metadataValue(document.getMetadata(), "propertyName");
-        return metadataName == null || metadataName.isBlank()
-                ? markdownHeading(document) : metadataName;
-    }
-
-    private static String markdownHeading(Document document) {
-        String text = document == null || document.getText() == null ? "" : document.getText();
-        Matcher matcher = MARKDOWN_HEADING_PATTERN.matcher(text);
-        return matcher.find() ? matcher.group(1).strip() : "";
-    }
-
-    static String canonicalResidenceName(String name) {
-        if (name == null || name.isBlank()) {
-            return "";
-        }
-        String normalized = Normalizer.normalize(name, Normalizer.Form.NFKD)
-                .replaceAll("\\p{M}+", "")
-                .toLowerCase(Locale.ROOT)
-                .replace('’', '\'')
-                .replace('（', '(')
-                .trim();
-        normalized = normalized
-                .replaceFirst("\\s*\\(.*$", "")
-                .replaceFirst("\\s+\\d{2}\\s*[-/]\\s*\\d{2}\\s+academic\\s+year.*$", "")
-                .replaceFirst("^(?:chapter|prestige|fresh|downing|mezzino|fusion|unite\\s+students?)\\s+", "")
-                .replaceFirst("\\s+(?:residence|student\\s+accommodation)$", "");
-        return normalized.replaceAll("[^a-z0-9]+", "");
-    }
-
-    private static boolean matchesCandidateResidence(Document document, Set<String> candidateKeys) {
-        if (candidateKeys.isEmpty() || document == null) {
-            return false;
-        }
-        String propertyName = propertyName(document);
-        return propertyName != null
-                && candidateKeys.contains(canonicalResidenceName(propertyName));
-    }
-
-    private static String documentKey(Document document) {
-        String text = document.getText();
-        return text == null ? String.valueOf(document.getMetadata()) : text;
-    }
-
     private List<Document> vectorSimilaritySearch(String question, Filter.Expression filter) {
-        return vectorSimilaritySearch(question, filter, retrievalTopK);
-    }
-
-    private List<Document> vectorSimilaritySearch(String question, Filter.Expression filter, int topK) {
-        boolean specializedQuery = question.contains(PORTFOLIO_OVERVIEW_QUERY_MARKER)
-                || question.contains(SCHOOL_LOCATION_QUERY_MARKER);
-        double effectiveThreshold = specializedQuery
-                ? Math.min(similarityThreshold, PORTFOLIO_OVERVIEW_SIMILARITY_THRESHOLD)
-                : similarityThreshold;
         SearchRequest.Builder builder = SearchRequest.builder()
                 .query(question)
-                .topK(topK)
-                .similarityThreshold(effectiveThreshold);
+                .topK(retrievalTopK)
+                .similarityThreshold(similarityThreshold);
         if (filter != null) {
             builder.filterExpression(filter);
         }
@@ -755,7 +576,7 @@ public class ChatServiceImpl implements ChatService {
         // 降序再排一次，确保上下文和对外 references 均按相关性从高到低展示。
         return documents.stream()
                 .filter(document -> document.getScore() != null
-                        && document.getScore() >= effectiveThreshold)
+                        && document.getScore() >= similarityThreshold)
                 .sorted(Comparator.comparing(Document::getScore,
                         Comparator.nullsLast(Comparator.reverseOrder())))
                 .toList();
@@ -796,40 +617,7 @@ public class ChatServiceImpl implements ChatService {
                 }
             }
         }
-        if (isPortfolioOverviewQuestion(question)) {
-            return query + "\n" + PORTFOLIO_OVERVIEW_QUERY_MARKER
-                    + " Londonist 伦敦公寓位置总览，伦敦公寓总数，完整公寓名单，"
-                    + "东伦敦、西伦敦、北伦敦、南伦敦区域统计。";
-        }
-        if (isUclMainCampusQuestion(question)) {
-            return query + "\n" + SCHOOL_LOCATION_QUERY_MARKER
-                    + " University College London (UCL) 主校区，Bloomsbury 校区附近公寓，"
-                    + "附近大学距离。排除 UCL East、Stratford 和 Olympic Park 校区。";
-        }
         return query;
-    }
-
-    private static boolean isPortfolioOverviewQuestion(String question) {
-        if (question == null || question.isBlank()
-                || (!question.contains("公寓") && !question.contains("房源"))) {
-            return false;
-        }
-        String normalized = question.replaceAll("\\s+", "");
-        return normalized.matches(".*(?:多少|几个|总数|数量).*(?:公寓|房源).*")
-                || normalized.matches(".*(?:公寓|房源).*(?:多少|几个|总数|数量).*")
-                || normalized.matches(".*(?:全部|所有|完整).*(?:公寓|房源).*(?:名单|列表).*")
-                || normalized.matches(".*(?:公寓|房源).*(?:完整名单|完整列表).*");
-    }
-
-    private static boolean isUclMainCampusQuestion(String question) {
-        if (question == null || question.isBlank()) {
-            return false;
-        }
-        String normalized = question.toLowerCase(Locale.ROOT).replaceAll("\\s+", "");
-        boolean mentionsUcl = normalized.contains("ucl")
-                || normalized.contains("universitycollegelondon")
-                || normalized.contains("伦敦大学学院");
-        return mentionsUcl && !normalized.contains("ucleast");
     }
 
     /**
@@ -846,6 +634,40 @@ public class ChatServiceImpl implements ChatService {
     private String buildModelSystemPrompt(String ragContext) {
         // 手动模式的知识库和历史都被收敛到 user message，最终请求严格只有 system + user。
         return manualHistoryEnabled ? promptManager.systemPrompt() : promptManager.systemPrompt() + "\n\n" + ragContext;
+    }
+
+    private String buildPropertyToolSystemPrompt(String ragContext) {
+        return propertyToolPromptManager.systemPrompt()
+                + "\n\n当前日期（Europe/London）：" + LocalDate.now(LONDON_TIME_ZONE)
+                + "\n\n## 知识库静态资料\n\n" + ragContext;
+    }
+
+    private String buildPropertyToolUserMessage(String question, Long sessionId,
+                                                List<ChatMessage> history) {
+        if (!manualHistoryEnabled) {
+            return question;
+        }
+        StringBuilder input = new StringBuilder();
+        ChatSession session = sessionId == null ? null : chatSessionMapper.selectById(sessionId);
+        if (session != null && session.getMemorySummary() != null
+                && !session.getMemorySummary().isBlank()) {
+            input.append("【较早对话摘要】\n")
+                    .append(session.getMemorySummary().strip())
+                    .append("\n\n");
+        }
+        if (history != null && !history.isEmpty()) {
+            input.append("【最近对话记录】\n");
+            for (ChatMessage message : history) {
+                if (message.getContent() == null || message.getContent().isBlank()) {
+                    continue;
+                }
+                input.append("ASSISTANT".equals(message.getRole()) ? "助手：" : "用户：")
+                        .append(message.getContent().strip())
+                        .append("\n");
+            }
+            input.append("\n");
+        }
+        return input.append("【本次问题】\n").append(question.strip()).toString();
     }
 
     private String buildModelUserMessage(String question, Long sessionId, List<ChatMessage> history, String ragContext) {

@@ -1,5 +1,6 @@
 package com.example.verirag.util;
 
+import com.example.verirag.dto.ResidenceSourceData;
 import org.springframework.ai.document.Document;
 import org.springframework.stereotype.Component;
 
@@ -33,6 +34,20 @@ public class ResidenceHtmlDocumentReader {
             Pattern.compile("\"((?:\\\\.|[^\"\\\\])*)\"");
 
     public List<Document> read(Path path) {
+        List<ResidenceSourceData> residences = readResidenceData(path);
+        List<Document> documents = residences.stream()
+                .map(this::toDocument)
+                .toList();
+        List<Document> result = new ArrayList<>(documents.size() + 1);
+        result.add(buildPortfolioSummary(residences));
+        result.addAll(documents);
+        return result;
+    }
+
+    /**
+     * 读取供 MySQL 地址库使用的结构化公寓数据。
+     */
+    public List<ResidenceSourceData> readResidenceData(Path path) {
         if (path == null || !Files.isRegularFile(path)) {
             throw new IllegalArgumentException("HTML file does not exist");
         }
@@ -40,13 +55,12 @@ public class ResidenceHtmlDocumentReader {
         try {
             String html = Files.readString(path, StandardCharsets.UTF_8);
             String residenceObject = extractResidenceObject(html);
-            List<Document> documents = parseResidences(residenceObject);
-            if (documents.isEmpty()) {
+            List<ResidenceSourceData> residences = parseResidences(residenceObject);
+            if (residences.isEmpty()) {
                 throw new IllegalArgumentException(
                         "HTML file does not contain readable residence location data");
             }
-            documents.add(0, buildPortfolioSummary(documents));
-            return documents;
+            return residences;
         }
         catch (IOException ex) {
             throw new IllegalArgumentException("Failed to read HTML file", ex);
@@ -64,8 +78,8 @@ public class ResidenceHtmlDocumentReader {
         return html.substring(openBrace + 1, closeBrace);
     }
 
-    private List<Document> parseResidences(String source) {
-        List<Document> documents = new ArrayList<>();
+    private List<ResidenceSourceData> parseResidences(String source) {
+        List<ResidenceSourceData> residences = new ArrayList<>();
         Matcher matcher = ENTRY.matcher(source);
         int searchFrom = 0;
         while (matcher.find(searchFrom)) {
@@ -73,26 +87,25 @@ public class ResidenceHtmlDocumentReader {
             int openBrace = source.indexOf('{', matcher.start());
             int closeBrace = findMatching(source, openBrace, '{', '}');
             String block = source.substring(openBrace + 1, closeBrace);
-            Document document = toDocument(residenceId, block);
-            if (document != null) {
-                documents.add(document);
+            ResidenceSourceData residence = toResidenceData(residenceId, block);
+            if (residence != null) {
+                residences.add(residence);
             }
             searchFrom = closeBrace + 1;
         }
-        return documents;
+        return residences;
     }
 
-    private Document buildPortfolioSummary(List<Document> residences) {
+    private Document buildPortfolioSummary(List<ResidenceSourceData> residences) {
         Map<String, List<String>> namesByRegion = new LinkedHashMap<>();
         namesByRegion.put("east", new ArrayList<>());
         namesByRegion.put("west", new ArrayList<>());
         namesByRegion.put("north", new ArrayList<>());
         namesByRegion.put("south", new ArrayList<>());
 
-        for (Document residence : residences) {
-            Map<String, Object> metadata = residence.getMetadata();
-            String region = String.valueOf(metadata.getOrDefault("region", ""));
-            String name = String.valueOf(metadata.getOrDefault("residenceName", ""));
+        for (ResidenceSourceData residence : residences) {
+            String region = residence.region();
+            String name = residence.name();
             if (!name.isBlank()) {
                 namesByRegion.computeIfAbsent(region, ignored -> new ArrayList<>()).add(name);
             }
@@ -125,7 +138,7 @@ public class ResidenceHtmlDocumentReader {
         return new Document(markdown.toString().trim(), metadata);
     }
 
-    private Document toDocument(String residenceId, String block) {
+    private ResidenceSourceData toResidenceData(String residenceId, String block) {
         String name = scalar(block, "name");
         if (name.isBlank()) {
             return null;
@@ -137,6 +150,22 @@ public class ResidenceHtmlDocumentReader {
         String address = scalar(block, "address");
         String station = scalar(block, "station");
         String mapUrl = scalar(block, "mapUrl");
+        return new ResidenceSourceData(residenceId, name, region, zone, latitude,
+                longitude, address, station, mapUrl, block);
+    }
+
+    private Document toDocument(ResidenceSourceData residence) {
+        String name = residence.name();
+        String region = residence.region();
+        String zone = residence.zone();
+        String latitude = residence.latitude();
+        String longitude = residence.longitude();
+        String address = residence.address();
+        String station = residence.station();
+        String mapUrl = residence.mapUrl();
+
+        // 配套、大学等详情继续从原始数据生成知识库文档；结构化地址库只保存位置字段。
+        String block = residence.sourceBlock();
         List<String> amenities = stringArray(block, "amenities");
         List<NameDistance> universities = objectArray(block, "universities");
         List<NameDistance> attractions = objectArray(block, "attractions");
@@ -158,7 +187,7 @@ public class ResidenceHtmlDocumentReader {
 
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("contentFormat", "markdown");
-        metadata.put("residenceId", residenceId);
+        metadata.put("residenceId", residence.sourceId());
         metadata.put("residenceName", name);
         metadata.put("region", region);
         metadata.put("zone", zone);

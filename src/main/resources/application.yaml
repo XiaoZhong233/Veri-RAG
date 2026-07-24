@@ -31,10 +31,14 @@ spring:
       url: redis://localhost:6380
       client-type: jedis
   datasource:
-    url: jdbc:mysql://localhost:3306/veri_rag?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
-    username: root
-    password: 123456
+    url: ${MYSQL_URL:jdbc:mysql://localhost:3306/veri_rag?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false}
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:123456}
     driver-class-name: com.mysql.cj.jdbc.Driver
+  sql:
+    init:
+      # schema.sql 仅包含幂等的公寓地址表建表语句，可安全用于已有 veri_rag 数据库。
+      mode: always
 
 
 server:
@@ -111,15 +115,8 @@ rag:
     # 当前 Embedding 服务每次最多接受 20 条文本；可调低，超过 20 会自动按 20 执行。
     embedding-batch-size: ${RAG_EMBEDDING_BATCH_SIZE:20}
   retrieval:
-    # 房源查询需要同时比较多个候选房型；默认召回 8 个，兼顾覆盖率与 Prompt 长度。
+    # 普通知识库问答的最大召回数量；房源、报价和库存查询改由数据库 Tool 处理。
     top-k: ${RAG_RETRIEVAL_TOP_K:8}
-    # 学校位置查询先扩大召回，再在 Java 中仅保留明确包含目标学校距离的位置文档。
-    location-top-k: ${RAG_LOCATION_TOP_K:50}
-    location-max-candidates: ${RAG_LOCATION_MAX_CANDIDATES:12}
-    # 房型关联阶段扩大召回，并通过标准公寓名、日期、租期和库存做精确过滤。
-    room-offer-top-k: ${RAG_ROOM_OFFER_TOP_K:80}
-    room-offer-max-results: ${RAG_ROOM_OFFER_MAX_RESULTS:32}
-    room-offer-max-per-residence: ${RAG_ROOM_OFFER_MAX_PER_RESIDENCE:6}
     # 向量检索最低相似度（0~1）；低于该值不作为上下文或引用，建议 0.70~0.80。
     similarity-threshold: ${RAG_SIMILARITY_THRESHOLD:0.75}
   answer-cache:

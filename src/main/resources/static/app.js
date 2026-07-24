@@ -3,6 +3,8 @@ const state = {
     token: localStorage.getItem('veri-rag-token'), user: null, view: 'chat',
     userPage: 1, userSize: 10, userTotal: 0,
     documentPage: 1, documentSize: 10, documentTotal: 0,
+    residencePage: 1, residenceSize: 20, residenceTotal: 0,
+    offerPage: 1, offerSize: 20, offerTotal: 0, residenceOptions: [],
     categories: [], activeSessionId: null, selectedDocumentIds: new Set()
 };
 const $ = (selector) => document.querySelector(selector);
@@ -46,6 +48,8 @@ async function streamRequest(path, body, onEvent) {
 
 function escapeHtml(value = '') { const element = document.createElement('div'); element.textContent = String(value); return element.innerHTML; }
 function formatDate(value) { return value ? new Intl.DateTimeFormat('zh-CN', {dateStyle: 'medium', timeStyle: 'short'}).format(new Date(value)) : '-'; }
+function formatDateOnly(value) { return value ? String(value).slice(0, 10) : '-'; }
+function toLocalDateTimeInput(value) { return value ? String(value).slice(0, 16) : ''; }
 function initials(user) { return (user.realName || user.username || '?').trim().slice(0, 1).toUpperCase(); }
 function avatarUrl(path) { return `${API_BASE}/files/${path.split('/').map(encodeURIComponent).join('/')}`; }
 function avatarMarkup(user, extraClass = '') { return user.avatar ? `<span class="avatar ${extraClass}"><img src="${avatarUrl(user.avatar)}" alt=""></span>` : `<span class="avatar ${extraClass}">${escapeHtml(initials(user))}</span>`; }
@@ -88,7 +92,7 @@ function renderCurrentUser() {
     $('#profile-real-name').value = state.user.realName || '';
 }
 
-const viewInfo = {chat: ['VERIRAG', '智能问答'], knowledge: ['KNOWLEDGE BASE', '知识库'], users: ['ADMINISTRATION', '用户管理'], profile: ['ACCOUNT', '个人设置']};
+const viewInfo = {chat: ['VERIRAG', '智能问答'], knowledge: ['KNOWLEDGE BASE', '知识库'], residences: ['PROPERTY DATA', '公寓地址'], offers: ['INVENTORY & PRICING', '房型库存'], users: ['ADMINISTRATION', '用户管理'], profile: ['ACCOUNT', '个人设置']};
 function showView(view) {
     if (view === 'users' && !isAdmin()) { showToast('没有用户管理权限'); return; }
     state.view = view;
@@ -97,6 +101,8 @@ function showView(view) {
     $('#view-eyebrow').textContent = viewInfo[view][0]; $('#view-title').textContent = viewInfo[view][1];
     if (view === 'users') loadUsers();
     if (view === 'knowledge') { renderCategories(); loadDocuments(); }
+    if (view === 'residences') loadResidences();
+    if (view === 'offers') loadOffers();
 }
 
 async function loadCategories() {
@@ -321,19 +327,280 @@ async function askQuestion(event) {
     try {
         await streamRequest('/api/chat/ask/stream', {question, sessionId: state.activeSessionId, categoryIds: selectedCategories}, (eventName, data) => {
             if (eventName === 'meta') state.activeSessionId = data.sessionId;
-            if (eventName === 'chunk') { answer += data.content || ''; content.classList.remove('thinking'); content.textContent = answer; $('#message-list').scrollTop = $('#message-list').scrollHeight; }
-            if (eventName === 'done') { state.activeSessionId = data.sessionId; content.classList.remove('thinking'); renderMarkdown(content, answer); renderReferences(assistantItem, data.references || []); loadSessions(); }
+            if (eventName === 'tool_start' || eventName === 'tool_done' || eventName === 'tool_error') {
+                content.textContent = data.content || '正在查询房源数据…';
+                content.classList.add('thinking', 'tool-progress');
+                content.dataset.toolName = data.toolName || '';
+                $('#message-list').scrollTop = $('#message-list').scrollHeight;
+            }
+            if (eventName === 'chunk') { answer += data.content || ''; content.classList.remove('thinking', 'tool-progress'); delete content.dataset.toolName; content.textContent = answer; $('#message-list').scrollTop = $('#message-list').scrollHeight; }
+            if (eventName === 'done') { state.activeSessionId = data.sessionId; content.classList.remove('thinking', 'tool-progress'); delete content.dataset.toolName; renderMarkdown(content, answer); renderReferences(assistantItem, data.references || []); loadSessions(); }
             if (eventName === 'error') {
                 state.activeSessionId = data.sessionId || state.activeSessionId;
                 const message = data.content || '模型响应中断，请重试。';
-                content.classList.remove('thinking');
+                content.classList.remove('thinking', 'tool-progress');
+                delete content.dataset.toolName;
                 renderMarkdown(content, answer ? `${answer}\n\n> ${message}` : `> ${message}`);
                 loadSessions();
             }
         });
     }
-    catch (error) { content.classList.remove('thinking'); content.textContent = `请求失败：${error.message}`; }
+    catch (error) { content.classList.remove('thinking', 'tool-progress'); delete content.dataset.toolName; content.textContent = `请求失败：${error.message}`; }
     finally { button.disabled = false; button.textContent = '发送'; }
+}
+
+const residenceRegionNames = {east: '东部', west: '西部', north: '北部', south: '南部'};
+function safeMapUrl(value) {
+    try { const url = new URL(value); return ['https:', 'http:'].includes(url.protocol) ? url.href : ''; }
+    catch (_) { return ''; }
+}
+async function loadResidences() {
+    if (state.view !== 'residences') return;
+    try {
+        const query = new URLSearchParams({keyword: $('#residence-keyword').value.trim(), city: $('#residence-city').value, region: $('#residence-region').value, page: state.residencePage, size: state.residenceSize});
+        const [result, stats] = await Promise.all([request(`/api/residences?${query}`), request('/api/residences/stats')]);
+        state.residenceTotal = result.total;
+        renderResidences(result.records);
+        const pages = Math.max(Math.ceil(result.total / state.residenceSize), 1);
+        $('#residence-pagination-info').textContent = `共 ${result.total} 个公寓`;
+        $('#residence-page-number').textContent = `${state.residencePage} / ${pages}`;
+        $('#residence-prev').disabled = state.residencePage <= 1;
+        $('#residence-next').disabled = state.residencePage >= pages;
+        const cities = stats.cities || {};
+        const selectedCity = $('#residence-city').value;
+        $('#residence-city').innerHTML = `<option value="">全部城市</option>${Object.keys(cities).sort((a, b) => a.localeCompare(b)).map(city => `<option value="${escapeHtml(city)}">${escapeHtml(city)}（${cities[city]}）</option>`).join('')}`;
+        if ([...$('#residence-city').options].some(option => option.value === selectedCity)) $('#residence-city').value = selectedCity;
+        $('#residence-total').textContent = stats.total || 0;
+        $('#residence-east').textContent = cities.London || 0;
+        $('#residence-west').textContent = cities.Manchester || 0;
+        $('#residence-other').textContent = Math.max((stats.total || 0) - (cities.London || 0) - (cities.Manchester || 0), 0);
+        $('#residence-updated').textContent = stats.lastUpdated ? `最近同步：${formatDate(stats.lastUpdated)}` : '地址来自 Londonist 地图 HTML。';
+    } catch (error) { showToast(error.message); }
+}
+function renderResidences(records) {
+    const body = $('#residence-table-body');
+    body.innerHTML = records.map(residence => {
+        const mapUrl = safeMapUrl(residence.mapUrl);
+        const coordinates = residence.latitude != null && residence.longitude != null ? `${residence.latitude}, ${residence.longitude}` : '';
+        const actions = isAdmin() ? `<div class="row-actions"><button class="text-button" data-residence-action="edit" data-id="${residence.id}">编辑</button><button class="text-button danger" data-residence-action="delete" data-id="${residence.id}" data-name="${escapeHtml(residence.name)}">删除</button></div>` : '-';
+        return `<tr><td><strong class="residence-name">${escapeHtml(residence.name)}</strong><small>${escapeHtml(residence.sourceId)}</small></td><td>${escapeHtml(residence.city || '-')}</td><td><span class="region-tag ${escapeHtml(residence.region || '')}">${escapeHtml(residenceRegionNames[residence.region] || residence.region || '-')}</span><small>${escapeHtml(residence.zone || '-')}</small></td><td><span class="residence-address">${escapeHtml(residence.address || '地址待补充')}</span>${coordinates ? `<small>${escapeHtml(coordinates)}</small>` : ''}</td><td>${escapeHtml(residence.station || '-')}</td><td>${mapUrl ? `<a class="map-link" href="${escapeHtml(mapUrl)}" target="_blank" rel="noopener noreferrer">查看地图 ↗</a>` : '-'}</td><td>${actions}</td></tr>`;
+    }).join('');
+    $('#residence-empty').classList.toggle('hidden', records.length !== 0);
+}
+async function openResidenceDialog(id = null) {
+    $('#residence-form').reset();
+    $('#residence-form-error').textContent = '';
+    $('#residence-id').value = '';
+    $('#residence-form-city').value = 'London';
+    $('#residence-active').value = '1';
+    $('#residence-dialog-title').textContent = id ? '编辑公寓' : '新增公寓';
+    if (id) {
+        try {
+            const residence = await request(`/api/residences/${id}`);
+            $('#residence-id').value = residence.id;
+            $('#residence-source-id').value = residence.sourceId || '';
+            $('#residence-name').value = residence.name || '';
+            $('#residence-form-city').value = residence.city || '';
+            $('#residence-active').value = String(residence.active ?? 1);
+            $('#residence-form-region').value = residence.region || '';
+            $('#residence-zone').value = residence.zone || '';
+            $('#residence-address').value = residence.address || '';
+            $('#residence-station').value = residence.station || '';
+            $('#residence-latitude').value = residence.latitude ?? '';
+            $('#residence-longitude').value = residence.longitude ?? '';
+            $('#residence-map-url').value = residence.mapUrl || '';
+        } catch (error) { return showToast(error.message); }
+    }
+    $('#residence-dialog').showModal();
+}
+async function saveResidence(event) {
+    event.preventDefault();
+    const id = $('#residence-id').value;
+    const numberOrNull = value => value === '' ? null : Number(value);
+    const payload = {
+        id: id ? Number(id) : null,
+        sourceId: $('#residence-source-id').value.trim(),
+        name: $('#residence-name').value.trim(),
+        city: $('#residence-form-city').value.trim(),
+        active: Number($('#residence-active').value),
+        region: $('#residence-form-region').value || null,
+        zone: $('#residence-zone').value.trim() || null,
+        address: $('#residence-address').value.trim(),
+        station: $('#residence-station').value.trim() || null,
+        latitude: numberOrNull($('#residence-latitude').value),
+        longitude: numberOrNull($('#residence-longitude').value),
+        mapUrl: $('#residence-map-url').value.trim() || null
+    };
+    try {
+        await request('/api/residences', {method: 'POST', body: JSON.stringify(payload)});
+        $('#residence-dialog').close();
+        state.residenceOptions = [];
+        showToast('公寓已保存');
+        await loadResidences();
+    } catch (error) { $('#residence-form-error').textContent = error.message; }
+}
+async function importResidences(event) {
+    event.preventDefault();
+    const file = $('#residence-file').files[0];
+    if (!file) return;
+    const button = $('#residence-import-submit');
+    const form = new FormData();
+    form.append('file', file);
+    $('#residence-import-error').textContent = '';
+    button.disabled = true; button.textContent = '正在同步…';
+    try {
+        const result = await request('/api/residences/import', {method: 'POST', body: form});
+        $('#residence-import-dialog').close(); event.target.reset();
+        showToast(`同步完成：新增 ${result.inserted}，更新 ${result.updated}，未变化 ${result.unchanged}`);
+        state.residencePage = 1; await loadResidences();
+    } catch (error) { $('#residence-import-error').textContent = error.message; }
+    finally { button.disabled = false; button.textContent = '开始同步'; }
+}
+
+const offerStatusLabels = {AVAILABLE: '可预订', LIMITED: '库存紧张', SOLD_OUT: '已售罄', UNKNOWN: '待确认'};
+const offerStatusClasses = {AVAILABLE: 'success', LIMITED: 'processing', SOLD_OUT: 'fail', UNKNOWN: 'unknown'};
+function localNowInput() {
+    const now = new Date();
+    return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+async function loadResidenceOptions(force = false) {
+    if (!state.residenceOptions.length || force) state.residenceOptions = await request('/api/residences/options');
+    const filterValue = $('#offer-residence').value;
+    const formValue = $('#offer-form-residence').value;
+    const options = state.residenceOptions.map(item => `<option value="${item.id}">${escapeHtml(item.name)} · ${escapeHtml(item.sourceId)}</option>`).join('');
+    $('#offer-residence').innerHTML = `<option value="">全部公寓</option>${options}`;
+    $('#offer-form-residence').innerHTML = `<option value="">请选择公寓</option>${options}`;
+    if ([...$('#offer-residence').options].some(option => option.value === filterValue)) $('#offer-residence').value = filterValue;
+    if ([...$('#offer-form-residence').options].some(option => option.value === formValue)) $('#offer-form-residence').value = formValue;
+}
+async function loadOffers() {
+    if (state.view !== 'offers') return;
+    try {
+        await loadResidenceOptions();
+        const query = new URLSearchParams({keyword: $('#offer-keyword').value.trim(), status: $('#offer-status').value, page: state.offerPage, size: state.offerSize});
+        if ($('#offer-residence').value) query.set('residenceId', $('#offer-residence').value);
+        const [result, stats, imports] = await Promise.all([
+            request(`/api/room-offers/page?${query}`),
+            request('/api/room-offers/stats'),
+            request('/api/room-offers/imports?limit=5')
+        ]);
+        state.offerTotal = result.total;
+        renderOffers(result.records);
+        renderOfferImports(imports);
+        const pages = Math.max(Math.ceil(result.total / state.offerSize), 1);
+        $('#offer-pagination-info').textContent = `共 ${result.total} 个房型`;
+        $('#offer-page-number').textContent = `${state.offerPage} / ${pages}`;
+        $('#offer-prev').disabled = state.offerPage <= 1;
+        $('#offer-next').disabled = state.offerPage >= pages;
+        $('#offer-total').textContent = stats.total || 0;
+        $('#offer-available').textContent = stats.available || 0;
+        $('#offer-limited').textContent = stats.limited || 0;
+        $('#offer-sold-out').textContent = stats.soldOut || 0;
+    } catch (error) { showToast(error.message); }
+}
+function renderOffers(records) {
+    $('#offer-table-body').innerHTML = records.map(offer => {
+        const tiers = [...(offer.priceTiers || [])].sort((a, b) => a.minWeeks - b.minWeeks);
+        const tierHtml = tiers.map(tier => `<span class="price-chip"><b>${tier.minWeeks}${tier.maxWeeks == null ? '+' : `–${tier.maxWeeks}`}周</b>${escapeHtml(tier.currency)} ${Number(tier.weeklyPrice).toFixed(2)}</span>`).join('');
+        const status = offer.inventoryStatus || 'UNKNOWN';
+        const quantity = offer.remainingQuantity == null ? '数量未知' : `剩余 ${offer.remainingQuantity}`;
+        const actions = isAdmin() ? `<div class="row-actions"><button class="text-button" data-offer-action="edit" data-id="${offer.id}" type="button">编辑</button><button class="text-button danger" data-offer-action="delete" data-id="${offer.id}" data-name="${escapeHtml(offer.roomName)}" type="button">删除</button></div>` : '<span class="muted">只读</span>';
+        return `<tr><td><strong class="offer-room-name">${escapeHtml(offer.roomName)}</strong><small>${escapeHtml(offer.residenceName)} · ${escapeHtml(offer.roomCode)}</small><span class="root-type-tag">${escapeHtml(offer.rootType)}</span></td><td><span class="date-range">${formatDateOnly(offer.earliestStartDate)} → ${formatDateOnly(offer.latestEndDate)}</span></td><td><span class="status-tag ${offerStatusClasses[status] || 'unknown'}">${escapeHtml(offerStatusLabels[status] || status)}</span><small>${escapeHtml(quantity)}</small></td><td><div class="price-chip-list">${tierHtml || '<span class="muted">暂无价格</span>'}</div></td><td>${formatDate(offer.inventoryUpdatedAt)}${offer.sourceFileName ? `<small>来源：${escapeHtml(offer.sourceFileName)}</small>` : ''}</td><td>${actions}</td></tr>`;
+    }).join('');
+    $('#offer-empty').classList.toggle('hidden', records.length !== 0);
+}
+function renderOfferImports(records) {
+    $('#offer-import-history').innerHTML = records.length ? records.map(item => `<article><div><strong>${escapeHtml(item.fileName)}</strong><p>${escapeHtml(item.message || '导入完成')}</p></div><div><span class="status-tag success">${escapeHtml(item.status)}</span><small>${formatDate(item.finishTime || item.createTime)}</small></div></article>`).join('') : '<p class="empty-state">还没有批量导入记录。</p>';
+}
+function priceTierEditor(tier = {}) {
+    return `<article class="price-tier-card"><div class="price-tier-grid"><label>最短周数<input class="tier-min" type="number" min="1" max="104" required value="${tier.minWeeks ?? ''}"></label><label>最长周数 <span class="optional">（以上留空）</span><input class="tier-max" type="number" min="1" max="104" value="${tier.maxWeeks ?? ''}"></label><label>每周价格<input class="tier-price" type="number" min="0.01" step="0.01" required value="${tier.weeklyPrice ?? ''}"></label><label>币种<select class="tier-currency"><option value="GBP">GBP</option><option value="EUR">EUR</option><option value="CNY">CNY</option></select></label><label class="tier-updated-field">价格更新时间<input class="tier-updated" type="datetime-local" required value="${toLocalDateTimeInput(tier.priceUpdatedAt) || localNowInput()}"></label><label class="tier-note-field">备注<input class="tier-note" maxlength="1024" value="${escapeHtml(tier.note || '')}"></label></div><button class="icon-button remove-price-tier" type="button" title="删除档位">×</button></article>`;
+}
+function addPriceTier(tier = {}) {
+    $('#price-tier-list').insertAdjacentHTML('beforeend', priceTierEditor(tier));
+    const card = $('#price-tier-list').lastElementChild;
+    card.querySelector('.tier-currency').value = tier.currency || 'GBP';
+}
+async function openOfferDialog(id = null) {
+    $('#offer-form').reset();
+    $('#offer-form-error').textContent = '';
+    $('#price-tier-list').replaceChildren();
+    $('#offer-id').value = id || '';
+    $('#offer-dialog-title').textContent = id ? '编辑房型' : '新增房型';
+    $('#offer-inventory-updated-at').value = localNowInput();
+    $('#offer-inventory-status').value = 'AVAILABLE';
+    try {
+        await loadResidenceOptions();
+        if (id) {
+            const offer = await request(`/api/room-offers/${id}`);
+            $('#offer-form-residence').value = offer.residenceId;
+            $('#offer-room-code').value = offer.roomCode || '';
+            $('#offer-room-name').value = offer.roomName || '';
+            $('#offer-root-type').value = offer.rootType || 'Other';
+            $('#offer-start-date').value = offer.earliestStartDate || '';
+            $('#offer-end-date').value = offer.latestEndDate || '';
+            $('#offer-quantity').value = offer.remainingQuantity ?? '';
+            $('#offer-inventory-status').value = offer.inventoryStatus || 'UNKNOWN';
+            $('#offer-inventory-updated-at').value = toLocalDateTimeInput(offer.inventoryUpdatedAt);
+            $('#offer-note').value = offer.note || '';
+            (offer.priceTiers || []).sort((a, b) => a.minWeeks - b.minWeeks).forEach(addPriceTier);
+        } else {
+            addPriceTier();
+        }
+        $('#offer-dialog').showModal();
+    } catch (error) { showToast(error.message); }
+}
+async function saveOffer(event) {
+    event.preventDefault();
+    $('#offer-form-error').textContent = '';
+    const quantityValue = $('#offer-quantity').value;
+    const priceTiers = [...document.querySelectorAll('.price-tier-card')].map(card => ({
+        minWeeks: Number(card.querySelector('.tier-min').value),
+        maxWeeks: card.querySelector('.tier-max').value ? Number(card.querySelector('.tier-max').value) : null,
+        weeklyPrice: Number(card.querySelector('.tier-price').value),
+        currency: card.querySelector('.tier-currency').value,
+        priceUpdatedAt: card.querySelector('.tier-updated').value,
+        note: card.querySelector('.tier-note').value.trim()
+    }));
+    const payload = {
+        id: $('#offer-id').value ? Number($('#offer-id').value) : null,
+        residenceId: Number($('#offer-form-residence').value),
+        roomCode: $('#offer-room-code').value.trim(),
+        roomName: $('#offer-room-name').value.trim(),
+        rootType: $('#offer-root-type').value,
+        earliestStartDate: $('#offer-start-date').value,
+        latestEndDate: $('#offer-end-date').value,
+        remainingQuantity: quantityValue === '' ? null : Number(quantityValue),
+        inventoryStatus: $('#offer-inventory-status').value,
+        inventoryUpdatedAt: $('#offer-inventory-updated-at').value,
+        note: $('#offer-note').value.trim(),
+        priceTiers
+    };
+    const button = $('#offer-save-button');
+    button.disabled = true; button.textContent = '保存中…';
+    try {
+        await request('/api/room-offers', {method: 'POST', body: JSON.stringify(payload)});
+        $('#offer-dialog').close(); showToast('房型库存与价格已保存'); await loadOffers();
+    } catch (error) { $('#offer-form-error').textContent = error.message; }
+    finally { button.disabled = false; button.textContent = '保存房型'; }
+}
+async function importOffers(event) {
+    event.preventDefault();
+    const file = $('#offer-import-file').files[0];
+    if (!file) return;
+    const form = new FormData(); form.append('file', file);
+    const button = $('#offer-import-submit');
+    $('#offer-import-error').textContent = '';
+    $('#offer-import-result').classList.add('hidden');
+    button.disabled = true; button.textContent = '正在校验并导入…';
+    try {
+        const result = await request('/api/room-offers/import', {method: 'POST', body: form});
+        const warnings = (result.warnings || []).map(item => `<li>${escapeHtml(item)}</li>`).join('');
+        $('#offer-import-result').innerHTML = `<strong>导入完成</strong><p>库存：新增 ${result.inventoryInserted}，更新 ${result.inventoryUpdated}；价格：新增 ${result.priceInserted}，更新 ${result.priceUpdated}；跳过 ${result.skipped}。</p>${warnings ? `<details><summary>${result.warnings.length} 条名称匹配提示</summary><ul>${warnings}</ul></details>` : ''}`;
+        $('#offer-import-result').classList.remove('hidden');
+        showToast('结构化模板导入成功');
+        state.offerPage = 1; await loadOffers();
+    } catch (error) { $('#offer-import-error').textContent = error.message; }
+    finally { button.disabled = false; button.textContent = '开始导入'; }
 }
 
 async function loadUsers() {
@@ -358,6 +625,8 @@ $('#session-list').addEventListener('click', async event => { const deleteButton
 $('#chat-category-filter').addEventListener('click', event => { const chip = event.target.closest('.filter-chip'); if (!chip) return; document.querySelectorAll('.filter-chip').forEach(button => button.classList.remove('active')); chip.classList.add('active'); });
 $('#new-category-button').addEventListener('click', () => $('#category-dialog').showModal()); $('#category-form').addEventListener('submit', saveCategory); $('#category-list').addEventListener('click', async event => { const button = event.target.closest('.delete-category'); if (!button || !confirm('确定删除该分类吗？')) return; try { await request(`/api/categories/${button.dataset.id}`, {method: 'DELETE'}); showToast('分类已删除'); loadCategories(); } catch (error) { showToast(error.message); } });
 $('#upload-document-button').addEventListener('click', () => $('#document-dialog').showModal()); $('#document-form').addEventListener('submit', uploadDocument); $('#document-search-button').addEventListener('click', () => { state.documentPage = 1; loadDocuments(); }); $('#document-category').addEventListener('change', () => { state.documentPage = 1; loadDocuments(); }); $('#document-prev').addEventListener('click', () => { if (state.documentPage > 1) { state.documentPage--; loadDocuments(); } }); $('#document-next').addEventListener('click', () => { if (state.documentPage * state.documentSize < state.documentTotal) { state.documentPage++; loadDocuments(); } }); $('#batch-reingest-button').addEventListener('click', batchReingestDocuments); $('#document-list').addEventListener('change', event => { const checkbox = event.target.closest('.document-select'); if (!checkbox) return; const id = Number(checkbox.dataset.id); if (checkbox.checked) state.selectedDocumentIds.add(id); else state.selectedDocumentIds.delete(id); updateBatchReingestButton(); }); $('#document-list').addEventListener('click', async event => { const reingest = event.target.closest('.reingest-document'); if (reingest) { if (!confirm(`确定重新向量化文档“${reingest.dataset.title}”吗？`)) return; reingest.disabled = true; reingest.textContent = '处理中…'; try { await request(`/api/documents/${reingest.dataset.id}/reingest`, {method: 'POST'}); showToast('文档已重新向量化'); loadDocuments(); } catch (error) { showToast(error.message); reingest.disabled = false; reingest.textContent = '重新向量化'; } return; } const button = event.target.closest('.delete-document'); if (!button || !confirm(`确定删除文档“${button.dataset.title}”吗？`)) return; try { await request(`/api/documents/${button.dataset.id}`, {method: 'DELETE'}); state.selectedDocumentIds.delete(Number(button.dataset.id)); showToast('文档和向量已删除'); loadDocuments(); } catch (error) { showToast(error.message); } });
+$('#new-residence-button').addEventListener('click', () => openResidenceDialog()); $('#import-residence-button').addEventListener('click', () => $('#residence-import-dialog').showModal()); $('#residence-form').addEventListener('submit', saveResidence); $('#residence-import-form').addEventListener('submit', importResidences); $('#residence-search-button').addEventListener('click', () => { state.residencePage = 1; loadResidences(); }); $('#residence-city').addEventListener('change', () => { state.residencePage = 1; loadResidences(); }); $('#residence-region').addEventListener('change', () => { state.residencePage = 1; loadResidences(); }); $('#residence-keyword').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); state.residencePage = 1; loadResidences(); } }); $('#residence-prev').addEventListener('click', () => { if (state.residencePage > 1) { state.residencePage--; loadResidences(); } }); $('#residence-next').addEventListener('click', () => { if (state.residencePage * state.residenceSize < state.residenceTotal) { state.residencePage++; loadResidences(); } }); $('#residence-table-body').addEventListener('click', async event => { const button = event.target.closest('[data-residence-action]'); if (!button) return; if (button.dataset.residenceAction === 'edit') return openResidenceDialog(Number(button.dataset.id)); if (!confirm(`确定删除公寓“${button.dataset.name}”吗？`)) return; try { await request(`/api/residences/${button.dataset.id}`, {method: 'DELETE'}); state.residenceOptions = []; showToast('公寓已删除'); await loadResidences(); } catch (error) { showToast(error.message); } });
+$('#new-offer-button').addEventListener('click', () => openOfferDialog()); $('#import-offer-button').addEventListener('click', () => { $('#offer-import-form').reset(); $('#offer-import-error').textContent = ''; $('#offer-import-result').classList.add('hidden'); $('#offer-import-dialog').showModal(); }); $('#offer-form').addEventListener('submit', saveOffer); $('#offer-import-form').addEventListener('submit', importOffers); $('#add-price-tier').addEventListener('click', () => addPriceTier()); $('#price-tier-list').addEventListener('click', event => { const button = event.target.closest('.remove-price-tier'); if (button) button.closest('.price-tier-card').remove(); }); $('#offer-search-button').addEventListener('click', () => { state.offerPage = 1; loadOffers(); }); $('#offer-residence').addEventListener('change', () => { state.offerPage = 1; loadOffers(); }); $('#offer-status').addEventListener('change', () => { state.offerPage = 1; loadOffers(); }); $('#offer-keyword').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); state.offerPage = 1; loadOffers(); } }); $('#offer-prev').addEventListener('click', () => { if (state.offerPage > 1) { state.offerPage--; loadOffers(); } }); $('#offer-next').addEventListener('click', () => { if (state.offerPage * state.offerSize < state.offerTotal) { state.offerPage++; loadOffers(); } }); $('#offer-inventory-status').addEventListener('change', event => { if (event.target.value === 'SOLD_OUT') $('#offer-quantity').value = 0; }); $('#offer-table-body').addEventListener('click', async event => { const button = event.target.closest('[data-offer-action]'); if (!button) return; if (button.dataset.offerAction === 'edit') return openOfferDialog(Number(button.dataset.id)); if (!confirm(`确定删除房型“${button.dataset.name}”及其全部价格档位吗？`)) return; try { await request(`/api/room-offers/${button.dataset.id}`, {method: 'DELETE'}); showToast('房型已删除'); await loadOffers(); } catch (error) { showToast(error.message); } });
 $('#search-button').addEventListener('click', () => { state.userPage = 1; loadUsers(); }); $('#create-button').addEventListener('click', () => openUserDialog()); $('#prev-page').addEventListener('click', () => { if (state.userPage > 1) { state.userPage--; loadUsers(); } }); $('#next-page').addEventListener('click', () => { if (state.userPage * state.userSize < state.userTotal) { state.userPage++; loadUsers(); } }); $('#user-form').addEventListener('submit', saveUser); $('#close-dialog').addEventListener('click', () => $('#user-dialog').close()); $('#cancel-dialog').addEventListener('click', () => $('#user-dialog').close()); $('#user-table-body').addEventListener('click', async event => { const button = event.target.closest('[data-user-action]'); if (!button) return; const user = JSON.parse(button.closest('tr').dataset.user); if (button.dataset.userAction === 'edit') return openUserDialog(user); if (!confirm(`确定删除用户“${user.username}”吗？`)) return; try { await request(`/api/users/${user.id}`, {method: 'DELETE'}); showToast('用户已删除'); loadUsers(); } catch (error) { showToast(error.message); } });
 $('#profile-form').addEventListener('submit', saveProfile); $('#password-form').addEventListener('submit', changePassword); document.querySelectorAll('[data-close-dialog]').forEach(button => button.addEventListener('click', () => $(`#${button.dataset.closeDialog}`).close()));
 if (state.token) showConsole();

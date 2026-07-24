@@ -40,7 +40,7 @@ public class ChatController {
     }
 
     /**
-     * 流式问答：依次发送 meta、chunk、done 三类 SSE 事件。
+     * 流式问答：发送 meta、chunk、done、error 以及 Tool 进度 SSE 事件。
      */
     @PostMapping(value = "/ask/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<ChatStreamEvent>> streamAsk(@Valid @RequestBody ChatAskRequest req) {

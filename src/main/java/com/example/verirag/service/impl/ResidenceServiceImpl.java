@@ -51,17 +51,19 @@ public class ResidenceServiceImpl implements ResidenceService {
     private final ResidenceHtmlDocumentReader residenceHtmlDocumentReader;
 
     @Override
-    public PageResult<Residence> page(String keyword, String city, String region,
-                                      boolean includeInactive,
+    public PageResult<Residence> page(String name, String keyword, String city,
+                                      String region, boolean includeInactive,
                                       int page, int size) {
         int safePage = Math.max(page, 1);
         int safeSize = Math.min(Math.max(size, 1), 100);
+        String nameQuery = name == null ? "" : name.trim();
         String query = keyword == null ? "" : keyword.trim();
         String normalizedCity = city == null ? "" : city.trim();
         String normalizedRegion = region == null ? "" : region.trim().toLowerCase(Locale.ROOT);
 
         LambdaQueryWrapper<Residence> wrapper = new LambdaQueryWrapper<Residence>()
                 .eq(!includeInactive, Residence::getActive, 1)
+                .like(!nameQuery.isBlank(), Residence::getName, nameQuery)
                 .eq(!normalizedCity.isBlank(), Residence::getCity, normalizedCity)
                 .eq(!normalizedRegion.isBlank(), Residence::getRegion, normalizedRegion)
                 .orderByAsc(Residence::getCity)

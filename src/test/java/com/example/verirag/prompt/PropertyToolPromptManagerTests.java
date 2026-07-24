@@ -34,11 +34,13 @@ class PropertyToolPromptManagerTests {
                 .contains("不得拆成多批")
                 .contains("nearbyPlaceKeyword")
                 .contains("maxTravelMinutes 传25")
-                .contains("本次结构化查询返回")
+                .contains("不得向用户暴露“结构化查询”")
+                .contains("我帮你筛到了4个UCL附近")
+                .contains("自然友好的结论")
                 .contains("只有用户已经指定一个 roomOfferId")
                 .contains("不得把 UCL East 房源混入结果")
                 .contains("最终表格最多4行公寓数据")
-                .contains("一句话结论")
+                .contains("一句自然友好的结论")
                 .contains("未查询售罄时不得说“没有售罄房源”")
                 .contains("| 公寓 | 位置参考 | 推荐房型 | 可入住时间 | 租期 | 每周价格 | 预计总价 | 库存 | 匹配说明 |")
                 .contains("表格一行代表一个不同公寓")
@@ -47,6 +49,7 @@ class PropertyToolPromptManagerTests {
                 .contains("不得声称精确公里数")
                 .contains("UCL Bloomsbury 主校区")
                 .contains("未经过地图实时计算")
+                .doesNotContain("最终回答应说“本次结构化查询返回”")
                 .doesNotContain("Drapery Place Residence");
     }
 }

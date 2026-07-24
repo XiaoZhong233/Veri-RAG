@@ -4,18 +4,18 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="api-base" content="/veri-rag">
-    <title>VeriRAG · Knowledge Console</title>
+    <title>Londonist · 智能房源中心</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <main class="app-shell">
     <section id="login-view" class="login-view" aria-labelledby="login-title">
-        <div class="brand-panel"><p class="eyebrow">VERIRAG / KNOWLEDGE CONSOLE</p><h1>让答案有据可查。</h1><p>上传内部知识，建立可追溯的智能问答系统。</p><div class="brand-orb" aria-hidden="true"></div></div>
+        <div class="brand-panel"><p class="eyebrow">LONDONIST / PROPERTY INTELLIGENCE HUB</p><h1>让房源推荐更准确。</h1><p>统一管理公寓资料、报价库存与销售推荐，为学生快速匹配合适房源。</p><div class="brand-orb" aria-hidden="true"></div></div>
         <form id="login-form" class="login-card"><div><p class="eyebrow">WELCOME BACK</p><h2 id="login-title">登录系统</h2><p class="muted">使用您的后台账号继续。</p></div><label>用户名<input id="login-username" autocomplete="username" placeholder="例如：admin" required></label><label>密码<input id="login-password" type="password" autocomplete="current-password" placeholder="请输入密码" required></label><p id="login-error" class="form-error" role="alert"></p><button id="login-submit" class="primary-button" type="submit">登录</button></form>
     </section>
 
     <section id="console-view" class="console-view hidden">
-        <aside class="sidebar"><a class="logo" href="#chat"><span>V</span> VeriRAG</a><nav>
+        <aside class="sidebar"><a class="logo" href="#chat"><span>L</span> Londonist</a><nav>
             <button class="nav-item active" data-view="chat">✦ 智能问答</button>
             <button class="nav-item" data-view="knowledge">▤ 知识库</button>
             <button class="nav-item" data-view="residences">⌖ 公寓地址</button>
@@ -25,7 +25,7 @@
             <button class="nav-item" data-view="profile">◉ 个人设置</button>
         </nav><button id="logout-button" class="logout-button" type="button">退出登录</button></aside>
         <div class="content">
-            <header class="topbar"><div><p id="view-eyebrow" class="eyebrow">VERIRAG</p><h1 id="view-title">智能问答</h1></div><button id="avatar-upload-button" class="current-user" type="button" title="点击上传头像"><span id="current-avatar" class="avatar avatar-large"></span><span id="current-user-name"></span></button><input id="avatar-input" type="file" accept="image/jpeg,image/png,image/gif" hidden></header>
+            <header class="topbar"><div><p id="view-eyebrow" class="eyebrow">PROPERTY INTELLIGENCE HUB</p><h1 id="view-title">智能问答</h1></div><button id="avatar-upload-button" class="current-user" type="button" title="点击上传头像"><span id="current-avatar" class="avatar avatar-large"></span><span id="current-user-name"></span></button><input id="avatar-input" type="file" accept="image/jpeg,image/png,image/gif" hidden></header>
 
             <section id="chat-view" class="view-panel chat-layout">
                 <aside class="session-panel"><div class="session-heading"><strong>会话历史</strong><button id="new-chat-button" class="icon-button" title="新建会话" type="button">+</button></div><div id="session-list" class="session-list"></div></aside>
@@ -46,7 +46,7 @@
                 </div>
                 <section class="panel">
                     <div class="section-heading"><div><h2>公寓地址库</h2><p id="residence-updated" class="muted">维护全部城市的地址、设施、交通和附近学校。</p></div><div class="section-actions admin-only"><button id="new-residence-button" class="secondary-button" type="button">+ 新增公寓</button><button id="import-residence-button" class="secondary-button" type="button">↻ 导入地址 HTML</button><button id="import-residence-detail-button" class="primary-button" type="button">⇧ 导入详情 MD</button></div></div>
-                    <div class="toolbar"><label class="search-box"><span>⌕</span><input id="residence-keyword" type="search" placeholder="搜索公寓、城市、地址、车站或 Zone"></label><select id="residence-city"><option value="">全部城市</option></select><select id="residence-region"><option value="">全部区域</option><option value="east">东部</option><option value="west">西部</option><option value="north">北部</option><option value="south">南部</option></select><button id="residence-search-button" class="secondary-button" type="button">搜索</button></div>
+                    <div class="toolbar residence-toolbar"><label class="search-box"><span>⌕</span><input id="residence-name" type="search" placeholder="按公寓名称模糊搜索"></label><select id="residence-city"><option value="">全部城市</option></select><select id="residence-region"><option value="">全部区域</option><option value="east">东部</option><option value="west">西部</option><option value="north">北部</option><option value="south">南部</option></select><button id="residence-search-button" class="secondary-button" type="button">搜索</button></div>
                     <div class="table-wrap residence-table-wrap"><table><thead><tr><th>公寓</th><th>城市</th><th>区域 / Zone</th><th>完整地址</th><th>最近车站</th><th>地图</th><th>操作</th></tr></thead><tbody id="residence-table-body"></tbody></table><p id="residence-empty" class="empty-state hidden">还没有公寓地址，请新增或导入数据。</p></div>
                     <footer class="pagination"><span id="residence-pagination-info">共 0 个公寓</span><div><button id="residence-prev" class="page-button" type="button">上一页</button><span id="residence-page-number">1</span><button id="residence-next" class="page-button" type="button">下一页</button></div></footer>
                 </section>

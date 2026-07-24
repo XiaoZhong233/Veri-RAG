@@ -34,13 +34,15 @@ public class ResidenceController {
 
     @GetMapping
     public R<PageResult<Residence>> page(
+            @RequestParam(defaultValue = "") String name,
             @RequestParam(defaultValue = "") String keyword,
             @RequestParam(defaultValue = "") String city,
             @RequestParam(defaultValue = "") String region,
             @RequestParam(defaultValue = "false") boolean includeInactive,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int size) {
-        return R.ok(residenceService.page(keyword, city, region, includeInactive, page, size));
+        return R.ok(residenceService.page(
+                name, keyword, city, region, includeInactive, page, size));
     }
 
     @GetMapping("/{id}")

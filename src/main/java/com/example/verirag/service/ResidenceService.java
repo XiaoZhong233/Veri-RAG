@@ -11,8 +11,8 @@ import org.springframework.web.multipart.MultipartFile;
 import java.util.List;
 
 public interface ResidenceService {
-    PageResult<Residence> page(String keyword, String city, String region, boolean includeInactive,
-                               int page, int size);
+    PageResult<Residence> page(String name, String keyword, String city, String region,
+                               boolean includeInactive, int page, int size);
 
     Residence get(Long id);
 

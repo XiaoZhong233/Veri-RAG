@@ -3,7 +3,7 @@ const state = {
     token: localStorage.getItem('veri-rag-token'), user: null, view: 'chat',
     userPage: 1, userSize: 10, userTotal: 0,
     documentPage: 1, documentSize: 10, documentTotal: 0,
-    categories: [], activeSessionId: null
+    categories: [], activeSessionId: null, selectedDocumentIds: new Set()
 };
 const $ = (selector) => document.querySelector(selector);
 
@@ -132,7 +132,33 @@ async function loadDocuments() {
 }
 function renderDocuments(records) {
     const categories = new Map(state.categories.map(c => [c.id, c.name]));
-    $('#document-list').innerHTML = records.length ? records.map(d => `<article class="document-row"><span class="file-badge">${escapeHtml((d.fileType || '?').toUpperCase())}</span><div class="document-main"><strong>${escapeHtml(d.title)}</strong><p>${escapeHtml(categories.get(d.categoryId) || '未分类')} · ${escapeHtml(d.fileName || '')} · ${d.vectorCount ?? 0} 个片段</p></div><span class="status-tag ${String(d.status).toLowerCase()}">${escapeHtml(d.status)}</span><span class="muted">${formatDate(d.createTime)}</span>${isAdmin() ? `<span class="document-actions"><button class="text-button reingest-document" data-id="${d.id}" data-title="${escapeHtml(d.title)}" type="button">重新向量化</button><button class="text-button danger delete-document" data-id="${d.id}" data-title="${escapeHtml(d.title)}" type="button">删除</button></span>` : ''}</article>`).join('') : '<p class="empty-state">没有找到文档。</p>';
+    $('#document-list').innerHTML = records.length ? records.map(d => `<article class="document-row">${isAdmin() ? `<label class="document-selector"><input class="document-select" data-id="${d.id}" type="checkbox" ${state.selectedDocumentIds.has(d.id) ? 'checked' : ''}><span class="sr-only">选择 ${escapeHtml(d.title)}</span></label>` : ''}<span class="file-badge">${escapeHtml((d.fileType || '?').toUpperCase())}</span><div class="document-main"><strong>${escapeHtml(d.title)}</strong><p>${escapeHtml(categories.get(d.categoryId) || '未分类')} · ${escapeHtml(d.fileName || '')} · ${d.vectorCount ?? 0} 个片段</p></div><span class="status-tag ${String(d.status).toLowerCase()}">${escapeHtml(d.status)}</span><span class="muted">${formatDate(d.createTime)}</span>${isAdmin() ? `<span class="document-actions"><button class="text-button reingest-document" data-id="${d.id}" data-title="${escapeHtml(d.title)}" type="button">重新向量化</button><button class="text-button danger delete-document" data-id="${d.id}" data-title="${escapeHtml(d.title)}" type="button">删除</button></span>` : ''}</article>`).join('') : '<p class="empty-state">没有找到文档。</p>';
+    updateBatchReingestButton();
+}
+
+function updateBatchReingestButton() {
+    const button = $('#batch-reingest-button');
+    if (!button) return;
+    const count = state.selectedDocumentIds.size;
+    button.disabled = count === 0;
+    button.textContent = `批量重新向量化（${count}）`;
+}
+
+async function batchReingestDocuments() {
+    const ids = [...state.selectedDocumentIds];
+    if (!ids.length || !confirm(`确定重新向量化已选择的 ${ids.length} 个文档吗？过程可能需要一些时间。`)) return;
+    const button = $('#batch-reingest-button');
+    button.disabled = true; button.textContent = '批量处理中…';
+    try {
+        const result = await request('/api/documents/reingest', {method: 'POST', body: JSON.stringify({documentIds: ids})});
+        state.selectedDocumentIds.clear();
+        showToast(result.failedCount ? `完成：成功 ${result.successCount}，失败 ${result.failedCount}` : `已完成 ${result.successCount} 个文档的重新向量化`);
+        if (result.failedCount) console.warn('Batch re-vectorization failures:', result.items.filter(item => !item.success));
+        await loadDocuments();
+    } catch (error) {
+        showToast(error.message);
+        updateBatchReingestButton();
+    }
 }
 async function uploadDocument(event) {
     event.preventDefault(); $('#document-error').textContent = '';
@@ -238,8 +264,24 @@ function renderReferences(messageItem, references) {
     messageItem.querySelector('.references')?.remove();
     if (!references?.length) return;
     const refs = document.createElement('details'); refs.className = 'references';
-    refs.innerHTML = `<summary>引用来源（${references.length}）</summary>${references.map((ref, index) => `<div><strong>[${index + 1}] ${escapeHtml(ref.title || '无标题')}</strong><p>${escapeHtml(ref.snippet || '')}</p></div>`).join('')}`;
+    refs.innerHTML = `<summary>引用来源（${references.length}）</summary>`;
+    references.forEach((ref, index) => {
+        const row = document.createElement('div'); const title = document.createElement(ref.docId ? 'button' : 'strong');
+        title.textContent = `[${index + 1}] ${ref.title || '无标题'}`;
+        if (ref.docId) { title.className = 'reference-link'; title.type = 'button'; title.dataset.reference = JSON.stringify(ref); }
+        const content = document.createElement('p'); content.textContent = ref.content || ref.snippet || '';
+        row.append(title, content); refs.appendChild(row);
+    });
     messageItem.appendChild(refs);
+}
+
+async function openReferenceDetail(reference) {
+    $('#reference-title').textContent = reference.title || '引用详情';
+    $('#reference-snippet').textContent = reference.content || reference.snippet || ''; $('#reference-file-name').textContent = '正在加载文档信息…'; $('#reference-dialog').showModal();
+    try {
+        const document = await request(`/api/documents/${reference.docId}`);
+        $('#reference-title').textContent = document.title || reference.title || '引用详情'; $('#reference-file-name').textContent = document.fileName || '';
+    } catch (error) { $('#reference-file-name').textContent = `无法获取文档详情：${error.message}`; }
 }
 
 async function askQuestion(event) {
@@ -276,10 +318,11 @@ async function changePassword(event) { event.preventDefault(); const query = new
 $('#login-form').addEventListener('submit', login); $('#logout-button').addEventListener('click', () => logout()); $('#avatar-upload-button').addEventListener('click', () => $('#avatar-input').click()); $('#avatar-input').addEventListener('change', uploadAvatar);
 document.querySelectorAll('.nav-item').forEach(item => item.addEventListener('click', () => showView(item.dataset.view)));
 $('#new-chat-button').addEventListener('click', newChat); $('#chat-form').addEventListener('submit', askQuestion);
+$('#message-list').addEventListener('click', event => { const link = event.target.closest('.reference-link'); if (link) openReferenceDetail(JSON.parse(link.dataset.reference)); });
 $('#session-list').addEventListener('click', async event => { const deleteButton = event.target.closest('[data-delete-session]'); if (deleteButton) { event.stopPropagation(); const id = deleteButton.dataset.deleteSession; if (!confirm('确定删除这个会话吗？')) return; try { await request(`/api/chat/sessions/${id}`, {method: 'DELETE'}); if (state.activeSessionId === Number(id)) newChat(); showToast('会话已删除'); loadSessions(); } catch (error) { showToast(error.message); } return; } const item = event.target.closest('.session-item'); if (item) openSession(item.dataset.id); });
 $('#chat-category-filter').addEventListener('click', event => { const chip = event.target.closest('.filter-chip'); if (!chip) return; document.querySelectorAll('.filter-chip').forEach(button => button.classList.remove('active')); chip.classList.add('active'); });
 $('#new-category-button').addEventListener('click', () => $('#category-dialog').showModal()); $('#category-form').addEventListener('submit', saveCategory); $('#category-list').addEventListener('click', async event => { const button = event.target.closest('.delete-category'); if (!button || !confirm('确定删除该分类吗？')) return; try { await request(`/api/categories/${button.dataset.id}`, {method: 'DELETE'}); showToast('分类已删除'); loadCategories(); } catch (error) { showToast(error.message); } });
-$('#upload-document-button').addEventListener('click', () => $('#document-dialog').showModal()); $('#document-form').addEventListener('submit', uploadDocument); $('#document-search-button').addEventListener('click', () => { state.documentPage = 1; loadDocuments(); }); $('#document-category').addEventListener('change', () => { state.documentPage = 1; loadDocuments(); }); $('#document-prev').addEventListener('click', () => { if (state.documentPage > 1) { state.documentPage--; loadDocuments(); } }); $('#document-next').addEventListener('click', () => { if (state.documentPage * state.documentSize < state.documentTotal) { state.documentPage++; loadDocuments(); } }); $('#document-list').addEventListener('click', async event => { const reingest = event.target.closest('.reingest-document'); if (reingest) { if (!confirm(`确定重新向量化文档“${reingest.dataset.title}”吗？`)) return; reingest.disabled = true; reingest.textContent = '处理中…'; try { await request(`/api/documents/${reingest.dataset.id}/reingest`, {method: 'POST'}); showToast('文档已重新向量化'); loadDocuments(); } catch (error) { showToast(error.message); reingest.disabled = false; reingest.textContent = '重新向量化'; } return; } const button = event.target.closest('.delete-document'); if (!button || !confirm(`确定删除文档“${button.dataset.title}”吗？`)) return; try { await request(`/api/documents/${button.dataset.id}`, {method: 'DELETE'}); showToast('文档和向量已删除'); loadDocuments(); } catch (error) { showToast(error.message); } });
+$('#upload-document-button').addEventListener('click', () => $('#document-dialog').showModal()); $('#document-form').addEventListener('submit', uploadDocument); $('#document-search-button').addEventListener('click', () => { state.documentPage = 1; loadDocuments(); }); $('#document-category').addEventListener('change', () => { state.documentPage = 1; loadDocuments(); }); $('#document-prev').addEventListener('click', () => { if (state.documentPage > 1) { state.documentPage--; loadDocuments(); } }); $('#document-next').addEventListener('click', () => { if (state.documentPage * state.documentSize < state.documentTotal) { state.documentPage++; loadDocuments(); } }); $('#batch-reingest-button').addEventListener('click', batchReingestDocuments); $('#document-list').addEventListener('change', event => { const checkbox = event.target.closest('.document-select'); if (!checkbox) return; const id = Number(checkbox.dataset.id); if (checkbox.checked) state.selectedDocumentIds.add(id); else state.selectedDocumentIds.delete(id); updateBatchReingestButton(); }); $('#document-list').addEventListener('click', async event => { const reingest = event.target.closest('.reingest-document'); if (reingest) { if (!confirm(`确定重新向量化文档“${reingest.dataset.title}”吗？`)) return; reingest.disabled = true; reingest.textContent = '处理中…'; try { await request(`/api/documents/${reingest.dataset.id}/reingest`, {method: 'POST'}); showToast('文档已重新向量化'); loadDocuments(); } catch (error) { showToast(error.message); reingest.disabled = false; reingest.textContent = '重新向量化'; } return; } const button = event.target.closest('.delete-document'); if (!button || !confirm(`确定删除文档“${button.dataset.title}”吗？`)) return; try { await request(`/api/documents/${button.dataset.id}`, {method: 'DELETE'}); state.selectedDocumentIds.delete(Number(button.dataset.id)); showToast('文档和向量已删除'); loadDocuments(); } catch (error) { showToast(error.message); } });
 $('#search-button').addEventListener('click', () => { state.userPage = 1; loadUsers(); }); $('#create-button').addEventListener('click', () => openUserDialog()); $('#prev-page').addEventListener('click', () => { if (state.userPage > 1) { state.userPage--; loadUsers(); } }); $('#next-page').addEventListener('click', () => { if (state.userPage * state.userSize < state.userTotal) { state.userPage++; loadUsers(); } }); $('#user-form').addEventListener('submit', saveUser); $('#close-dialog').addEventListener('click', () => $('#user-dialog').close()); $('#cancel-dialog').addEventListener('click', () => $('#user-dialog').close()); $('#user-table-body').addEventListener('click', async event => { const button = event.target.closest('[data-user-action]'); if (!button) return; const user = JSON.parse(button.closest('tr').dataset.user); if (button.dataset.userAction === 'edit') return openUserDialog(user); if (!confirm(`确定删除用户“${user.username}”吗？`)) return; try { await request(`/api/users/${user.id}`, {method: 'DELETE'}); showToast('用户已删除'); loadUsers(); } catch (error) { showToast(error.message); } });
 $('#profile-form').addEventListener('submit', saveProfile); $('#password-form').addEventListener('submit', changePassword); document.querySelectorAll('[data-close-dialog]').forEach(button => button.addEventListener('click', () => $(`#${button.dataset.closeDialog}`).close()));
 if (state.token) showConsole();

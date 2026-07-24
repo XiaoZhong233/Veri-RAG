@@ -3,6 +3,7 @@ package com.example.verirag.service.impl;
 import com.example.verirag.common.FileTypeUtil;
 import com.example.verirag.common.PageResult;
 import com.example.verirag.common.ResultCode;
+import com.example.verirag.dto.BatchReingestResult;
 import com.example.verirag.entity.Document;
 import com.example.verirag.exception.BusinessException;
 import com.example.verirag.mapper.DocumentMapper;
@@ -23,6 +24,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
 
 @Slf4j
 @Service
@@ -101,6 +105,18 @@ public class DocumentServiceImpl implements DocumentService {
     }
 
     @Override
+    public Document getById(Long id) {
+        if (id == null) {
+            throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "Document id must not be null");
+        }
+        Document document = documentMapper.selectById(id);
+        if (document == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "Document not found");
+        }
+        return document;
+    }
+
+    @Override
     public Document reingest(Long id) throws Exception {
         if (id == null) {
             throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "Document id must not be null");
@@ -138,6 +154,43 @@ public class DocumentServiceImpl implements DocumentService {
             log.error("Document {} re-ingestion failed", id, ex);
             throw ex;
         }
+    }
+
+    @Override
+    public BatchReingestResult reingestBatch(List<Long> documentIds) {
+        if (documentIds == null || documentIds.isEmpty()) {
+            throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "Please select at least one document");
+        }
+
+        List<Long> ids = documentIds.stream()
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new))
+                .stream()
+                .toList();
+        if (ids.isEmpty()) {
+            throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "Please select at least one document");
+        }
+        if (ids.size() > 50) {
+            throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "A maximum of 50 documents can be re-vectorized at once");
+        }
+
+        List<BatchReingestResult.Item> items = new ArrayList<>(ids.size());
+        int successCount = 0;
+        for (Long id : ids) {
+            Document before = documentMapper.selectById(id);
+            String title = before == null ? null : before.getTitle();
+            try {
+                Document rebuilt = reingest(id);
+                items.add(new BatchReingestResult.Item(id, rebuilt.getTitle(), true,
+                        rebuilt.getVectorCount(), null));
+                successCount++;
+            }
+            catch (Exception ex) {
+                log.error("Document {} batch re-ingestion failed", id, ex);
+                items.add(new BatchReingestResult.Item(id, title, false, null, safeErrorMessage(ex)));
+            }
+        }
+        return new BatchReingestResult(ids.size(), successCount, ids.size() - successCount, items);
     }
 
     @Override
@@ -194,5 +247,10 @@ public class DocumentServiceImpl implements DocumentService {
             throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "Invalid stored document path");
         }
         return file;
+    }
+
+    private String safeErrorMessage(Exception ex) {
+        String message = ex.getMessage();
+        return message == null || message.isBlank() ? "Re-vectorization failed" : message;
     }
 }

@@ -18,6 +18,10 @@ public interface ChatSessionMapper {
 
     int touchUpdateTime(@Param("id") Long id);
 
+    int updateMemorySummary(@Param("id") Long id,
+                            @Param("memorySummary") String memorySummary,
+                            @Param("summarizedMessageCount") int summarizedMessageCount);
+
     ChatSession selectById(@Param("id") Long id);
 
     List<ChatSession> listByUserId(@Param("userId") Long userId);

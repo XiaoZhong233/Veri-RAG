@@ -17,6 +17,10 @@ public class ChatSession {
     private Long id;
     private Long userId;
     private String title;
+    /** 已压缩的早期会话记忆；完整聊天记录仍保存在 t_chat_message。 */
+    private String memorySummary;
+    /** 已被压缩进 memorySummary 的消息数量。 */
+    private Integer summarizedMessageCount;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 }

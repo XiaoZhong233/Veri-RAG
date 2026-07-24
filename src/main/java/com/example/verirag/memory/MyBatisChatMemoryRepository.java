@@ -1,15 +1,19 @@
 package com.example.verirag.memory;
 
 import com.example.verirag.entity.ChatMessage;
+import com.example.verirag.entity.ChatSession;
 import com.example.verirag.mapper.ChatMessageMapper;
+import com.example.verirag.mapper.ChatSessionMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.ai.chat.memory.ChatMemoryRepository;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.ArrayList;
 
 /**
  * 将既有 t_chat_message 适配为 Spring AI ChatMemoryRepository。
@@ -21,9 +25,10 @@ import java.util.List;
 @RequiredArgsConstructor
 public class MyBatisChatMemoryRepository implements ChatMemoryRepository {
 
-    private static final int MAX_MESSAGES = 6;
+    private static final int RECENT_MESSAGES = 4;
 
     private final ChatMessageMapper chatMessageMapper;
+    private final ChatSessionMapper chatSessionMapper;
 
     @Override
     public List<String> findConversationIds() {
@@ -37,11 +42,19 @@ public class MyBatisChatMemoryRepository implements ChatMemoryRepository {
         if (sessionId == null) {
             return List.of();
         }
+        ChatSession session = chatSessionMapper.selectById(sessionId);
+        if (session == null) {
+            return List.of();
+        }
         List<ChatMessage> rows = chatMessageMapper.listBySessionId(sessionId);
-        int from = Math.max(rows.size() - MAX_MESSAGES, 0);
-        return rows.subList(from, rows.size()).stream()
-                .map(this::toMessage)
-                .toList();
+        int from = Math.max(rows.size() - RECENT_MESSAGES, 0);
+        List<Message> result = new ArrayList<>(RECENT_MESSAGES + 1);
+        if (session.getMemorySummary() != null && !session.getMemorySummary().isBlank()) {
+            result.add(new SystemMessage("以下是本会话较早内容的压缩摘要，仅用于保持对话连续性：\n"
+                    + session.getMemorySummary().strip()));
+        }
+        rows.subList(from, rows.size()).stream().map(this::toMessage).forEach(result::add);
+        return result;
     }
 
     @Override

@@ -14,7 +14,6 @@ import reactor.core.publisher.Flux;
 
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.stream.Collectors;
 
 @Component
 public class LoggerAdvisor implements CallAdvisor, StreamAdvisor {
@@ -24,14 +23,17 @@ public class LoggerAdvisor implements CallAdvisor, StreamAdvisor {
     @Override
     public ChatClientResponse adviseCall(ChatClientRequest request, CallAdvisorChain chain) {
         long start = System.nanoTime();
-        log.debug("AI call started: {}", promptSummary(request));
+        log.info("AI final prompt: {}", request.prompt().getInstructions());
         try {
             ChatClientResponse response = chain.nextCall(request);
-            log.info("AI call completed in {} ms", elapsedMillis(start));
+            log.info("AI final response: {}", responseText(response));
+            long elapsed = elapsedMillis(start);
+            log.info("event=rag.llm.completed mode=sync durationMs={}", elapsed);
             return response;
         }
         catch (RuntimeException exception) {
-            log.error("AI call failed after {} ms", elapsedMillis(start), exception);
+            long elapsed = elapsedMillis(start);
+            log.error("event=rag.llm.failed mode=sync durationMs={}", elapsed, exception);
             throw exception;
         }
     }
@@ -41,16 +43,25 @@ public class LoggerAdvisor implements CallAdvisor, StreamAdvisor {
         return Flux.defer(() -> {
             long start = System.nanoTime();
             AtomicBoolean firstChunk = new AtomicBoolean(true);
-            log.debug("AI stream started: {}", promptSummary(request));
+            StringBuilder output = new StringBuilder();
+            log.info("AI final prompt: {}", request.prompt().getInstructions());
             return chain.nextStream(request)
                     .doOnNext(response -> {
+                        output.append(responseText(response));
                         if (firstChunk.compareAndSet(true, false)) {
-                            log.info("AI stream first chunk in {} ms", elapsedMillis(start));
+                            long elapsed = elapsedMillis(start);
+                            log.info("event=rag.llm.first_token durationMs={}", elapsed);
                         }
                     })
-                    .doOnComplete(() -> log.info("AI stream completed in {} ms", elapsedMillis(start)))
-                    .doOnError(exception -> log.error(
-                            "AI stream failed after {} ms", elapsedMillis(start), exception));
+                    .doOnComplete(() -> {
+                        log.info("AI final response: {}", output);
+                        long elapsed = elapsedMillis(start);
+                        log.info("event=rag.llm.completed mode=stream durationMs={}", elapsed);
+                    })
+                    .doOnError(exception -> {
+                        long elapsed = elapsedMillis(start);
+                        log.error("event=rag.llm.failed mode=stream durationMs={}", elapsed, exception);
+                    });
         });
     }
 
@@ -68,10 +79,13 @@ public class LoggerAdvisor implements CallAdvisor, StreamAdvisor {
         return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
     }
 
-    private static String promptSummary(ChatClientRequest request) {
-        String roles = request.prompt().getInstructions().stream()
-                .map(message -> message.getMessageType().name())
-                .collect(Collectors.joining(","));
-        return "messageCount=" + request.prompt().getInstructions().size() + ", roles=" + roles;
+    private static String responseText(ChatClientResponse response) {
+        if (response == null || response.chatResponse() == null || response.chatResponse().getResults() == null) {
+            return "";
+        }
+        return response.chatResponse().getResults().stream()
+                .map(result -> result.getOutput() == null ? "" : result.getOutput().getText())
+                .filter(text -> text != null && !text.isEmpty())
+                .collect(java.util.stream.Collectors.joining());
     }
 }

@@ -51,6 +51,8 @@ CREATE TABLE t_chat_session (
   id          BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
   user_id     BIGINT      NOT NULL COMMENT '用户ID',
   title       VARCHAR(255) DEFAULT NULL COMMENT '会话标题',
+  memory_summary MEDIUMTEXT DEFAULT NULL COMMENT '已压缩的早期会话记忆',
+  summarized_message_count INT NOT NULL DEFAULT 0 COMMENT '已写入摘要的消息数量',
   create_time DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   update_time DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (id),

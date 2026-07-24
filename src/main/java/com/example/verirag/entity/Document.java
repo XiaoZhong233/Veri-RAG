@@ -1,5 +1,6 @@
 package com.example.verirag.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
@@ -16,6 +17,7 @@ public class Document {
     private String title;
     private String fileName;
     /** 相对 uploads 根的路径 */
+    @JsonIgnore
     private String filePath;
     private String fileType;
     private Long fileSize;

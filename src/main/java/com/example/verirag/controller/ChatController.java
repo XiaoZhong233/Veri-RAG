@@ -8,8 +8,10 @@ import com.example.verirag.entity.ChatMessage;
 import com.example.verirag.entity.ChatSession;
 import com.example.verirag.service.ChatService;
 import com.example.verirag.util.SecurityUtils;
+import io.micrometer.context.ContextSnapshot;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
@@ -23,6 +25,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/chat")
 @RequiredArgsConstructor
+@Slf4j
 public class ChatController {
 
     private final ChatService chatService;
@@ -42,8 +45,13 @@ public class ChatController {
     @PostMapping(value = "/ask/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<ChatStreamEvent>> streamAsk(@Valid @RequestBody ChatAskRequest req) {
         var u = SecurityUtils.requireUser();
+        // Spring MVC 对 Flux 的订阅可能发生在原 HTTP 线程之外。此时先捕获 trace/MDC，
+        // 再放入 Reactor Context，结合 spring.reactor.context-propagation=auto 在异步线程恢复。
+        ContextSnapshot snapshot = ContextSnapshot.captureAll();
+        log.info("event=rag.stream.request.accepted");
         return chatService.streamAsk(u.getUserId(), req)
-                .map(event -> ServerSentEvent.builder(event).event(event.getType()).build());
+                .map(event -> ServerSentEvent.builder(event).event(event.getType()).build())
+                .contextWrite(snapshot::updateContext);
     }
 
     /**

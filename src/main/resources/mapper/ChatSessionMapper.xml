@@ -5,7 +5,7 @@
 <mapper namespace="com.example.verirag.mapper.ChatSessionMapper">
 
     <sql id="SessionColumns">
-        id, user_id, title, create_time, update_time
+        id, user_id, title, memory_summary, summarized_message_count, create_time, update_time
     </sql>
 
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">
@@ -22,6 +22,14 @@
     <update id="touchUpdateTime">
         UPDATE t_chat_session
         SET update_time = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+    </update>
+
+    <update id="updateMemorySummary">
+        UPDATE t_chat_session
+        SET memory_summary = #{memorySummary},
+            summarized_message_count = #{summarizedMessageCount},
+            update_time = CURRENT_TIMESTAMP
         WHERE id = #{id}
     </update>
 

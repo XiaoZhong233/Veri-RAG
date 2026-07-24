@@ -9,6 +9,8 @@ import com.example.verirag.entity.ChatSession;
 import com.example.verirag.exception.BusinessException;
 import com.example.verirag.mapper.ChatMessageMapper;
 import com.example.verirag.mapper.ChatSessionMapper;
+import com.example.verirag.memory.ConversationSummaryService;
+import com.example.verirag.observability.RagMetrics;
 import com.example.verirag.prompt.RagPromptManager;
 import com.example.verirag.service.ChatService;
 import com.example.verirag.service.RagAnswerCache;
@@ -38,15 +40,16 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class ChatServiceImpl implements ChatService {
-    private static final int RAG_TOP_K = 2;
+    private static final int DEFAULT_RAG_TOP_K = 2;
     private static final double DEFAULT_SIMILARITY_THRESHOLD = 0.70;
-    private static final int HISTORY_MAX_MESSAGES = 6;
+    private static final int HISTORY_MAX_MESSAGES = 4;
     private final ChatClient chatClient;
 
     private final VectorStore vectorStore;
@@ -63,13 +66,21 @@ public class ChatServiceImpl implements ChatService {
 
     private final RetrievalTimingAdvisor retrievalTimingAdvisor;
 
+    private final RagMetrics ragMetrics;
+
+    private final ConversationSummaryService conversationSummaryService;
+
     private final RagPromptManager promptManager;
 
     @Value("${rag.retrieval.similarity-threshold:" + DEFAULT_SIMILARITY_THRESHOLD + "}")
     private double similarityThreshold;
 
+    @Value("${rag.retrieval.top-k:" + DEFAULT_RAG_TOP_K + "}")
+    private int retrievalTopK;
+
     @Override
     public ChatAskResult ask(Long userId, ChatAskRequest req) throws Exception {
+        long requestStart = System.nanoTime();
         Long requestedSessionId = req.getSessionId();
         if (requestedSessionId != null) {
             assertSessionOwner(userId, requestedSessionId);
@@ -80,6 +91,7 @@ public class ChatServiceImpl implements ChatService {
         var cached = requestedSessionId == null
                 ? ragAnswerCache.find(req.getQuestion(), req.getCategoryIds())
                 : Optional.<RagAnswerCache.Hit>empty();
+        ragMetrics.recordCache(cached.isPresent());
         if (cached.isPresent()) {
             RagAnswerCache.Hit hit = cached.get();
             String refsJson = objectMapper.writeValueAsString(hit.references());
@@ -92,6 +104,7 @@ public class ChatServiceImpl implements ChatService {
             result.setSessionId(sessionId);
             result.setAnswer(hit.answer());
             result.setReferences(hit.references());
+            ragMetrics.recordRequest(java.time.Duration.ofNanos(System.nanoTime() - requestStart), "cache_hit");
             return result;
         }
 
@@ -101,12 +114,20 @@ public class ChatServiceImpl implements ChatService {
 
         long llmStart = System.nanoTime();
         String ragContext = buildRagContext(cited);
-        String answer = chatClient.prompt()
-                .advisors(advisors -> advisors.param(ChatMemory.CONVERSATION_ID, String.valueOf(requestedSessionId)))
-                .system(promptManager.systemPrompt() + "\n\n" + ragContext).user(req.getQuestion()).call().content();
+        String answer;
+        try {
+            answer = chatClient.prompt()
+                    .advisors(advisors -> advisors.param(ChatMemory.CONVERSATION_ID, String.valueOf(requestedSessionId)))
+                    .system(promptManager.systemPrompt() + "\n\n" + ragContext).user(req.getQuestion()).call().content();
+        }
+        catch (RuntimeException ex) {
+            ragMetrics.recordLlm(java.time.Duration.ofNanos(System.nanoTime() - llmStart), "sync", "error");
+            throw ex;
+        }
         long llmMs = (System.nanoTime() - llmStart) / 1_000_000L;
+        ragMetrics.recordLlm(java.time.Duration.ofMillis(llmMs), "sync", "success");
         log.info("LLM completed: sessionId={}, duration={}ms", requestedSessionId, llmMs);
-        List<Map<String, Object>> refs = toRefs(cited);
+        List<Map<String, Object>> refs = toRefs(req.getQuestion(), cited);
         String refsJson = objectMapper.writeValueAsString(refs);
         if (requestedSessionId == null) {
             ragAnswerCache.put(req.getQuestion(), req.getCategoryIds(), answer, refs);
@@ -117,16 +138,19 @@ public class ChatServiceImpl implements ChatService {
         if (sessionId == null) {
             throw new IllegalStateException("Failed to persist chat conversation");
         }
+        conversationSummaryService.maybeSummarize(sessionId);
 
         ChatAskResult res = new ChatAskResult();
         res.setSessionId(sessionId);
         res.setAnswer(answer);
         res.setReferences(refs);
+        ragMetrics.recordRequest(java.time.Duration.ofNanos(System.nanoTime() - requestStart), "success");
         return res;
     }
 
     @Override
     public Flux<ChatStreamEvent> streamAsk(Long userId, ChatAskRequest req) {
+        long requestStart = System.nanoTime();
         Long requestedSessionId = req.getSessionId();
         if (requestedSessionId != null) {
             assertSessionOwner(userId, requestedSessionId);
@@ -136,6 +160,7 @@ public class ChatServiceImpl implements ChatService {
         var cached = requestedSessionId == null
                 ? ragAnswerCache.find(req.getQuestion(), req.getCategoryIds())
                 : Optional.<RagAnswerCache.Hit>empty();
+        ragMetrics.recordCache(cached.isPresent());
         if (cached.isPresent()) {
             RagAnswerCache.Hit hit = cached.get();
             Long sessionId = transactionTemplate.execute(status ->
@@ -155,14 +180,19 @@ public class ChatServiceImpl implements ChatService {
                     .concatWith(Mono.fromCallable(() -> {
                         transactionTemplate.executeWithoutResult(status ->
                                 persistAssistantMessage(finalSessionId, hit.answer(), refsJson));
+                        conversationSummaryService.maybeSummarize(finalSessionId);
                         return ChatStreamEvent.done(finalSessionId, hit.references());
-                    }));
+                    }))
+                    .doOnComplete(() -> ragMetrics.recordRequest(
+                            java.time.Duration.ofNanos(System.nanoTime() - requestStart), "cache_hit"))
+                    .doOnError(error -> ragMetrics.recordRequest(
+                            java.time.Duration.ofNanos(System.nanoTime() - requestStart), "error"));
         }
 
         List<Document> cited = retrievalTimingAdvisor.advise(requestedSessionId,
                 () -> retrieveForCategories(buildRetrievalQuery(req.getQuestion(), history), req.getCategoryIds()));
 
-        List<Map<String, Object>> references = toRefs(cited);
+        List<Map<String, Object>> references = toRefs(req.getQuestion(), cited);
         final String referencesJson;
         try {
             referencesJson = objectMapper.writeValueAsString(references);
@@ -180,23 +210,39 @@ public class ChatServiceImpl implements ChatService {
         String ragContext = buildRagContext(cited);
         StringBuilder fullAnswer = new StringBuilder();
         long llmStart = System.nanoTime();
+        AtomicBoolean firstToken = new AtomicBoolean(true);
         return chatClient.prompt()
                 .advisors(advisors -> advisors.param(ChatMemory.CONVERSATION_ID, String.valueOf(sessionId)))
                 .system(promptManager.systemPrompt() + "\n\n" + ragContext).user(req.getQuestion()).stream().content()
-                .doOnNext(fullAnswer::append)
+                .doOnNext(chunk -> {
+                    fullAnswer.append(chunk);
+                    if (firstToken.compareAndSet(true, false)) {
+                        ragMetrics.recordLlmFirstToken(
+                                java.time.Duration.ofNanos(System.nanoTime() - llmStart));
+                    }
+                })
+                .doOnComplete(() -> ragMetrics.recordLlm(
+                        java.time.Duration.ofNanos(System.nanoTime() - llmStart), "stream", "success"))
+                .doOnError(error -> ragMetrics.recordLlm(
+                        java.time.Duration.ofNanos(System.nanoTime() - llmStart), "stream", "error"))
                 .map(ChatStreamEvent::chunk)
                 .startWith(ChatStreamEvent.meta(sessionId))
                 .concatWith(Mono.fromCallable(() -> {
                     Long finalSessionId = sessionId;
                     transactionTemplate.executeWithoutResult(status ->
                             persistAssistantMessage(finalSessionId, fullAnswer.toString(), referencesJson));
+                    conversationSummaryService.maybeSummarize(finalSessionId);
                     if (requestedSessionId == null) {
                         ragAnswerCache.put(req.getQuestion(), req.getCategoryIds(), fullAnswer.toString(), references);
                     }
                     long llmMillis = (System.nanoTime() - llmStart) / 1_000_000;
                     log.info("LLM streaming completed: sessionId={}, duration={}ms", finalSessionId, llmMillis);
                     return ChatStreamEvent.done(finalSessionId, references);
-                }));
+                }))
+                .doOnComplete(() -> ragMetrics.recordRequest(
+                        java.time.Duration.ofNanos(System.nanoTime() - requestStart), "success"))
+                .doOnError(error -> ragMetrics.recordRequest(
+                        java.time.Duration.ofNanos(System.nanoTime() - requestStart), "error"));
     }
 
     /** 持久化发生在一个短事务内，避免在 LLM 调用期间长时间占用数据库事务。 */
@@ -307,7 +353,7 @@ public class ChatServiceImpl implements ChatService {
     private List<Document> vectorSimilaritySearch(String question, Filter.Expression filter) {
         SearchRequest.Builder builder = SearchRequest.builder()
                 .query(question)
-                .topK(RAG_TOP_K)
+                .topK(retrievalTopK)
                 .similarityThreshold(similarityThreshold);
         if (filter != null) {
             builder.filterExpression(filter);
@@ -391,7 +437,7 @@ public class ChatServiceImpl implements ChatService {
     /**
      * 将命中的向量 chunk 按检索顺序逐条转为对外引用。
      */
-    private static List<Map<String, Object>> toRefs(List<Document> cited) {
+    private List<Map<String, Object>> toRefs(String question, List<Document> cited) {
         if (cited == null || cited.isEmpty()) {
             return Collections.emptyList();
         }
@@ -410,7 +456,8 @@ public class ChatServiceImpl implements ChatService {
             if (categoryId != null) {
                 reference.put("categoryId", categoryId);
             }
-            reference.put("snippet", shorten(document.getText(), 256));
+            // 每一个引用都对应一个按相关性排序的命中 Chunk；保留全文，供前端展开查看。
+            reference.put("content", document.getText() == null ? "" : document.getText().strip());
             references.add(reference);
         }
         return references;
@@ -426,14 +473,6 @@ public class ChatServiceImpl implements ChatService {
 
     private static String defaultIfBlank(String value, String fallback) {
         return value == null || value.isBlank() ? fallback : value;
-    }
-
-    private static String shorten(String text, int limit) {
-        if (text == null || text.isBlank()) {
-            return "";
-        }
-        String normalized = text.replaceAll("\\s+", " ").trim();
-        return normalized.length() <= limit ? normalized : normalized.substring(0, limit) + "…";
     }
 
     @Override

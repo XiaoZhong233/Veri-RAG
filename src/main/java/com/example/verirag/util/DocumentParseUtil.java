@@ -15,9 +15,24 @@ import java.util.Locale;
 @Component
 public class DocumentParseUtil {
 
+    private final ExcelDocumentReader excelDocumentReader;
+    private final ResidenceHtmlDocumentReader residenceHtmlDocumentReader;
+
+    public DocumentParseUtil(ExcelDocumentReader excelDocumentReader,
+                             ResidenceHtmlDocumentReader residenceHtmlDocumentReader) {
+        this.excelDocumentReader = excelDocumentReader;
+        this.residenceHtmlDocumentReader = residenceHtmlDocumentReader;
+    }
+
     public List<Document> parse(String filePath){
         File file = new File(filePath);
         String suffix = filePath.substring(filePath.lastIndexOf('.')+1).toLowerCase(Locale.ROOT);
+        if ("xlsx".equals(suffix)) {
+            return excelDocumentReader.read(file.toPath());
+        }
+        if ("html".equals(suffix) || "htm".equals(suffix)) {
+            return residenceHtmlDocumentReader.read(file.toPath());
+        }
         Resource fileSystemResource = new FileSystemResource(file);
         DocumentReader reader = switch (suffix){
             case "pdf", "doc", "docx", "txt", "text" -> new TikaDocumentReader(fileSystemResource);

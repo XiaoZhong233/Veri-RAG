@@ -1,6 +1,8 @@
 package com.example.verirag.service.impl;
 
 import com.example.verirag.service.RagIngestService;
+import com.example.verirag.util.ExcelDocumentReader;
+import com.example.verirag.util.ResidenceHtmlDocumentReader;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
@@ -31,9 +33,12 @@ import java.util.*;
 public class RagIngestServiceImpl implements RagIngestService {
 
     private static final int REDIS_DELETE_BATCH_LIMIT = 10_000;
+    private static final int PROVIDER_MAX_EMBEDDING_BATCH_SIZE = 20;
 
     private final RedisVectorStore redisVectorStore;
     private final TokenTextSplitter tokenTextSplitter;
+    private final ExcelDocumentReader excelDocumentReader;
+    private final ResidenceHtmlDocumentReader residenceHtmlDocumentReader;
     @Value("${spring.ai.vectorstore.redis.index-name:spring-ai-index}")
     private String redisVectorIndexName;
     @Value("${spring.ai.vectorstore.redis.prefix:embedding:}")
@@ -41,6 +46,8 @@ public class RagIngestServiceImpl implements RagIngestService {
     //删除向量时 SCAN 的 key 前缀列表（逗号分隔）。默认空则自动包含当前 prefix + 历史常用 embedding:
     @Value("${spring.ai.vectorstore.redis.delete-scan-prefixes:}")
     private String deleteScanPrefixesCsv;
+    @Value("${rag.ingest.embedding-batch-size:20}")
+    private int embeddingBatchSize;
 
     @Override
     public int ingest(Path absolutePath, String ext, Long documentId, Long categoryId, String title) {
@@ -59,10 +66,44 @@ public class RagIngestServiceImpl implements RagIngestService {
             toAdd.add(new Document(text, meta));
         }
         if (!toAdd.isEmpty()) {
-            redisVectorStore.add(toAdd);
+            addInEmbeddingBatches(toAdd, documentId);
         }
         log.info("文档 {} 已向量化入库，块数 {}", documentId, toAdd.size());
         return toAdd.size();
+    }
+
+    /**
+     * 当前 Embedding 服务单次最多接受 20 条文本。Spring AI 默认按 Token 数拆批，
+     * 对大量短房型记录可能仍产生超过 20 条的请求，因此在 VectorStore 之前增加条数限制。
+     */
+    private void addInEmbeddingBatches(List<Document> documents, Long documentId) {
+        if (embeddingBatchSize > PROVIDER_MAX_EMBEDDING_BATCH_SIZE) {
+            log.warn("Embedding batch size {} exceeds provider limit {}; using {}",
+                    embeddingBatchSize, PROVIDER_MAX_EMBEDDING_BATCH_SIZE,
+                    PROVIDER_MAX_EMBEDDING_BATCH_SIZE);
+        }
+
+        List<List<Document>> batches = partitionEmbeddingBatches(documents, embeddingBatchSize);
+        for (int batchIndex = 0; batchIndex < batches.size(); batchIndex++) {
+            List<Document> batch = batches.get(batchIndex);
+            log.debug("文档 {} 提交 Embedding 批次 {}/{}，条数 {}",
+                    documentId, batchIndex + 1, batches.size(), batch.size());
+            redisVectorStore.add(batch);
+        }
+    }
+
+    static List<List<Document>> partitionEmbeddingBatches(List<Document> documents,
+                                                           int configuredSize) {
+        int requestedSize = configuredSize <= 0
+                ? PROVIDER_MAX_EMBEDDING_BATCH_SIZE
+                : configuredSize;
+        int batchSize = Math.min(requestedSize, PROVIDER_MAX_EMBEDDING_BATCH_SIZE);
+        List<List<Document>> batches = new ArrayList<>();
+        for (int from = 0; from < documents.size(); from += batchSize) {
+            int to = Math.min(from + batchSize, documents.size());
+            batches.add(new ArrayList<>(documents.subList(from, to)));
+        }
+        return batches;
     }
 
     /**
@@ -309,6 +350,8 @@ public class RagIngestServiceImpl implements RagIngestService {
                     ).get();
             case "pdf", "doc", "docx", "txt", "text" ->
                     new TikaDocumentReader(resource).get();
+            case "xlsx" -> excelDocumentReader.read(absolutePath);
+            case "html", "htm" -> residenceHtmlDocumentReader.read(absolutePath);
             default -> throw new IllegalArgumentException(
                     "Unsupported document type: " + normalizedExt
             );

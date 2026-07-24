@@ -44,7 +44,8 @@ public class DocumentServiceImpl implements DocumentService {
     @Override
     public Document upload(MultipartFile file, Long categoryId, String title, Long uploadUserId) throws Exception {
         if (!FileTypeUtil.allowed(file)) {
-            throw new BusinessException("Only TXT, PDF, DOC, DOCX, and Markdown files are supported");
+            throw new BusinessException(
+                    "Only TXT, PDF, DOC, DOCX, Markdown, XLSX, and HTML files are supported");
         }
         if (categoryId == null || categoryMapper.selectById(categoryId) == null) {
             throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "Category not found");

@@ -7,7 +7,7 @@ import lombok.Data;
 import java.util.List;
 import java.util.Map;
 
-/** SSE 问答流事件。type 为 meta、chunk 或 done。 */
+/** SSE 问答流事件。type 为 meta、chunk、done 或 error。 */
 @Data
 @AllArgsConstructor
 @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -27,5 +27,9 @@ public class ChatStreamEvent {
 
     public static ChatStreamEvent done(Long sessionId, List<Map<String, Object>> references) {
         return new ChatStreamEvent("done", sessionId, null, references);
+    }
+
+    public static ChatStreamEvent error(Long sessionId, String message) {
+        return new ChatStreamEvent("error", sessionId, message, null);
     }
 }

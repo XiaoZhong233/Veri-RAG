@@ -207,6 +207,20 @@ function renderMarkdown(container, markdown) {
                 if (language) codeNode.dataset.language = language;
                 codeNode.textContent = code.join('\n'); pre.appendChild(codeNode); fragment.appendChild(pre); continue;
             }
+            if (isMarkdownTableStart(lines, index)) {
+                const wrapper = document.createElement('div'); wrapper.className = 'markdown-table-wrap';
+                const table = document.createElement('table');
+                const thead = document.createElement('thead'); const headerRow = document.createElement('tr');
+                parseMarkdownTableRow(lines[index]).forEach(text => { const cell = document.createElement('th'); appendInlineMarkdown(cell, text); headerRow.appendChild(cell); });
+                thead.appendChild(headerRow); table.appendChild(thead); index += 2;
+                const tbody = document.createElement('tbody');
+                while (index < lines.length && isMarkdownTableRow(lines[index])) {
+                    const row = document.createElement('tr');
+                    parseMarkdownTableRow(lines[index]).forEach(text => { const cell = document.createElement('td'); appendInlineMarkdown(cell, text); row.appendChild(cell); });
+                    tbody.appendChild(row); index++;
+                }
+                table.appendChild(tbody); wrapper.appendChild(table); fragment.appendChild(wrapper); continue;
+            }
             const heading = line.match(/^(#{1,6})\s+(.+)$/);
             if (heading) { const node = document.createElement(`h${heading[1].length}`); appendInlineMarkdown(node, heading[2]); fragment.appendChild(node); index++; continue; }
             if (/^\s*[-*+]\s+/.test(line)) {
@@ -222,7 +236,7 @@ function renderMarkdown(container, markdown) {
             if (line.startsWith('>')) { const quote = document.createElement('blockquote'); appendInlineMarkdown(quote, line.replace(/^>\s?/, '')); fragment.appendChild(quote); index++; continue; }
             if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { fragment.appendChild(document.createElement('hr')); index++; continue; }
             const paragraph = [];
-            while (index < lines.length && lines[index].trim() && !lines[index].startsWith('```') && !/^(#{1,6})\s+/.test(lines[index]) && !/^\s*[-*+]\s+/.test(lines[index]) && !/^\s*\d+[.)]\s+/.test(lines[index]) && !lines[index].startsWith('>')) paragraph.push(lines[index++]);
+            while (index < lines.length && lines[index].trim() && !lines[index].startsWith('```') && !isMarkdownTableStart(lines, index) && !/^(#{1,6})\s+/.test(lines[index]) && !/^\s*[-*+]\s+/.test(lines[index]) && !/^\s*\d+[.)]\s+/.test(lines[index]) && !lines[index].startsWith('>')) paragraph.push(lines[index++]);
             const node = document.createElement('p');
             paragraph.forEach((text, position) => { if (position) node.appendChild(document.createElement('br')); appendInlineMarkdown(node, text); });
             fragment.appendChild(node);
@@ -232,6 +246,20 @@ function renderMarkdown(container, markdown) {
         console.warn('Markdown rendering failed; falling back to plain text.', error);
         container.textContent = String(markdown ?? '');
     }
+}
+
+function isMarkdownTableRow(line) {
+    return typeof line === 'string' && /^\s*\|.*\|\s*$/.test(line);
+}
+
+function isMarkdownTableStart(lines, index) {
+    if (!isMarkdownTableRow(lines[index]) || index + 1 >= lines.length) return false;
+    const separator = parseMarkdownTableRow(lines[index + 1]);
+    return separator.length > 0 && separator.every(cell => /^:?-{3,}:?$/.test(cell));
+}
+
+function parseMarkdownTableRow(line) {
+    return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(cell => cell.trim());
 }
 
 function appendInlineMarkdown(container, text) {
@@ -295,6 +323,13 @@ async function askQuestion(event) {
             if (eventName === 'meta') state.activeSessionId = data.sessionId;
             if (eventName === 'chunk') { answer += data.content || ''; content.classList.remove('thinking'); content.textContent = answer; $('#message-list').scrollTop = $('#message-list').scrollHeight; }
             if (eventName === 'done') { state.activeSessionId = data.sessionId; content.classList.remove('thinking'); renderMarkdown(content, answer); renderReferences(assistantItem, data.references || []); loadSessions(); }
+            if (eventName === 'error') {
+                state.activeSessionId = data.sessionId || state.activeSessionId;
+                const message = data.content || '模型响应中断，请重试。';
+                content.classList.remove('thinking');
+                renderMarkdown(content, answer ? `${answer}\n\n> ${message}` : `> ${message}`);
+                loadSessions();
+            }
         });
     }
     catch (error) { content.classList.remove('thinking'); content.textContent = `请求失败：${error.message}`; }

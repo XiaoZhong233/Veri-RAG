@@ -11,7 +11,9 @@ import java.util.Set;
 public final class FileTypeUtil {
 
     /** 允许的扩展名（小写，不含点） */
-    private static final Set<String> ALLOWED = Set.of("txt", "pdf", "doc", "docx", "md");
+    private static final Set<String> ALLOWED = Set.of(
+            "txt", "pdf", "doc", "docx", "md", "xlsx", "html", "htm"
+    );
 
     private FileTypeUtil() {
     }

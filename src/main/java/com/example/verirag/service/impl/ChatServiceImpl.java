@@ -13,10 +13,12 @@ import com.example.verirag.memory.ConversationSummaryService;
 import com.example.verirag.observability.RagMetrics;
 import com.example.verirag.prompt.RagPromptManager;
 import com.example.verirag.prompt.PropertyToolPromptManager;
+import com.example.verirag.prompt.SalesRecommendationPromptManager;
 import com.example.verirag.service.ChatService;
 import com.example.verirag.service.RagAnswerCache;
+import com.example.verirag.tool.PropertyQueryIntent;
 import com.example.verirag.tool.PropertyQueryRouter;
-import com.example.verirag.tool.PropertyQueryTools;
+import com.example.verirag.tool.PropertyToolSelector;
 import com.example.verirag.tool.ToolCallEventContext;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -51,6 +53,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Service
@@ -58,6 +62,12 @@ import java.util.stream.Collectors;
 @Slf4j
 public class ChatServiceImpl implements ChatService {
     private static final int DEFAULT_RAG_TOP_K = 8;
+    private static final int PROPERTY_CANDIDATE_RETRIEVAL_TOP_K = 30;
+    private static final int PROPERTY_MAX_DISTINCT_RESIDENCES = 12;
+    private static final Pattern RESIDENCE_NAME_PREFIX =
+            Pattern.compile("(?m)^公寓名称：\\s*(.+?)\\s*$");
+    private static final Pattern RESIDENCE_H2 =
+            Pattern.compile("(?m)^##\\s+(.+?)\\s*$");
     private static final double DEFAULT_SIMILARITY_THRESHOLD = 0.75;
     private static final int DEFAULT_HISTORY_MAX_MESSAGES = 6;
     private static final ZoneId LONDON_TIME_ZONE = ZoneId.of("Europe/London");
@@ -88,7 +98,9 @@ public class ChatServiceImpl implements ChatService {
 
     private final PropertyToolPromptManager propertyToolPromptManager;
 
-    private final PropertyQueryTools propertyQueryTools;
+    private final SalesRecommendationPromptManager salesRecommendationPromptManager;
+
+    private final PropertyToolSelector propertyToolSelector;
 
     @Value("${rag.retrieval.similarity-threshold:" + DEFAULT_SIMILARITY_THRESHOLD + "}")
     private double similarityThreshold;
@@ -112,8 +124,9 @@ public class ChatServiceImpl implements ChatService {
             assertSessionOwner(userId, requestedSessionId);
         }
         List<ChatMessage> history = loadRecentHistory(requestedSessionId);
-        boolean structuredPropertyQuery = PropertyQueryRouter
-                .isStructuredPropertyQuery(req.getQuestion(), history);
+        PropertyQueryIntent propertyIntent = PropertyQueryRouter
+                .route(req.getQuestion(), history);
+        boolean structuredPropertyQuery = propertyIntent.structured();
 
         // 追问的答案依赖前文，不参与跨会话回答缓存，避免上下文错配。
         // 房情随导入变化，结构化查询也不使用跨会话缓存。
@@ -140,7 +153,7 @@ public class ChatServiceImpl implements ChatService {
         List<Document> cited = retrievalTimingAdvisor.advise(requestedSessionId,
                 () -> retrieveKnowledge(
                         req.getQuestion(), history, req.getCategoryIds(),
-                        structuredPropertyQuery));
+                        propertyIntent));
 
         long llmStart = System.nanoTime();
         String ragContext = buildRagContext(cited);
@@ -148,11 +161,14 @@ public class ChatServiceImpl implements ChatService {
         try {
             ChatClient.ChatClientRequestSpec prompt = newChatPrompt(requestedSessionId);
             if (structuredPropertyQuery) {
-                prompt = prompt.tools(propertyQueryTools);
+                prompt = prompt.tools(
+                        (Object[]) propertyToolSelector.callbacksFor(propertyIntent));
+                log.info("Property Tool selected: intent={}, tool={}",
+                        propertyIntent, propertyIntent.toolName());
             }
             answer = prompt
                     .system(structuredPropertyQuery
-                            ? buildPropertyToolSystemPrompt(ragContext)
+                            ? buildPropertyToolSystemPrompt(ragContext, propertyIntent)
                             : buildModelSystemPrompt(ragContext))
                     .user(structuredPropertyQuery
                             ? buildPropertyToolUserMessage(
@@ -198,8 +214,9 @@ public class ChatServiceImpl implements ChatService {
             assertSessionOwner(userId, requestedSessionId);
         }
         List<ChatMessage> history = loadRecentHistory(requestedSessionId);
-        boolean structuredPropertyQuery = PropertyQueryRouter
-                .isStructuredPropertyQuery(req.getQuestion(), history);
+        PropertyQueryIntent propertyIntent = PropertyQueryRouter
+                .route(req.getQuestion(), history);
+        boolean structuredPropertyQuery = propertyIntent.structured();
 
         var cached = requestedSessionId == null && !structuredPropertyQuery
                 ? ragAnswerCache.find(req.getQuestion(), req.getCategoryIds())
@@ -236,7 +253,7 @@ public class ChatServiceImpl implements ChatService {
         List<Document> cited = retrievalTimingAdvisor.advise(requestedSessionId,
                 () -> retrieveKnowledge(
                         req.getQuestion(), history, req.getCategoryIds(),
-                        structuredPropertyQuery));
+                        propertyIntent));
 
         List<Map<String, Object>> references = toRefs(req.getQuestion(), cited);
         final String referencesJson;
@@ -260,10 +277,13 @@ public class ChatServiceImpl implements ChatService {
         AtomicBoolean streamFailed = new AtomicBoolean(false);
         ChatClient.ChatClientRequestSpec prompt = newChatPrompt(sessionId);
         if (structuredPropertyQuery) {
-            prompt = prompt.tools(propertyQueryTools);
+            prompt = prompt.tools(
+                    (Object[]) propertyToolSelector.callbacksFor(propertyIntent));
+            log.info("Property Tool selected: intent={}, tool={}",
+                    propertyIntent, propertyIntent.toolName());
         }
         prompt = prompt.system(structuredPropertyQuery
-                ? buildPropertyToolSystemPrompt(ragContext)
+                ? buildPropertyToolSystemPrompt(ragContext, propertyIntent)
                 : buildModelSystemPrompt(ragContext))
                 .user(structuredPropertyQuery
                 ? buildPropertyToolUserMessage(
@@ -499,17 +519,29 @@ public class ChatServiceImpl implements ChatService {
     /** 房源查询同时检索静态知识并调用数据库 Tool；普通问答保持原 RAG 流程。 */
     private List<Document> retrieveKnowledge(String question, List<ChatMessage> history,
                                              List<Long> categoryIds,
-                                             boolean structuredPropertyQuery) {
+                                             PropertyQueryIntent propertyIntent) {
         String query = buildRetrievalQuery(question, history);
+        boolean structuredPropertyQuery = propertyIntent != null
+                && propertyIntent.structured();
         if (structuredPropertyQuery) {
             query += "\n检索公寓的地址、区域、交通、设施、附近学校和周边地点等静态资料。"
                     + "报价、租期和库存由数据库 Tool 提供。";
         }
-        List<Document> documents = retrieveForCategories(query, categoryIds);
+        int topK = propertyIntent == PropertyQueryIntent.RECOMMEND
+                ? Math.max(retrievalTopK, PROPERTY_CANDIDATE_RETRIEVAL_TOP_K)
+                : retrievalTopK;
+        List<Document> documents = retrieveForCategories(query, categoryIds, topK);
         if (!structuredPropertyQuery) {
             return documents;
         }
         List<Document> staticKnowledge = keepStaticPropertyKnowledge(documents);
+        if (propertyIntent == PropertyQueryIntent.RECOMMEND) {
+            List<Document> distinctResidences = distinctResidenceKnowledge(
+                    staticKnowledge, PROPERTY_MAX_DISTINCT_RESIDENCES);
+            log.info("Hybrid property RAG: retrieved={}, staticKnowledge={}, distinctResidences={}",
+                    documents.size(), staticKnowledge.size(), distinctResidences.size());
+            return distinctResidences;
+        }
         log.info("Hybrid property RAG: retrieved={}, staticKnowledge={}",
                 documents.size(), staticKnowledge.size());
         return staticKnowledge;
@@ -530,12 +562,43 @@ public class ChatServiceImpl implements ChatService {
     }
 
     /**
+     * A broad vector search can return several chunks from the same residence.
+     * Preserve retrieval order but keep one best-scoring chunk per residence so
+     * location recommendations cover different candidate residences.
+     */
+    static List<Document> distinctResidenceKnowledge(List<Document> documents, int limit) {
+        if (documents == null || documents.isEmpty() || limit <= 0) {
+            return Collections.emptyList();
+        }
+        Map<String, Document> byResidence = new LinkedHashMap<>();
+        for (Document document : documents) {
+            if (document == null) {
+                continue;
+            }
+            String residenceName = resolveResidenceName(document);
+            if (residenceName == null) {
+                continue;
+            }
+            byResidence.putIfAbsent(residenceName.toLowerCase(Locale.ROOT), document);
+            if (byResidence.size() >= limit) {
+                break;
+            }
+        }
+        // Older non-residence documents do not have residenceName. Retain the
+        // previous behavior only as a compatibility fallback until re-ingested.
+        return byResidence.isEmpty()
+                ? documents.stream().limit(limit).toList()
+                : List.copyOf(byResidence.values());
+    }
+
+    /**
      * 有分类时只在指定分类中检索；无足够相关命中时直接返回空结果。
      * 不将其它分类的低相关片段作为兜底上下文，避免模型产生无依据引用。
      */
-    private List<Document> retrieveForCategories(String question, List<Long> categoryIds) {
+    private List<Document> retrieveForCategories(String question, List<Long> categoryIds,
+                                                 int topK) {
         if (categoryIds == null || categoryIds.isEmpty()) {
-            return vectorSimilaritySearch(question, null);
+            return vectorSimilaritySearch(question, null, topK);
         }
 
         Set<String> categoryKeys = categoryIds.stream()
@@ -543,12 +606,12 @@ public class ChatServiceImpl implements ChatService {
                 .map(String::valueOf)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
         if (categoryKeys.isEmpty()) {
-            return vectorSimilaritySearch(question, null);
+            return vectorSimilaritySearch(question, null, topK);
         }
 
         try {
             List<Document> filtered = vectorSimilaritySearch(
-                    question, buildCategoryIdFilter(categoryKeys));
+                    question, buildCategoryIdFilter(categoryKeys), topK);
             if (!filtered.isEmpty()) {
                 return filtered;
             }
@@ -560,10 +623,11 @@ public class ChatServiceImpl implements ChatService {
         return Collections.emptyList();
     }
 
-    private List<Document> vectorSimilaritySearch(String question, Filter.Expression filter) {
+    private List<Document> vectorSimilaritySearch(String question, Filter.Expression filter,
+                                                  int topK) {
         SearchRequest.Builder builder = SearchRequest.builder()
                 .query(question)
-                .topK(retrievalTopK)
+                .topK(Math.max(topK, 1))
                 .similarityThreshold(similarityThreshold);
         if (filter != null) {
             builder.filterExpression(filter);
@@ -636,10 +700,21 @@ public class ChatServiceImpl implements ChatService {
         return manualHistoryEnabled ? promptManager.systemPrompt() : promptManager.systemPrompt() + "\n\n" + ragContext;
     }
 
-    private String buildPropertyToolSystemPrompt(String ragContext) {
-        return propertyToolPromptManager.systemPrompt()
-                + "\n\n当前日期（Europe/London）：" + LocalDate.now(LONDON_TIME_ZONE)
-                + "\n\n## 知识库静态资料\n\n" + ragContext;
+    private String buildPropertyToolSystemPrompt(String ragContext,
+                                                 PropertyQueryIntent propertyIntent) {
+        StringBuilder prompt = new StringBuilder(propertyToolPromptManager.systemPrompt());
+        if (propertyIntent == PropertyQueryIntent.RECOMMEND) {
+            String salesPrompt = salesRecommendationPromptManager.systemPrompt();
+            if (!salesPrompt.isBlank()) {
+                prompt.append("\n\n").append(salesPrompt);
+            }
+        }
+        return prompt
+                .append("\n\n当前日期（Europe/London）：")
+                .append(LocalDate.now(LONDON_TIME_ZONE))
+                .append("\n\n## 知识库静态资料\n\n")
+                .append(ragContext)
+                .toString();
     }
 
     private String buildPropertyToolUserMessage(String question, Long sessionId,
@@ -716,15 +791,65 @@ public class ChatServiceImpl implements ChatService {
                 continue;
             }
             Map<String, Object> metadata = document.getMetadata();
-            Object titleValue = metadata == null ? null : metadata.get("title");
-            String title = titleValue == null || String.valueOf(titleValue).isBlank()
-                    ? "(untitled document)"
-                    : String.valueOf(titleValue);
+            String title = defaultIfBlank(
+                    resolveResidenceName(document),
+                    defaultIfBlank(metadataValue(metadata, "title"), "(untitled document)"));
+            String contextualizedText = contextualizeKnowledgeChunk(text, metadata);
 
-            prompt.append(promptManager.contextItem(number++, title, text.strip())).append("\n\n");
+            prompt.append(promptManager.contextItem(number++, title, contextualizedText))
+                    .append("\n\n");
         }
 
         return prompt.toString();
+    }
+
+    /**
+     * Token splitting can place a Markdown heading in one chunk and its university
+     * distance lines in another. Repeat stable residence identity from metadata in
+     * every retrieved chunk so the model never has to guess which residence a
+     * location statement belongs to.
+     */
+    static String contextualizeKnowledgeChunk(String text, Map<String, Object> metadata) {
+        String strippedText = text == null ? "" : text.strip();
+        String residenceName = metadataValue(metadata, "residenceName");
+        if (residenceName == null || strippedText.startsWith("公寓名称：")) {
+            return strippedText;
+        }
+
+        StringBuilder contextualized = new StringBuilder()
+                .append("公寓名称：").append(residenceName).append('\n');
+        appendMetadataLine(contextualized, "区域", metadataValue(metadata, "region"));
+        appendMetadataLine(contextualized, "交通分区", metadataValue(metadata, "zone"));
+        appendMetadataLine(contextualized, "地址", metadataValue(metadata, "address"));
+        contextualized.append("\n资料片段：\n").append(strippedText);
+        return contextualized.toString();
+    }
+
+    static String resolveResidenceName(Document document) {
+        if (document == null) {
+            return null;
+        }
+        String metadataName = metadataValue(
+                document.getMetadata(), "residenceName");
+        if (metadataName != null) {
+            return metadataName;
+        }
+        String text = document.getText();
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        Matcher prefix = RESIDENCE_NAME_PREFIX.matcher(text);
+        if (prefix.find()) {
+            return prefix.group(1).strip();
+        }
+        Matcher heading = RESIDENCE_H2.matcher(text);
+        return heading.find() ? heading.group(1).strip() : null;
+    }
+
+    private static void appendMetadataLine(StringBuilder target, String label, String value) {
+        if (value != null) {
+            target.append(label).append('：').append(value).append('\n');
+        }
     }
 
     /**

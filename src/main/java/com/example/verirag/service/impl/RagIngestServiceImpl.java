@@ -3,6 +3,7 @@ package com.example.verirag.service.impl;
 import com.example.verirag.service.RagIngestService;
 import com.example.verirag.util.ExcelDocumentReader;
 import com.example.verirag.util.ResidenceHtmlDocumentReader;
+import com.example.verirag.util.ResidenceMarkdownDocumentReader;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
@@ -39,6 +40,7 @@ public class RagIngestServiceImpl implements RagIngestService {
     private final TokenTextSplitter tokenTextSplitter;
     private final ExcelDocumentReader excelDocumentReader;
     private final ResidenceHtmlDocumentReader residenceHtmlDocumentReader;
+    private final ResidenceMarkdownDocumentReader residenceMarkdownDocumentReader;
     @Value("${spring.ai.vectorstore.redis.index-name:spring-ai-index}")
     private String redisVectorIndexName;
     @Value("${spring.ai.vectorstore.redis.prefix:embedding:}")
@@ -63,6 +65,7 @@ public class RagIngestServiceImpl implements RagIngestService {
             if (text == null || text.isBlank()) {
                 continue;
             }
+            text = contextualizeResidenceChunkForStorage(text, meta);
             toAdd.add(new Document(text, meta));
         }
         if (!toAdd.isEmpty()) {
@@ -70,6 +73,43 @@ public class RagIngestServiceImpl implements RagIngestService {
         }
         log.info("文档 {} 已向量化入库，块数 {}", documentId, toAdd.size());
         return toAdd.size();
+    }
+
+    /**
+     * RedisVectorStore only returns metadata fields declared in its search schema.
+     * Put the stable residence identity into the embedded text as well, so retrieval
+     * and de-duplication remain correct even when custom metadata is not returned.
+     */
+    static String contextualizeResidenceChunkForStorage(
+            String text, Map<String, Object> metadata) {
+        String strippedText = text == null ? "" : text.strip();
+        String residenceName = metadataText(metadata, "residenceName");
+        if (residenceName == null || strippedText.startsWith("公寓名称：")) {
+            return strippedText;
+        }
+
+        StringBuilder prefix = new StringBuilder()
+                .append("公寓名称：").append(residenceName).append('\n');
+        appendStorageMetadata(prefix, "区域", metadataText(metadata, "region"));
+        appendStorageMetadata(prefix, "交通分区", metadataText(metadata, "zone"));
+        appendStorageMetadata(prefix, "地址", metadataText(metadata, "address"));
+        appendStorageMetadata(prefix, "最近车站", metadataText(metadata, "station"));
+        return prefix.append("\n").append(strippedText).toString();
+    }
+
+    private static void appendStorageMetadata(
+            StringBuilder target, String label, String value) {
+        if (value != null) {
+            target.append(label).append('：').append(value).append('\n');
+        }
+    }
+
+    private static String metadataText(Map<String, Object> metadata, String key) {
+        if (metadata == null || metadata.get(key) == null) {
+            return null;
+        }
+        String value = String.valueOf(metadata.get(key)).strip();
+        return value.isEmpty() ? null : value;
     }
 
     /**
@@ -343,8 +383,9 @@ public class RagIngestServiceImpl implements RagIngestService {
         FileSystemResource resource = new FileSystemResource(absolutePath);
 
         return switch (normalizedExt) {
-            case "md", "markdown" ->
-                    new MarkdownDocumentReader(
+            case "md", "markdown" -> residenceMarkdownDocumentReader.supports(absolutePath)
+                    ? residenceMarkdownDocumentReader.read(absolutePath)
+                    : new MarkdownDocumentReader(
                             resource,
                             MarkdownDocumentReaderConfig.defaultConfig()
                     ).get();

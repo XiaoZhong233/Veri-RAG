@@ -37,7 +37,7 @@ spring:
     driver-class-name: com.mysql.cj.jdbc.Driver
   sql:
     init:
-      # schema.sql 仅包含幂等的公寓地址表建表语句，可安全用于已有 veri_rag 数据库。
+      # schema.sql 仅使用幂等建表/初始化语句，可安全补齐已有 veri_rag 数据库的业务表。
       mode: always
 
 

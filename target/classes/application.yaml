@@ -9,9 +9,11 @@ spring:
       api-key: ${DASHSCOPE_API_KEY}
       base-url: https://llm-1yauwtsqkmv66e2w.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
       chat:
-#        model: qwen3.6-flash
+        model: qwen3.7-plus
 #        model: qwen-doc-turbo
-        model: qwen-flash
+#        model: qwen-flash
+        # OpenAI Java SDK 默认整次请求仅允许 60 秒；推理模型即使已开始流式输出也可能被总超时取消。
+        timeout: ${LLM_TIMEOUT:5m}
         # 限制单次输出，避免冗长回答拉高 LLM 完整生成 P90；可通过 LLM_MAX_TOKENS 覆盖。
         max-tokens: ${LLM_MAX_TOKENS:1000}
         # 企业知识库问答以稳定、简洁为主，降低随机性和重复输出概率。
@@ -29,10 +31,14 @@ spring:
       url: redis://localhost:6380
       client-type: jedis
   datasource:
-    url: jdbc:mysql://localhost:3306/veri_rag?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
-    username: root
-    password: 123456
+    url: ${MYSQL_URL:jdbc:mysql://localhost:3306/veri_rag?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false}
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:123456}
     driver-class-name: com.mysql.cj.jdbc.Driver
+  sql:
+    init:
+      # schema.sql 仅使用幂等建表/初始化语句，可安全补齐已有 veri_rag 数据库的业务表。
+      mode: always
 
 
 server:
@@ -106,9 +112,11 @@ rag:
     chunk-size: ${RAG_CHUNK_SIZE:500}
     # 单个源文件最多生成多少个 chunk，防止异常超长文件带来过高 embedding 成本。
     max-num-chunks: ${RAG_MAX_NUM_CHUNKS:10000}
+    # 当前 Embedding 服务每次最多接受 20 条文本；可调低，超过 20 会自动按 20 执行。
+    embedding-batch-size: ${RAG_EMBEDDING_BATCH_SIZE:20}
   retrieval:
-    # 每次向量检索最多返回的 Chunk 数；制度问答默认 2 个即可，减少 Prompt 长度与模型延迟。
-    top-k: ${RAG_RETRIEVAL_TOP_K:3}
+    # 普通知识库问答的最大召回数量；房源、报价和库存查询改由数据库 Tool 处理。
+    top-k: ${RAG_RETRIEVAL_TOP_K:8}
     # 向量检索最低相似度（0~1）；低于该值不作为上下文或引用，建议 0.70~0.80。
     similarity-threshold: ${RAG_SIMILARITY_THRESHOLD:0.75}
   answer-cache:

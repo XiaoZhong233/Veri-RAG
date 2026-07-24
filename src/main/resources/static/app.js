@@ -92,9 +92,9 @@ function renderCurrentUser() {
     $('#profile-real-name').value = state.user.realName || '';
 }
 
-const viewInfo = {chat: ['VERIRAG', '智能问答'], knowledge: ['KNOWLEDGE BASE', '知识库'], residences: ['PROPERTY DATA', '公寓地址'], offers: ['INVENTORY & PRICING', '房型库存'], users: ['ADMINISTRATION', '用户管理'], profile: ['ACCOUNT', '个人设置']};
+const viewInfo = {chat: ['VERIRAG', '智能问答'], knowledge: ['KNOWLEDGE BASE', '知识库'], residences: ['PROPERTY DATA', '公寓地址'], offers: ['INVENTORY & PRICING', '房型库存'], recommendations: ['SALES PREFERENCE', '推荐管理'], users: ['ADMINISTRATION', '用户管理'], profile: ['ACCOUNT', '个人设置']};
 function showView(view) {
-    if (view === 'users' && !isAdmin()) { showToast('没有用户管理权限'); return; }
+    if ((view === 'users' || view === 'recommendations') && !isAdmin()) { showToast('没有管理权限'); return; }
     state.view = view;
     Object.keys(viewInfo).forEach(name => $(`#${name}-view`).classList.toggle('hidden', name !== view));
     document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.view === view));
@@ -103,6 +103,7 @@ function showView(view) {
     if (view === 'knowledge') { renderCategories(); loadDocuments(); }
     if (view === 'residences') loadResidences();
     if (view === 'offers') loadOffers();
+    if (view === 'recommendations') loadRecommendations();
 }
 
 async function loadCategories() {
@@ -217,13 +218,21 @@ function renderMarkdown(container, markdown) {
                 const wrapper = document.createElement('div'); wrapper.className = 'markdown-table-wrap';
                 const table = document.createElement('table');
                 const thead = document.createElement('thead'); const headerRow = document.createElement('tr');
-                parseMarkdownTableRow(lines[index]).forEach(text => { const cell = document.createElement('th'); appendInlineMarkdown(cell, text); headerRow.appendChild(cell); });
+                const headers = parseMarkdownTableRow(lines[index]);
+                headers.forEach(text => { const cell = document.createElement('th'); appendInlineMarkdown(cell, text); headerRow.appendChild(cell); });
                 thead.appendChild(headerRow); table.appendChild(thead); index += 2;
                 const tbody = document.createElement('tbody');
+                let previousRow = null;
                 while (index < lines.length && isMarkdownTableRow(lines[index])) {
+                    const values = normalizeMarkdownTableRow(parseMarkdownTableRow(lines[index]), headers.length);
+                    if (isResidenceRoomContinuation(headers, values, previousRow)) {
+                        mergeResidenceRoomContinuation(previousRow, values);
+                        index++;
+                        continue;
+                    }
                     const row = document.createElement('tr');
-                    parseMarkdownTableRow(lines[index]).forEach(text => { const cell = document.createElement('td'); appendInlineMarkdown(cell, text); row.appendChild(cell); });
-                    tbody.appendChild(row); index++;
+                    values.forEach(text => { const cell = document.createElement('td'); appendInlineMarkdown(cell, text); row.appendChild(cell); });
+                    tbody.appendChild(row); previousRow = row; index++;
                 }
                 table.appendChild(tbody); wrapper.appendChild(table); fragment.appendChild(wrapper); continue;
             }
@@ -268,13 +277,41 @@ function parseMarkdownTableRow(line) {
     return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(cell => cell.trim());
 }
 
+function normalizeMarkdownTableRow(values, columnCount) {
+    const normalized = values.slice(0, columnCount);
+    while (normalized.length < columnCount) normalized.push('');
+    return normalized;
+}
+
+function isResidenceRoomContinuation(headers, values, previousRow) {
+    return Boolean(previousRow)
+        && headers[0] === '公寓'
+        && headers[1] === '位置参考'
+        && !values[0]
+        && !values[1]
+        && values.slice(2).some(Boolean);
+}
+
+function mergeResidenceRoomContinuation(row, values) {
+    const cells = Array.from(row.cells);
+    for (let index = 2; index < Math.min(cells.length, values.length); index++) {
+        let value = values[index];
+        if (!value || value === '同上') continue;
+        value = value.replace(/^同上[，,、:：\s]*/, '');
+        if (!value) continue;
+        cells[index].appendChild(document.createElement('br'));
+        appendInlineMarkdown(cells[index], value);
+    }
+}
+
 function appendInlineMarkdown(container, text) {
-    const pattern = /(\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|\[[^\]]+\]\([^\s)]+\)|\*[^*]+\*|_[^_]+_)/g;
+    const pattern = /(<br\s*\/?>|\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|\[[^\]]+\]\([^\s)]+\)|\*[^*]+\*|_[^_]+_)/gi;
     let cursor = 0;
     for (const match of text.matchAll(pattern)) {
         container.append(document.createTextNode(text.slice(cursor, match.index)));
         const token = match[0];
-        if ((token.startsWith('**') && token.endsWith('**')) || (token.startsWith('__') && token.endsWith('__'))) { const strong = document.createElement('strong'); strong.textContent = token.slice(2, -2); container.appendChild(strong); }
+        if (/^<br\s*\/?>$/i.test(token)) container.appendChild(document.createElement('br'));
+        else if ((token.startsWith('**') && token.endsWith('**')) || (token.startsWith('__') && token.endsWith('__'))) { const strong = document.createElement('strong'); strong.textContent = token.slice(2, -2); container.appendChild(strong); }
         else if (token.startsWith('`')) { const code = document.createElement('code'); code.textContent = token.slice(1, -1); container.appendChild(code); }
         else if (token.startsWith('[')) { const end = token.indexOf(']('); const label = token.slice(1, end); const href = token.slice(end + 2, -1); const link = document.createElement('a'); link.textContent = label; if (/^(https?:|mailto:)/i.test(href)) { link.href = href; link.target = '_blank'; link.rel = 'noopener noreferrer'; } container.appendChild(link); }
         else { const emphasis = document.createElement('em'); emphasis.textContent = token.slice(1, -1); container.appendChild(emphasis); }
@@ -467,11 +504,14 @@ async function loadResidenceOptions(force = false) {
     if (!state.residenceOptions.length || force) state.residenceOptions = await request('/api/residences/options');
     const filterValue = $('#offer-residence').value;
     const formValue = $('#offer-form-residence').value;
+    const recommendationValue = $('#recommendation-residence').value;
     const options = state.residenceOptions.map(item => `<option value="${item.id}">${escapeHtml(item.name)} · ${escapeHtml(item.sourceId)}</option>`).join('');
     $('#offer-residence').innerHTML = `<option value="">全部公寓</option>${options}`;
     $('#offer-form-residence').innerHTML = `<option value="">请选择公寓</option>${options}`;
+    $('#recommendation-residence').innerHTML = `<option value="">请选择公寓</option>${options}`;
     if ([...$('#offer-residence').options].some(option => option.value === filterValue)) $('#offer-residence').value = filterValue;
     if ([...$('#offer-form-residence').options].some(option => option.value === formValue)) $('#offer-form-residence').value = formValue;
+    if ([...$('#recommendation-residence').options].some(option => option.value === recommendationValue)) $('#recommendation-residence').value = recommendationValue;
 }
 async function loadOffers() {
     if (state.view !== 'offers') return;
@@ -603,6 +643,58 @@ async function importOffers(event) {
     finally { button.disabled = false; button.textContent = '开始导入'; }
 }
 
+async function loadRecommendations() {
+    if (state.view !== 'recommendations' || !isAdmin()) return;
+    try {
+        const records = await request('/api/sales-recommendations');
+        renderRecommendations(records);
+    } catch (error) { showToast(error.message); }
+}
+function renderRecommendations(records) {
+    $('#recommendation-table-body').innerHTML = records.map(item => {
+        const enabled = item.enabled === 1;
+        return `<tr><td><strong class="recommendation-priority">${item.priority}</strong></td><td><strong>${escapeHtml(item.residenceName)}</strong><small>${escapeHtml(item.residenceSourceId)}</small></td><td>${escapeHtml(item.city || '-')}</td><td><span class="status-tag ${enabled ? 'active' : 'disabled'}">${enabled ? '启用' : '停用'}</span></td><td>${escapeHtml(item.note || '-')}</td><td>${formatDate(item.updateTime)}</td><td><div class="row-actions"><button class="text-button" data-recommendation-action="edit" data-id="${item.id}" type="button">编辑</button><button class="text-button danger" data-recommendation-action="delete" data-id="${item.id}" data-name="${escapeHtml(item.residenceName)}" type="button">删除</button></div></td></tr>`;
+    }).join('');
+    $('#recommendation-empty').classList.toggle('hidden', records.length !== 0);
+}
+async function openRecommendationDialog(id = null) {
+    $('#recommendation-form').reset();
+    $('#recommendation-form-error').textContent = '';
+    $('#recommendation-id').value = '';
+    $('#recommendation-priority').value = '100';
+    $('#recommendation-enabled').value = '1';
+    $('#recommendation-dialog-title').textContent = id ? '编辑推荐公寓' : '添加推荐公寓';
+    try {
+        await loadResidenceOptions();
+        if (id) {
+            const item = await request(`/api/sales-recommendations/${id}`);
+            $('#recommendation-id').value = item.id;
+            $('#recommendation-residence').value = String(item.residenceId);
+            $('#recommendation-priority').value = item.priority;
+            $('#recommendation-enabled').value = String(item.enabled);
+            $('#recommendation-note').value = item.note || '';
+        }
+        $('#recommendation-dialog').showModal();
+    } catch (error) { showToast(error.message); }
+}
+async function saveRecommendation(event) {
+    event.preventDefault();
+    const id = $('#recommendation-id').value;
+    const payload = {
+        id: id ? Number(id) : null,
+        residenceId: Number($('#recommendation-residence').value),
+        priority: Number($('#recommendation-priority').value),
+        enabled: Number($('#recommendation-enabled').value),
+        note: $('#recommendation-note').value.trim() || null
+    };
+    try {
+        await request('/api/sales-recommendations', {method: 'POST', body: JSON.stringify(payload)});
+        $('#recommendation-dialog').close();
+        showToast('推荐配置已保存，下一次房源推荐立即生效');
+        await loadRecommendations();
+    } catch (error) { $('#recommendation-form-error').textContent = error.message; }
+}
+
 async function loadUsers() {
     if (!isAdmin()) return;
     try { const query = new URLSearchParams({keyword: $('#keyword').value.trim(), page: state.userPage, size: state.userSize}); const result = await request(`/api/users/page?${query}`); state.userTotal = result.total; renderUsers(result.records); const pages = Math.max(Math.ceil(result.total / state.userSize), 1); $('#pagination-info').textContent = `共 ${result.total} 位用户`; $('#page-number').textContent = `${state.userPage} / ${pages}`; $('#prev-page').disabled = state.userPage <= 1; $('#next-page').disabled = state.userPage >= pages; } catch (error) { showToast(error.message); }
@@ -627,6 +719,7 @@ $('#new-category-button').addEventListener('click', () => $('#category-dialog').
 $('#upload-document-button').addEventListener('click', () => $('#document-dialog').showModal()); $('#document-form').addEventListener('submit', uploadDocument); $('#document-search-button').addEventListener('click', () => { state.documentPage = 1; loadDocuments(); }); $('#document-category').addEventListener('change', () => { state.documentPage = 1; loadDocuments(); }); $('#document-prev').addEventListener('click', () => { if (state.documentPage > 1) { state.documentPage--; loadDocuments(); } }); $('#document-next').addEventListener('click', () => { if (state.documentPage * state.documentSize < state.documentTotal) { state.documentPage++; loadDocuments(); } }); $('#batch-reingest-button').addEventListener('click', batchReingestDocuments); $('#document-list').addEventListener('change', event => { const checkbox = event.target.closest('.document-select'); if (!checkbox) return; const id = Number(checkbox.dataset.id); if (checkbox.checked) state.selectedDocumentIds.add(id); else state.selectedDocumentIds.delete(id); updateBatchReingestButton(); }); $('#document-list').addEventListener('click', async event => { const reingest = event.target.closest('.reingest-document'); if (reingest) { if (!confirm(`确定重新向量化文档“${reingest.dataset.title}”吗？`)) return; reingest.disabled = true; reingest.textContent = '处理中…'; try { await request(`/api/documents/${reingest.dataset.id}/reingest`, {method: 'POST'}); showToast('文档已重新向量化'); loadDocuments(); } catch (error) { showToast(error.message); reingest.disabled = false; reingest.textContent = '重新向量化'; } return; } const button = event.target.closest('.delete-document'); if (!button || !confirm(`确定删除文档“${button.dataset.title}”吗？`)) return; try { await request(`/api/documents/${button.dataset.id}`, {method: 'DELETE'}); state.selectedDocumentIds.delete(Number(button.dataset.id)); showToast('文档和向量已删除'); loadDocuments(); } catch (error) { showToast(error.message); } });
 $('#new-residence-button').addEventListener('click', () => openResidenceDialog()); $('#import-residence-button').addEventListener('click', () => $('#residence-import-dialog').showModal()); $('#residence-form').addEventListener('submit', saveResidence); $('#residence-import-form').addEventListener('submit', importResidences); $('#residence-search-button').addEventListener('click', () => { state.residencePage = 1; loadResidences(); }); $('#residence-city').addEventListener('change', () => { state.residencePage = 1; loadResidences(); }); $('#residence-region').addEventListener('change', () => { state.residencePage = 1; loadResidences(); }); $('#residence-keyword').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); state.residencePage = 1; loadResidences(); } }); $('#residence-prev').addEventListener('click', () => { if (state.residencePage > 1) { state.residencePage--; loadResidences(); } }); $('#residence-next').addEventListener('click', () => { if (state.residencePage * state.residenceSize < state.residenceTotal) { state.residencePage++; loadResidences(); } }); $('#residence-table-body').addEventListener('click', async event => { const button = event.target.closest('[data-residence-action]'); if (!button) return; if (button.dataset.residenceAction === 'edit') return openResidenceDialog(Number(button.dataset.id)); if (!confirm(`确定删除公寓“${button.dataset.name}”吗？`)) return; try { await request(`/api/residences/${button.dataset.id}`, {method: 'DELETE'}); state.residenceOptions = []; showToast('公寓已删除'); await loadResidences(); } catch (error) { showToast(error.message); } });
 $('#new-offer-button').addEventListener('click', () => openOfferDialog()); $('#import-offer-button').addEventListener('click', () => { $('#offer-import-form').reset(); $('#offer-import-error').textContent = ''; $('#offer-import-result').classList.add('hidden'); $('#offer-import-dialog').showModal(); }); $('#offer-form').addEventListener('submit', saveOffer); $('#offer-import-form').addEventListener('submit', importOffers); $('#add-price-tier').addEventListener('click', () => addPriceTier()); $('#price-tier-list').addEventListener('click', event => { const button = event.target.closest('.remove-price-tier'); if (button) button.closest('.price-tier-card').remove(); }); $('#offer-search-button').addEventListener('click', () => { state.offerPage = 1; loadOffers(); }); $('#offer-residence').addEventListener('change', () => { state.offerPage = 1; loadOffers(); }); $('#offer-status').addEventListener('change', () => { state.offerPage = 1; loadOffers(); }); $('#offer-keyword').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); state.offerPage = 1; loadOffers(); } }); $('#offer-prev').addEventListener('click', () => { if (state.offerPage > 1) { state.offerPage--; loadOffers(); } }); $('#offer-next').addEventListener('click', () => { if (state.offerPage * state.offerSize < state.offerTotal) { state.offerPage++; loadOffers(); } }); $('#offer-inventory-status').addEventListener('change', event => { if (event.target.value === 'SOLD_OUT') $('#offer-quantity').value = 0; }); $('#offer-table-body').addEventListener('click', async event => { const button = event.target.closest('[data-offer-action]'); if (!button) return; if (button.dataset.offerAction === 'edit') return openOfferDialog(Number(button.dataset.id)); if (!confirm(`确定删除房型“${button.dataset.name}”及其全部价格档位吗？`)) return; try { await request(`/api/room-offers/${button.dataset.id}`, {method: 'DELETE'}); showToast('房型已删除'); await loadOffers(); } catch (error) { showToast(error.message); } });
+$('#new-recommendation-button').addEventListener('click', () => openRecommendationDialog()); $('#recommendation-form').addEventListener('submit', saveRecommendation); $('#recommendation-table-body').addEventListener('click', async event => { const button = event.target.closest('[data-recommendation-action]'); if (!button) return; if (button.dataset.recommendationAction === 'edit') return openRecommendationDialog(Number(button.dataset.id)); if (!confirm(`确定删除“${button.dataset.name}”的推荐配置吗？`)) return; try { await request(`/api/sales-recommendations/${button.dataset.id}`, {method: 'DELETE'}); showToast('推荐配置已删除'); await loadRecommendations(); } catch (error) { showToast(error.message); } });
 $('#search-button').addEventListener('click', () => { state.userPage = 1; loadUsers(); }); $('#create-button').addEventListener('click', () => openUserDialog()); $('#prev-page').addEventListener('click', () => { if (state.userPage > 1) { state.userPage--; loadUsers(); } }); $('#next-page').addEventListener('click', () => { if (state.userPage * state.userSize < state.userTotal) { state.userPage++; loadUsers(); } }); $('#user-form').addEventListener('submit', saveUser); $('#close-dialog').addEventListener('click', () => $('#user-dialog').close()); $('#cancel-dialog').addEventListener('click', () => $('#user-dialog').close()); $('#user-table-body').addEventListener('click', async event => { const button = event.target.closest('[data-user-action]'); if (!button) return; const user = JSON.parse(button.closest('tr').dataset.user); if (button.dataset.userAction === 'edit') return openUserDialog(user); if (!confirm(`确定删除用户“${user.username}”吗？`)) return; try { await request(`/api/users/${user.id}`, {method: 'DELETE'}); showToast('用户已删除'); loadUsers(); } catch (error) { showToast(error.message); } });
 $('#profile-form').addEventListener('submit', saveProfile); $('#password-form').addEventListener('submit', changePassword); document.querySelectorAll('[data-close-dialog]').forEach(button => button.addEventListener('click', () => $(`#${button.dataset.closeDialog}`).close()));
 if (state.token) showConsole();

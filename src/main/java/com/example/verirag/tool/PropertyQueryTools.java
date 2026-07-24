@@ -22,6 +22,7 @@ import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -44,9 +45,9 @@ import java.util.stream.Collectors;
 public class PropertyQueryTools {
 
     private static final Logger log = LoggerFactory.getLogger(PropertyQueryTools.class);
-    private static final int DEFAULT_RESIDENCE_LIMIT = 8;
-    private static final int MAX_RESIDENCE_LIMIT = 20;
-    private static final int MAX_ROOMS_PER_RESIDENCE = 3;
+    private static final int DEFAULT_RESIDENCE_LIMIT = 4;
+    private static final int MAX_RESIDENCE_LIMIT = 4;
+    private static final int MAX_ROOMS_PER_RESIDENCE = 2;
 
     private final ResidenceMapper residenceMapper;
     private final RoomInventoryMapper inventoryMapper;
@@ -58,8 +59,9 @@ public class PropertyQueryTools {
             可接受的起租日期窗口，格式 YYYY-MM-DD；stayWeeks 是实际租住周数。
             residenceNames 用于把结果硬限制在知识库已确认的位置候选公寓中。
             结果按不同公寓分组。该工具不计算学校或地标通勤距离。
-            一次找房请求只能调用本工具一次：调用前应汇总全部候选公寓并一次性传入
-            residenceNames，结果不足或为空时不得拆分候选或再次调用。
+            有学校、地标或区域条件时，应将当前知识库参考资料中位置明确匹配的
+            全部具名候选一次性传入 residenceNames。本工具每次最多返回4个公寓、
+            每个公寓最多2个房型；结果不足或为空时不要再次调用。
             """)
     public RoomOfferSearchResult searchRoomOffers(
             @ToolParam(description = "城市，例如 London、Manchester；不限制时留空",
@@ -86,7 +88,7 @@ public class PropertyQueryTools {
             @ToolParam(description = "是否包含候选公寓中的售罄房型；默认false",
                     required = false)
             Boolean includeSoldOut,
-            @ToolParam(description = "最多返回多少个不同公寓，默认8，最大20", required = false)
+            @ToolParam(description = "最多返回多少个不同公寓，默认4，最大4", required = false)
             Integer limitResidences) {
         return executeTool("search_room_offers",
                 toolArguments(
@@ -188,7 +190,7 @@ public class PropertyQueryTools {
                         Collectors.toList()));
         List<ResidenceOfferGroup> groups = grouped.entrySet().stream()
                 .map(entry -> toGroup(residenceById.get(entry.getKey()), entry.getValue()))
-                .sorted(groupComparator())
+                .sorted(groupComparator(requestedResidenceNames))
                 .limit(safeLimit)
                 .toList();
 
@@ -545,10 +547,20 @@ public class PropertyQueryTools {
                 .thenComparing(room -> room.inventory().getRoomName());
     }
 
-    private static Comparator<ResidenceOfferGroup> groupComparator() {
+    private static Comparator<ResidenceOfferGroup> groupComparator(
+            List<String> requestedResidenceNames) {
+        Map<String, Integer> requestedOrder = new HashMap<>();
+        if (requestedResidenceNames != null) {
+            for (int i = 0; i < requestedResidenceNames.size(); i++) {
+                requestedOrder.putIfAbsent(
+                        canonicalResidenceName(requestedResidenceNames.get(i)), i);
+            }
+        }
         return Comparator.comparingInt((ResidenceOfferGroup group) ->
                         group.rooms().stream().map(RoomMatch::inventoryStatus)
                                 .mapToInt(PropertyQueryTools::statusRank).min().orElse(99))
+                .thenComparingInt(group -> requestedOrder.getOrDefault(
+                        canonicalResidenceName(group.residenceName()), Integer.MAX_VALUE))
                 .thenComparing(group -> group.rooms().stream()
                         .map(RoomMatch::weeklyPrice).filter(Objects::nonNull)
                         .min(Comparator.naturalOrder()).orElse(null),

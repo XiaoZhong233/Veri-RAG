@@ -29,8 +29,8 @@ public class ChatClientConfiguration {
         return ChatClient
                 .builder(model)
                 .defaultAdvisors(
-                        MessageChatMemoryAdvisor.builder(chatMemory).build()
-//                        new SimpleLoggerAdvisor()
+                        MessageChatMemoryAdvisor.builder(chatMemory).build(),
+                        new SimpleLoggerAdvisor()
                 )
                 .build();
     }

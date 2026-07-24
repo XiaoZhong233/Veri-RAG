@@ -22,34 +22,77 @@ public final class PropertyQueryRouter {
             Pattern.CASE_INSENSITIVE);
     private static final Pattern QUERY_ACTION = Pattern.compile(
             "多少|几个|哪些|列表|推荐|查|找|价格|报价|地址|车站|地图|入住|退房|附近");
+    private static final Pattern QUOTE_TERMS = Pattern.compile(
+            "room\\s*offer\\s*id|roomOfferId|房源报价id|房型报价id",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern SUMMARY_TERMS = Pattern.compile(
+            "多少(?:个)?公寓|几(?:个)?公寓|公寓总数|总共有多少|一共有多少|"
+                    + "库存统计|房型数量|多少(?:个)?房型|可预订.*数量");
+    private static final Pattern LIST_TERMS = Pattern.compile(
+            "有哪些公寓|公寓名单|公寓列表|公寓地址|地址在哪|"
+                    + "哪个城市|哪些城市|最近车站|地图");
+    private static final Pattern RECOMMEND_TERMS = Pattern.compile(
+            "推荐|帮我找|查找|附近|可订|预订|入住|退房|起租|租期|"
+                    + "售罄|房源|房型|studio|ensuite|weekly\\s*price",
+            Pattern.CASE_INSENSITIVE);
 
     private PropertyQueryRouter() {
     }
 
     public static boolean isStructuredPropertyQuery(String question,
                                                      List<ChatMessage> history) {
+        return route(question, history).structured();
+    }
+
+    public static PropertyQueryIntent route(String question,
+                                            List<ChatMessage> history) {
         String normalized = normalize(question);
         if (normalized.isBlank()) {
-            return false;
+            return PropertyQueryIntent.NONE;
         }
-        if (STRUCTURED_TERMS.matcher(normalized).find()) {
-            return true;
+        PropertyQueryIntent direct = routeCurrent(normalized);
+        if (direct.structured()) {
+            return direct;
         }
-        if (CITY_QUERY.matcher(normalized).find()
-                && QUERY_ACTION.matcher(normalized).find()) {
-            return true;
-        }
-        // “那曼彻斯特呢”“价格呢”等短追问继承上一轮房源语境。
+        // “那曼彻斯特呢”等短追问继承上一轮具体 Tool 意图。
         if (normalized.length() <= 30 && history != null) {
             for (int i = history.size() - 1; i >= 0; i--) {
                 ChatMessage message = history.get(i);
-                if ("USER".equals(message.getRole())
-                        && STRUCTURED_TERMS.matcher(normalize(message.getContent())).find()) {
-                    return true;
+                if (!"USER".equals(message.getRole())) {
+                    continue;
+                }
+                PropertyQueryIntent inherited =
+                        routeCurrent(normalize(message.getContent()));
+                if (inherited.structured()) {
+                    return inherited;
                 }
             }
         }
-        return false;
+        return PropertyQueryIntent.NONE;
+    }
+
+    private static PropertyQueryIntent routeCurrent(String normalized) {
+        if (QUOTE_TERMS.matcher(normalized).find()) {
+            return PropertyQueryIntent.QUOTE;
+        }
+        if (SUMMARY_TERMS.matcher(normalized).find()) {
+            return PropertyQueryIntent.SUMMARY;
+        }
+        boolean recommendation = RECOMMEND_TERMS.matcher(normalized).find();
+        if (recommendation) {
+            return PropertyQueryIntent.RECOMMEND;
+        }
+        if (LIST_TERMS.matcher(normalized).find()) {
+            return PropertyQueryIntent.LIST;
+        }
+        if (STRUCTURED_TERMS.matcher(normalized).find()) {
+            return PropertyQueryIntent.RECOMMEND;
+        }
+        if (CITY_QUERY.matcher(normalized).find()
+                && QUERY_ACTION.matcher(normalized).find()) {
+            return PropertyQueryIntent.LIST;
+        }
+        return PropertyQueryIntent.NONE;
     }
 
     private static String normalize(String value) {

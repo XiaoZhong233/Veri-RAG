@@ -43,6 +43,40 @@ class ChatRetrievalQueryTests {
     }
 
     @Test
+    void keepsOneBestChunkPerResidenceForLocationCandidates() {
+        Document islingtonUniversity = new Document(
+                "UCL: 18 minutes via tube",
+                Map.of("residenceName", "Islington Residence"));
+        Document islingtonStation = new Document(
+                "Caledonian Road station",
+                Map.of("residenceName", "Islington Residence"));
+        Document highbury = new Document(
+                "UCL: 18 minutes via tube",
+                Map.of("residenceName", "Highbury Residence"));
+        Document kingsCross = new Document(
+                "UCL: 10 minutes via tube",
+                Map.of("residenceName", "King's Cross Residence"));
+
+        assertThat(ChatServiceImpl.distinctResidenceKnowledge(
+                List.of(islingtonUniversity, islingtonStation, highbury, kingsCross), 2))
+                .containsExactly(islingtonUniversity, highbury);
+    }
+
+    @Test
+    void deduplicatesResidenceCandidatesUsingStoredTextIdentity() {
+        Document highburyUniversity = new Document(
+                "公寓名称：Highbury Residence\n\nUCL: 18 minutes");
+        Document highburyStation = new Document(
+                "公寓名称：Highbury Residence\n\nHolloway Road");
+        Document islington = new Document(
+                "公寓名称：Islington Residence\n\nUCL: 18 minutes");
+
+        assertThat(ChatServiceImpl.distinctResidenceKnowledge(
+                List.of(highburyUniversity, highburyStation, islington), 12))
+                .containsExactly(highburyUniversity, islington);
+    }
+
+    @Test
     void preservesConversationContextForCountFollowUp() {
         ChatMessage previous = new ChatMessage();
         previous.setRole("USER");

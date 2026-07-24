@@ -22,6 +22,29 @@ CREATE TABLE IF NOT EXISTS t_residence (
     KEY idx_residence_region_active (region, active)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='公寓地址库';
 
+CREATE TABLE IF NOT EXISTS t_sales_recommendation (
+    id            BIGINT        NOT NULL AUTO_INCREMENT COMMENT '主键',
+    residence_id  BIGINT        NOT NULL COMMENT '优先推荐公寓ID',
+    priority      INT           NOT NULL DEFAULT 100 COMMENT '同等条件排序优先级，数值越小越优先',
+    enabled       TINYINT       NOT NULL DEFAULT 1 COMMENT '1启用，0停用',
+    note          VARCHAR(512)  DEFAULT NULL COMMENT '内部推荐备注，不直接展示给用户',
+    create_time   DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time   DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    CONSTRAINT fk_sales_recommendation_residence
+        FOREIGN KEY (residence_id) REFERENCES t_residence(id) ON DELETE CASCADE,
+    UNIQUE KEY uk_sales_recommendation_residence (residence_id),
+    KEY idx_sales_recommendation_enabled_priority (enabled, priority)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='销售同等条件优先推荐配置';
+
+INSERT IGNORE INTO t_sales_recommendation (residence_id, priority, enabled, note)
+SELECT id, 100, 1, '原销售推荐规则迁移'
+FROM t_residence
+WHERE LOWER(source_id) = 'drapery-place'
+   OR LOWER(name) IN ('drapery place', 'drapery place residence')
+ORDER BY active DESC, id ASC
+LIMIT 1;
+
 CREATE TABLE IF NOT EXISTS t_offer_import_batch (
     id                       BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
     file_name                VARCHAR(255) NOT NULL COMMENT '导入文件名',

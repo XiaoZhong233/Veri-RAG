@@ -22,6 +22,34 @@ class PropertyQueryRouterTests {
     }
 
     @Test
+    void selectsOneToolIntentForEachPropertyQuestion() {
+        assertThat(PropertyQueryRouter.route(
+                "帮我找UCL附近9月起租，租期为6个月的公寓", List.of()))
+                .isEqualTo(PropertyQueryIntent.RECOMMEND);
+        assertThat(PropertyQueryRouter.route(
+                "伦敦有哪些公寓？", List.of()))
+                .isEqualTo(PropertyQueryIntent.LIST);
+        assertThat(PropertyQueryRouter.route(
+                "你们在伦敦有多少个公寓？", List.of()))
+                .isEqualTo(PropertyQueryIntent.SUMMARY);
+        assertThat(PropertyQueryRouter.route(
+                "伦敦有多少公寓？", List.of()))
+                .isEqualTo(PropertyQueryIntent.SUMMARY);
+        assertThat(PropertyQueryRouter.route(
+                "伦敦有哪些公寓可以预订？", List.of()))
+                .isEqualTo(PropertyQueryIntent.RECOMMEND);
+        assertThat(PropertyQueryRouter.route(
+                "roomOfferId 123住26周总价多少？", List.of()))
+                .isEqualTo(PropertyQueryIntent.QUOTE);
+        assertThat(PropertyQueryRouter.route(
+                "这个房型住26周总价多少？", List.of()))
+                .isEqualTo(PropertyQueryIntent.RECOMMEND);
+        assertThat(PropertyQueryRouter.route(
+                "总结一下这份制度", List.of()))
+                .isEqualTo(PropertyQueryIntent.NONE);
+    }
+
+    @Test
     void routesShortFollowUpFromPropertyHistory() {
         ChatMessage previous = new ChatMessage();
         previous.setRole("USER");
@@ -29,5 +57,8 @@ class PropertyQueryRouterTests {
 
         assertThat(PropertyQueryRouter.isStructuredPropertyQuery(
                 "那曼彻斯特呢？", List.of(previous))).isTrue();
+        assertThat(PropertyQueryRouter.route(
+                "那曼彻斯特呢？", List.of(previous)))
+                .isEqualTo(PropertyQueryIntent.LIST);
     }
 }

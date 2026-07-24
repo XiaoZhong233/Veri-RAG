@@ -8,8 +8,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * SSE 问答流事件。type 支持 meta、chunk、tool_start、tool_done、
- * tool_error、done 和 error。
+ * SSE 问答流事件。type 支持 meta、intent_start、intent_done、route_start、
+ * chunk、tool_start、tool_done、tool_error、done 和 error。
  */
 @Data
 @AllArgsConstructor
@@ -27,6 +27,10 @@ public class ChatStreamEvent {
 
     public static ChatStreamEvent chunk(String content) {
         return new ChatStreamEvent("chunk", null, content, null, null);
+    }
+
+    public static ChatStreamEvent progress(String type, String content) {
+        return new ChatStreamEvent(type, null, content, null, null);
     }
 
     public static ChatStreamEvent toolStart(String toolName, String content) {

@@ -216,9 +216,44 @@ public class ChatServiceImpl implements ChatService {
             assertSessionOwner(userId, requestedSessionId);
         }
         List<ChatMessage> history = loadRecentHistory(requestedSessionId);
-        PropertyQueryIntent propertyIntent = propertyIntentClassifier
-                .resolve(req.getQuestion(), history);
+        Long sessionId = transactionTemplate.execute(status ->
+                persistUserMessage(userId, requestedSessionId, req.getQuestion()));
+        if (sessionId == null) {
+            return Flux.error(new IllegalStateException("Failed to create chat session"));
+        }
+
+        Flux<ChatStreamEvent> progress = Flux.just(
+                ChatStreamEvent.meta(sessionId),
+                ChatStreamEvent.progress("intent_start", "正在识别您的需求…"));
+        Flux<ChatStreamEvent> classified = Mono.fromCallable(() ->
+                        propertyIntentClassifier.resolve(req.getQuestion(), history))
+                .subscribeOn(Schedulers.boundedElastic())
+                .flatMapMany(propertyIntent -> continueStreamAsk(
+                        req, requestedSessionId, history, propertyIntent,
+                        sessionId, requestStart));
+        return progress.concatWith(classified)
+                .onErrorResume(error -> {
+                    String message = friendlyStreamError(error);
+                    log.warn("Streaming request preparation failed: sessionId={}, error={}",
+                            sessionId, error.toString());
+                    return Flux.just(ChatStreamEvent.error(sessionId, message));
+                });
+    }
+
+    private Flux<ChatStreamEvent> continueStreamAsk(
+            ChatAskRequest req,
+            Long requestedSessionId,
+            List<ChatMessage> history,
+            PropertyQueryIntent propertyIntent,
+            Long sessionId,
+            long requestStart) {
         boolean structuredPropertyQuery = propertyIntent.structured();
+        ChatStreamEvent intentDone = ChatStreamEvent.progress(
+                "intent_done", intentProgressMessage(propertyIntent));
+        ChatStreamEvent routeStart = ChatStreamEvent.progress(
+                "route_start", structuredPropertyQuery
+                        ? "正在准备调用" + propertyIntentLabel(propertyIntent) + "工具…"
+                        : "正在检索知识库资料…");
 
         var cached = requestedSessionId == null && !structuredPropertyQuery
                 ? ragAnswerCache.find(req.getQuestion(), req.getCategoryIds())
@@ -226,11 +261,6 @@ public class ChatServiceImpl implements ChatService {
         ragMetrics.recordCache(cached.isPresent());
         if (cached.isPresent()) {
             RagAnswerCache.Hit hit = cached.get();
-            Long sessionId = transactionTemplate.execute(status ->
-                    persistUserMessage(userId, requestedSessionId, req.getQuestion()));
-            if (sessionId == null) {
-                return Flux.error(new IllegalStateException("Failed to create chat session"));
-            }
             final String refsJson;
             try {
                 refsJson = objectMapper.writeValueAsString(hit.references());
@@ -239,7 +269,11 @@ public class ChatServiceImpl implements ChatService {
                 return Flux.error(ex);
             }
             Long finalSessionId = sessionId;
-            return Flux.just(ChatStreamEvent.meta(sessionId), ChatStreamEvent.chunk(hit.answer()))
+            return Flux.just(
+                            intentDone,
+                            ChatStreamEvent.progress("route_start",
+                                    "已命中回答缓存，正在返回结果…"),
+                            ChatStreamEvent.chunk(hit.answer()))
                     .concatWith(Mono.fromCallable(() -> {
                         transactionTemplate.executeWithoutResult(status ->
                                 persistAssistantMessage(finalSessionId, hit.answer(), refsJson));
@@ -252,6 +286,20 @@ public class ChatServiceImpl implements ChatService {
                             java.time.Duration.ofNanos(System.nanoTime() - requestStart), "error"));
         }
 
+        return Flux.just(intentDone, routeStart)
+                .concatWith(Flux.defer(() -> prepareStreamAnswer(
+                        req, requestedSessionId, history, propertyIntent,
+                        sessionId, requestStart)));
+    }
+
+    private Flux<ChatStreamEvent> prepareStreamAnswer(
+            ChatAskRequest req,
+            Long requestedSessionId,
+            List<ChatMessage> history,
+            PropertyQueryIntent propertyIntent,
+            Long sessionId,
+            long requestStart) {
+        boolean structuredPropertyQuery = propertyIntent.structured();
         List<Document> cited = retrievalTimingAdvisor.advise(requestedSessionId,
                 () -> retrieveKnowledge(
                         req.getQuestion(), history, req.getCategoryIds(),
@@ -264,12 +312,6 @@ public class ChatServiceImpl implements ChatService {
         }
         catch (Exception ex) {
             return Flux.error(ex);
-        }
-
-        Long sessionId = transactionTemplate.execute(status ->
-                persistUserMessage(userId, requestedSessionId, req.getQuestion()));
-        if (sessionId == null) {
-            return Flux.error(new IllegalStateException("Failed to create chat session"));
         }
 
         String ragContext = buildRagContext(cited);
@@ -311,7 +353,6 @@ public class ChatServiceImpl implements ChatService {
                 .doOnError(error -> ragMetrics.recordLlm(
                         java.time.Duration.ofNanos(System.nanoTime() - llmStart), "stream", "error"))
                 .map(ChatStreamEvent::chunk)
-                .startWith(ChatStreamEvent.meta(sessionId))
                 .concatWith(Mono.fromCallable(() -> {
                     Long finalSessionId = sessionId;
                     transactionTemplate.executeWithoutResult(status ->
@@ -346,6 +387,23 @@ public class ChatServiceImpl implements ChatService {
                         java.time.Duration.ofNanos(System.nanoTime() - requestStart), "error"));
     }
 
+    private static String intentProgressMessage(PropertyQueryIntent intent) {
+        return intent.structured()
+                ? "已识别为" + propertyIntentLabel(intent) + "需求。"
+                : "已识别为知识库问答。";
+    }
+
+    private static String propertyIntentLabel(PropertyQueryIntent intent) {
+        return switch (intent) {
+            case RECOMMEND -> "房源推荐";
+            case QUOTE -> "精确报价";
+            case DETAIL -> "公寓详情";
+            case LIST -> "公寓列表";
+            case SUMMARY -> "库存汇总";
+            case NONE -> "知识库查询";
+        };
+    }
+
     /**
      * Tool calling uses a non-streaming model request because some OpenAI-compatible
      * providers omit the function name in continuation chunks. The outer API remains
@@ -360,7 +418,6 @@ public class ChatServiceImpl implements ChatService {
             long requestStart) {
         AtomicBoolean failed = new AtomicBoolean(false);
         return Flux.deferContextual(contextView -> Flux.<ChatStreamEvent>create(sink -> {
-            sink.next(ChatStreamEvent.meta(sessionId));
             var task = Mono.fromRunnable(() -> {
                 try {
                     String answer = ToolCallEventContext.withListener(
@@ -418,6 +475,7 @@ public class ChatServiceImpl implements ChatService {
         String label = switch (event.toolName()) {
             case "search_room_offers" -> "房源、报价和库存";
             case "quote_room_offer" -> "指定房型报价";
+            case "get_residence_details" -> "公寓设施和周边详情";
             case "list_residences" -> "公寓地址";
             case "get_inventory_summary" -> "公寓和库存统计";
             default -> "房源数据";

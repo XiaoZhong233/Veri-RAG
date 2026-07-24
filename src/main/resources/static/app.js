@@ -364,10 +364,11 @@ async function askQuestion(event) {
     try {
         await streamRequest('/api/chat/ask/stream', {question, sessionId: state.activeSessionId, categoryIds: selectedCategories}, (eventName, data) => {
             if (eventName === 'meta') state.activeSessionId = data.sessionId;
-            if (eventName === 'tool_start' || eventName === 'tool_done' || eventName === 'tool_error') {
-                content.textContent = data.content || '正在查询房源数据…';
+            if (eventName === 'intent_start' || eventName === 'intent_done' || eventName === 'route_start'
+                || eventName === 'tool_start' || eventName === 'tool_done' || eventName === 'tool_error') {
+                content.textContent = data.content || '正在处理…';
                 content.classList.add('thinking', 'tool-progress');
-                content.dataset.toolName = data.toolName || '';
+                content.dataset.toolName = data.toolName || eventName;
                 $('#message-list').scrollTop = $('#message-list').scrollHeight;
             }
             if (eventName === 'chunk') { answer += data.content || ''; content.classList.remove('thinking', 'tool-progress'); delete content.dataset.toolName; content.textContent = answer; $('#message-list').scrollTop = $('#message-list').scrollHeight; }

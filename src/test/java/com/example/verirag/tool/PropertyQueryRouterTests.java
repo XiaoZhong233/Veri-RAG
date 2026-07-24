@@ -45,6 +45,9 @@ class PropertyQueryRouterTests {
                 "Drapery Place 有哪些设施和附近学校？", List.of()))
                 .isEqualTo(PropertyQueryIntent.DETAIL);
         assertThat(PropertyQueryRouter.route(
+                "Drapery Place Residence 附近有什么地标？", List.of()))
+                .isEqualTo(PropertyQueryIntent.DETAIL);
+        assertThat(PropertyQueryRouter.route(
                 "这个房型住26周总价多少？", List.of()))
                 .isEqualTo(PropertyQueryIntent.RECOMMEND);
         assertThat(PropertyQueryRouter.route(

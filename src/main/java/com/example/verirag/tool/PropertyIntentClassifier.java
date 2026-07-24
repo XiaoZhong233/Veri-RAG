@@ -38,6 +38,9 @@ public class PropertyIntentClassifier {
     @Value("${rag.intent-classifier.enabled:true}")
     private boolean enabled;
 
+    @Value("${rag.intent-classifier.java-rules-enabled:false}")
+    private boolean javaRulesEnabled;
+
     @Value("${rag.intent-classifier.timeout:15s}")
     private Duration timeout;
 
@@ -55,17 +58,26 @@ public class PropertyIntentClassifier {
     }
 
     public PropertyQueryIntent resolve(String question, List<ChatMessage> history) {
-        PropertyQueryIntent ruleIntent = PropertyQueryRouter.route(question, history);
-        if (ruleIntent.structured()) {
+        if (question == null || question.isBlank()) {
+            logResolution(question, "INPUT", PropertyQueryIntent.NONE,
+                    "blank_question");
+            return PropertyQueryIntent.NONE;
+        }
+
+        PropertyQueryIntent ruleIntent = javaRulesEnabled
+                ? PropertyQueryRouter.route(question, history)
+                : PropertyQueryIntent.NONE;
+        if (javaRulesEnabled && ruleIntent.structured()) {
             logResolution(question, "JAVA_RULE", ruleIntent, null);
             return ruleIntent;
         }
         if (!enabled) {
-            logResolution(question, "JAVA_RULE", PropertyQueryIntent.NONE,
-                    "classifier_disabled");
+            logResolution(question, javaRulesEnabled ? "JAVA_RULE" : "CONFIG",
+                    PropertyQueryIntent.NONE, "classifier_disabled");
             return PropertyQueryIntent.NONE;
         }
-        if (!PropertyQueryRouter.needsModelClassification(question, history)) {
+        if (javaRulesEnabled
+                && !PropertyQueryRouter.needsModelClassification(question, history)) {
             logResolution(question, "JAVA_RULE", PropertyQueryIntent.NONE,
                     "no_property_signal");
             return PropertyQueryIntent.NONE;

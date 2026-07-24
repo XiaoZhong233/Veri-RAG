@@ -9,8 +9,8 @@ spring:
       api-key: ${DASHSCOPE_API_KEY}
       base-url: https://llm-1yauwtsqkmv66e2w.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
       chat:
-        model: qwen3.7-plus
-#        model: qwen-doc-turbo
+#        model: qwen3.7-plus
+        model: qwen3.7-flash
 #        model: qwen-flash
         # OpenAI Java SDK 默认整次请求仅允许 60 秒；推理模型即使已开始流式输出也可能被总超时取消。
         timeout: ${LLM_TIMEOUT:5m}
@@ -102,8 +102,10 @@ jwt:
 
 rag:
   intent-classifier:
-    # 明确房源问题由 Java 规则直接路由；仅对带有房源信号但规则无法判断的问题调用一次模型分类。
+    # 总开关；关闭后无法识别的请求统一按普通 RAG 处理。
     enabled: ${RAG_INTENT_CLASSIFIER_ENABLED:true}
+    # false：所有非空问题仅由模型分类；true：明确问题走 Java，模糊房源问题再由模型兜底。
+    java-rules-enabled: ${RAG_INTENT_JAVA_RULES_ENABLED:false}
     # 分类请求只允许很短的等待时间；失败或超时自动回退普通 RAG。
     timeout: ${RAG_INTENT_CLASSIFIER_TIMEOUT:15s}
     # 留空时复用主聊天模型；生产可配置为响应更快的小模型。

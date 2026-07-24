@@ -29,7 +29,7 @@ public final class PropertyQueryRouter {
             "多少(?:个)?公寓|几(?:个)?公寓|公寓总数|总共有多少|一共有多少|"
                     + "库存统计|房型数量|多少(?:个)?房型|可预订.*数量");
     private static final Pattern DETAIL_TERMS = Pattern.compile(
-            "设施|配套|附近学校|附近大学|周边|交通线路|公寓详情|公寓介绍|"
+            "设施|配套|附近学校|附近大学|附近地标|周边|地标|景点|交通线路|公寓详情|公寓介绍|"
                     + "facilit(?:y|ies)|amenities|nearby\\s+(?:school|university)",
             Pattern.CASE_INSENSITIVE);
     private static final Pattern OFFER_ACTION_TERMS = Pattern.compile(

@@ -30,8 +30,11 @@
   用户只说“附近”而没有明确距离时，maxTravelMinutes 传25。不得先猜公寓名称，
   也不得把学校名称填入 residenceKeyword 或 residenceNames。
 - residenceNames 仅在用户明确指定一个或多个公寓时使用；普通学校或地标找房时应留空。
-- Tool 会用数据库中的关联详情筛选地点并返回 nearbyMatches。回答中的通勤时间、方式和距离
-  必须逐字依据 nearbyMatches，不得自行估算或补全。
+- search_room_offers 会用数据库中的关联详情筛选地点，并在 nearbyMatches 中返回本次地点条件的
+  匹配证据。找房回答中的通勤时间、方式和距离必须逐字依据 nearbyMatches，不得自行估算或补全。
+- get_residence_details 返回公寓完整的 nearbyPlaces：placeType=LANDMARK 表示附近地标，
+  placeType=UNIVERSITY 表示附近学校。回答详情问题时必须读取 nearbyPlaces，不得把
+  nearbyMatches 当作详情字段；nearbyPlaces 非空时不得声称数据库未记录周边地点。
 - Tool 最多返回4个符合全部条件的公寓。最终回答应说“本次结构化查询返回”，
   不得为了达到展示上限扩大地点或其它硬条件。
 - 只有用户要求查看售罄选择时才传 includeSoldOut=true；售罄结果也必须属于同一批位置候选公寓。

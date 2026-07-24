@@ -4,6 +4,7 @@ com/example/verirag/util/ResidenceMarkdownDocumentReaderTests.class
 com/example/verirag/dto/ChatStreamEventTests.class
 com/example/verirag/prompt/PropertyToolPromptManagerTests.class
 com/example/verirag/service/impl/RagIngestServiceImplTests.class
+com/example/verirag/tool/PropertyIntentClassifierTests.class
 com/example/verirag/tool/PropertyQueryToolsTests.class
 com/example/verirag/util/ResidenceHtmlDocumentReaderTests.class
 com/example/verirag/prompt/SalesRecommendationPromptManagerTests$RecommendationFixtureService.class
@@ -16,5 +17,6 @@ com/example/verirag/util/RoomOfferWorkbookReaderTests.class
 com/example/verirag/tool/PropertyToolSelectorTests.class
 com/example/verirag/VeriRagApplicationTests.class
 com/example/verirag/tool/ToolCallEventContextTests.class
+com/example/verirag/util/ResidenceDetailMarkdownReaderTests.class
 com/example/verirag/tool/PropertyQueryToolsIntegrationTests.class
 com/example/verirag/service/impl/RagIngestResidenceChunkTests.class

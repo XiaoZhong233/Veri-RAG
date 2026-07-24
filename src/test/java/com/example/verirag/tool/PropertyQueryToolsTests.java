@@ -4,9 +4,13 @@ import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.example.verirag.entity.Residence;
+import com.example.verirag.entity.ResidenceDetail;
+import com.example.verirag.entity.ResidenceNearbyPlace;
 import com.example.verirag.entity.RoomInventory;
 import com.example.verirag.entity.RoomPriceTier;
+import com.example.verirag.mapper.ResidenceDetailMapper;
 import com.example.verirag.mapper.ResidenceMapper;
+import com.example.verirag.mapper.ResidenceNearbyPlaceMapper;
 import com.example.verirag.mapper.RoomInventoryMapper;
 import com.example.verirag.mapper.RoomPriceTierMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,6 +41,10 @@ class PropertyQueryToolsTests {
     @Mock
     private ResidenceMapper residenceMapper;
     @Mock
+    private ResidenceDetailMapper residenceDetailMapper;
+    @Mock
+    private ResidenceNearbyPlaceMapper nearbyPlaceMapper;
+    @Mock
     private RoomInventoryMapper inventoryMapper;
     @Mock
     private RoomPriceTierMapper priceTierMapper;
@@ -49,13 +57,17 @@ class PropertyQueryToolsTests {
                 new MapperBuilderAssistant(new MybatisConfiguration(), "");
         assistant.setCurrentNamespace(PropertyQueryToolsTests.class.getName());
         TableInfoHelper.initTableInfo(assistant, Residence.class);
+        TableInfoHelper.initTableInfo(assistant, ResidenceDetail.class);
+        TableInfoHelper.initTableInfo(assistant, ResidenceNearbyPlace.class);
         TableInfoHelper.initTableInfo(assistant, RoomInventory.class);
         TableInfoHelper.initTableInfo(assistant, RoomPriceTier.class);
     }
 
     @BeforeEach
     void setUp() {
-        tools = new PropertyQueryTools(residenceMapper, inventoryMapper, priceTierMapper);
+        tools = new PropertyQueryTools(
+                residenceMapper, residenceDetailMapper, nearbyPlaceMapper,
+                inventoryMapper, priceTierMapper);
     }
 
     @Test
@@ -75,6 +87,7 @@ class PropertyQueryToolsTests {
 
         PropertyQueryTools.RoomOfferSearchResult result = tools.searchRoomOffers(
                 "London", null, "Chapter Islington, Chapter Highbury",
+                null, null,
                 "2026-09-01", "2026-09-30",
                 26, null, null, true, 8);
 
@@ -106,6 +119,7 @@ class PropertyQueryToolsTests {
 
         PropertyQueryTools.RoomOfferSearchResult result = tools.searchRoomOffers(
                 "London", null, "Highbury Residence",
+                null, null,
                 "2026-09-01", "2026-09-30",
                 26, null, null, false, 4);
 
@@ -114,6 +128,40 @@ class PropertyQueryToolsTests {
         assertThat(result.residences())
                 .extracting(PropertyQueryTools.ResidenceOfferGroup::residenceName)
                 .containsExactly("Chapter Highbury");
+    }
+
+    @Test
+    void filtersOffersByStructuredNearbyUniversityAndTravelTime() {
+        Residence islington = residence(1L, "islington-residence", "Islington Residence");
+        Residence farAway = residence(2L, "far-away", "Far Away Residence");
+        ResidenceNearbyPlace nearbyUcl = nearby(1L, 1L,
+                "University College London (UCL)", 18);
+        ResidenceNearbyPlace farUcl = nearby(2L, 2L,
+                "UCL (University College London)", 30);
+        RoomInventory room = inventory(11L, 1L, "AVAILABLE", "Classic Ensuite");
+
+        when(residenceMapper.selectList(any(Wrapper.class)))
+                .thenReturn(List.of(islington, farAway));
+        when(nearbyPlaceMapper.selectList(any(Wrapper.class)))
+                .thenReturn(List.of(nearbyUcl, farUcl));
+        when(inventoryMapper.selectList(any(Wrapper.class))).thenReturn(List.of(room));
+        when(priceTierMapper.selectList(any(Wrapper.class)))
+                .thenReturn(List.of(tier(101L, 11L, 20, 39, "430")));
+
+        PropertyQueryTools.RoomOfferSearchResult result = tools.searchRoomOffers(
+                "London", null, null, "UCL", 25,
+                "2026-09-01", "2026-09-30",
+                26, null, null, false, 4);
+
+        assertThat(result.residences())
+                .extracting(PropertyQueryTools.ResidenceOfferGroup::residenceName)
+                .containsExactly("Islington Residence");
+        assertThat(result.residences().getFirst().nearbyMatches())
+                .singleElement()
+                .satisfies(match -> {
+                    assertThat(match.placeName()).contains("UCL");
+                    assertThat(match.maxMinutes()).isEqualTo(18);
+                });
     }
 
     @Test
@@ -136,7 +184,7 @@ class PropertyQueryToolsTests {
     }
 
     @Test
-    void exposesFourSpringAiToolSchemas() {
+    void exposesFiveSpringAiToolSchemas() {
         ToolCallback[] callbacks = ToolCallbacks.from(tools);
         Set<String> names = Arrays.stream(callbacks)
                 .map(callback -> callback.getToolDefinition().name())
@@ -145,6 +193,7 @@ class PropertyQueryToolsTests {
         assertThat(names).containsExactlyInAnyOrder(
                 "search_room_offers",
                 "quote_room_offer",
+                "get_residence_details",
                 "list_residences",
                 "get_inventory_summary");
         ToolCallback search = Arrays.stream(callbacks)
@@ -152,7 +201,8 @@ class PropertyQueryToolsTests {
                         .equals(callback.getToolDefinition().name()))
                 .findFirst().orElseThrow();
         assertThat(search.getToolDefinition().inputSchema())
-                .contains("startDateFrom", "stayWeeks", "residenceNames")
+                .contains("startDateFrom", "stayWeeks", "residenceNames",
+                        "nearbyPlaceKeyword", "maxTravelMinutes")
                 .doesNotContain("minResidences");
     }
 
@@ -194,5 +244,20 @@ class PropertyQueryToolsTests {
         tier.setCurrency("GBP");
         tier.setPriceUpdatedAt(LocalDateTime.of(2026, 7, 24, 12, 0));
         return tier;
+    }
+
+    private static ResidenceNearbyPlace nearby(
+            Long id, Long residenceId, String name, int minutes) {
+        ResidenceNearbyPlace place = new ResidenceNearbyPlace();
+        place.setId(id);
+        place.setResidenceId(residenceId);
+        place.setPlaceType("UNIVERSITY");
+        place.setPlaceName(name);
+        place.setTravelDescription(minutes + " mins via tube");
+        place.setMinMinutes(minutes);
+        place.setMaxMinutes(minutes);
+        place.setTravelMode("TUBE");
+        place.setSortOrder(0);
+        return place;
     }
 }

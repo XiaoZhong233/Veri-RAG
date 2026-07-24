@@ -7,12 +7,14 @@
 /Users/li/IdeaProjects/veri-rag/src/test/java/com/example/verirag/service/impl/ChatRetrievalQueryTests.java
 /Users/li/IdeaProjects/veri-rag/src/test/java/com/example/verirag/service/impl/RagIngestResidenceChunkTests.java
 /Users/li/IdeaProjects/veri-rag/src/test/java/com/example/verirag/service/impl/RagIngestServiceImplTests.java
+/Users/li/IdeaProjects/veri-rag/src/test/java/com/example/verirag/tool/PropertyIntentClassifierTests.java
 /Users/li/IdeaProjects/veri-rag/src/test/java/com/example/verirag/tool/PropertyQueryRouterTests.java
 /Users/li/IdeaProjects/veri-rag/src/test/java/com/example/verirag/tool/PropertyQueryToolsIntegrationTests.java
 /Users/li/IdeaProjects/veri-rag/src/test/java/com/example/verirag/tool/PropertyQueryToolsTests.java
 /Users/li/IdeaProjects/veri-rag/src/test/java/com/example/verirag/tool/PropertyToolSelectorTests.java
 /Users/li/IdeaProjects/veri-rag/src/test/java/com/example/verirag/tool/ToolCallEventContextTests.java
 /Users/li/IdeaProjects/veri-rag/src/test/java/com/example/verirag/util/ExcelDocumentReaderTests.java
+/Users/li/IdeaProjects/veri-rag/src/test/java/com/example/verirag/util/ResidenceDetailMarkdownReaderTests.java
 /Users/li/IdeaProjects/veri-rag/src/test/java/com/example/verirag/util/ResidenceHtmlDocumentReaderTests.java
 /Users/li/IdeaProjects/veri-rag/src/test/java/com/example/verirag/util/ResidenceMarkdownDocumentReaderTests.java
 /Users/li/IdeaProjects/veri-rag/src/test/java/com/example/verirag/util/RoomOfferWorkbookReaderTests.java

@@ -101,6 +101,15 @@ jwt:
   expire-hours: 24
 
 rag:
+  intent-classifier:
+    # 明确房源问题由 Java 规则直接路由；仅对带有房源信号但规则无法判断的问题调用一次模型分类。
+    enabled: ${RAG_INTENT_CLASSIFIER_ENABLED:true}
+    # 分类请求只允许很短的等待时间；失败或超时自动回退普通 RAG。
+    timeout: ${RAG_INTENT_CLASSIFIER_TIMEOUT:15s}
+    # 留空时复用主聊天模型；生产可配置为响应更快的小模型。
+    model: ${RAG_INTENT_CLASSIFIER_MODEL:}
+    # 分类只需要输出一个标签，默认关闭百炼/Qwen 思考以减少首包等待和 token 消耗。
+    thinking-enabled: ${RAG_INTENT_CLASSIFIER_THINKING_ENABLED:false}
   chat:
     # 对仅接受 system/user 角色的兼容模型，将摘要和历史压成纯文本拼进当前 user message。
     # 设为 false 时恢复 Spring AI ChatMemory Advisor 的原生多角色记忆。

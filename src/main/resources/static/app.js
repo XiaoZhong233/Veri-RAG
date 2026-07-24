@@ -419,7 +419,8 @@ function renderResidences(records) {
     body.innerHTML = records.map(residence => {
         const mapUrl = safeMapUrl(residence.mapUrl);
         const coordinates = residence.latitude != null && residence.longitude != null ? `${residence.latitude}, ${residence.longitude}` : '';
-        const actions = isAdmin() ? `<div class="row-actions"><button class="text-button" data-residence-action="edit" data-id="${residence.id}">编辑</button><button class="text-button danger" data-residence-action="delete" data-id="${residence.id}" data-name="${escapeHtml(residence.name)}">删除</button></div>` : '-';
+        const adminActions = isAdmin() ? `<button class="text-button" data-residence-action="edit" data-id="${residence.id}">编辑地址</button><button class="text-button danger" data-residence-action="delete" data-id="${residence.id}" data-name="${escapeHtml(residence.name)}">删除</button>` : '';
+        const actions = `<div class="row-actions"><button class="text-button" data-residence-action="detail" data-id="${residence.id}">查看详情</button>${adminActions}</div>`;
         return `<tr><td><strong class="residence-name">${escapeHtml(residence.name)}</strong><small>${escapeHtml(residence.sourceId)}</small></td><td>${escapeHtml(residence.city || '-')}</td><td><span class="region-tag ${escapeHtml(residence.region || '')}">${escapeHtml(residenceRegionNames[residence.region] || residence.region || '-')}</span><small>${escapeHtml(residence.zone || '-')}</small></td><td><span class="residence-address">${escapeHtml(residence.address || '地址待补充')}</span>${coordinates ? `<small>${escapeHtml(coordinates)}</small>` : ''}</td><td>${escapeHtml(residence.station || '-')}</td><td>${mapUrl ? `<a class="map-link" href="${escapeHtml(mapUrl)}" target="_blank" rel="noopener noreferrer">查看地图 ↗</a>` : '-'}</td><td>${actions}</td></tr>`;
     }).join('');
     $('#residence-empty').classList.toggle('hidden', records.length !== 0);
@@ -492,6 +493,83 @@ async function importResidences(event) {
         state.residencePage = 1; await loadResidences();
     } catch (error) { $('#residence-import-error').textContent = error.message; }
     finally { button.disabled = false; button.textContent = '开始同步'; }
+}
+function nearbyLines(places, type) {
+    return (places || []).filter(item => item.placeType === type)
+        .map(item => `${item.placeName}${item.travelDescription ? ` | ${item.travelDescription}` : ''}`)
+        .join('\n');
+}
+function parseNearbyLines(value, placeType) {
+    return value.split('\n').map(line => line.trim()).filter(Boolean).map((line, index) => {
+        const separator = line.indexOf('|');
+        return {
+            placeType,
+            placeName: (separator >= 0 ? line.slice(0, separator) : line).trim(),
+            travelDescription: separator >= 0 ? line.slice(separator + 1).trim() || null : null,
+            sortOrder: index
+        };
+    });
+}
+async function openResidenceDetailDialog(residenceId) {
+    $('#residence-detail-form').reset();
+    $('#residence-detail-form-error').textContent = '';
+    try {
+        const detail = await request(`/api/residence-details/${residenceId}`);
+        $('#residence-detail-id').value = detail.residenceId;
+        $('#residence-detail-title').textContent = `${detail.residenceName} · 详情`;
+        $('#detail-official-id').value = detail.officialId || '';
+        $('#detail-postcode').value = detail.postcode || '';
+        $('#detail-transport-lines').value = detail.transportLines || '';
+        $('#detail-official-url').value = detail.officialUrl || '';
+        $('#detail-page-tags').value = detail.pageTags || '';
+        $('#detail-facilities').value = (detail.facilities || []).join('\n');
+        $('#detail-universities').value = nearbyLines(detail.nearbyPlaces, 'UNIVERSITY');
+        $('#detail-landmarks').value = nearbyLines(detail.nearbyPlaces, 'LANDMARK');
+        [...$('#residence-detail-form').elements].forEach(element => {
+            if (element.matches('input, textarea')) element.readOnly = !isAdmin();
+        });
+        $('#residence-detail-dialog').showModal();
+    } catch (error) { showToast(error.message); }
+}
+async function saveResidenceDetail(event) {
+    event.preventDefault();
+    if (!isAdmin()) return;
+    const payload = {
+        residenceId: Number($('#residence-detail-id').value),
+        officialId: $('#detail-official-id').value.trim() || null,
+        postcode: $('#detail-postcode').value.trim() || null,
+        transportLines: $('#detail-transport-lines').value.trim() || null,
+        officialUrl: $('#detail-official-url').value.trim() || null,
+        pageTags: $('#detail-page-tags').value.trim() || null,
+        facilities: $('#detail-facilities').value.split('\n').map(item => item.trim()).filter(Boolean),
+        nearbyPlaces: [
+            ...parseNearbyLines($('#detail-universities').value, 'UNIVERSITY'),
+            ...parseNearbyLines($('#detail-landmarks').value, 'LANDMARK')
+        ]
+    };
+    try {
+        await request('/api/residence-details', {method: 'POST', body: JSON.stringify(payload)});
+        $('#residence-detail-dialog').close();
+        showToast('公寓详情已保存，下一次 Tool 查询立即生效');
+    } catch (error) { $('#residence-detail-form-error').textContent = error.message; }
+}
+async function importResidenceDetails(event) {
+    event.preventDefault();
+    const file = $('#residence-detail-file').files[0];
+    if (!file) return;
+    const form = new FormData(); form.append('file', file);
+    const button = $('#residence-detail-import-submit');
+    $('#residence-detail-import-error').textContent = '';
+    $('#residence-detail-import-result').classList.add('hidden');
+    button.disabled = true; button.textContent = '正在解析并导入…';
+    try {
+        const result = await request('/api/residence-details/import', {method: 'POST', body: form});
+        const warnings = (result.warnings || []).map(item => `<li>${escapeHtml(item)}</li>`).join('');
+        $('#residence-detail-import-result').innerHTML = `<strong>导入完成</strong><p>识别 ${result.total} 个公寓，成功 ${result.imported}，未匹配 ${result.unmatched}。</p>${warnings ? `<details><summary>查看未匹配项</summary><ul>${warnings}</ul></details>` : ''}`;
+        $('#residence-detail-import-result').classList.remove('hidden');
+        showToast('公寓详情已导入，Tool 查询立即生效');
+    } catch (error) { $('#residence-detail-import-error').textContent = error.message; }
+    finally { button.disabled = false; button.textContent = '开始导入'; }
 }
 
 const offerStatusLabels = {AVAILABLE: '可预订', LIMITED: '库存紧张', SOLD_OUT: '已售罄', UNKNOWN: '待确认'};
@@ -717,7 +795,7 @@ $('#session-list').addEventListener('click', async event => { const deleteButton
 $('#chat-category-filter').addEventListener('click', event => { const chip = event.target.closest('.filter-chip'); if (!chip) return; document.querySelectorAll('.filter-chip').forEach(button => button.classList.remove('active')); chip.classList.add('active'); });
 $('#new-category-button').addEventListener('click', () => $('#category-dialog').showModal()); $('#category-form').addEventListener('submit', saveCategory); $('#category-list').addEventListener('click', async event => { const button = event.target.closest('.delete-category'); if (!button || !confirm('确定删除该分类吗？')) return; try { await request(`/api/categories/${button.dataset.id}`, {method: 'DELETE'}); showToast('分类已删除'); loadCategories(); } catch (error) { showToast(error.message); } });
 $('#upload-document-button').addEventListener('click', () => $('#document-dialog').showModal()); $('#document-form').addEventListener('submit', uploadDocument); $('#document-search-button').addEventListener('click', () => { state.documentPage = 1; loadDocuments(); }); $('#document-category').addEventListener('change', () => { state.documentPage = 1; loadDocuments(); }); $('#document-prev').addEventListener('click', () => { if (state.documentPage > 1) { state.documentPage--; loadDocuments(); } }); $('#document-next').addEventListener('click', () => { if (state.documentPage * state.documentSize < state.documentTotal) { state.documentPage++; loadDocuments(); } }); $('#batch-reingest-button').addEventListener('click', batchReingestDocuments); $('#document-list').addEventListener('change', event => { const checkbox = event.target.closest('.document-select'); if (!checkbox) return; const id = Number(checkbox.dataset.id); if (checkbox.checked) state.selectedDocumentIds.add(id); else state.selectedDocumentIds.delete(id); updateBatchReingestButton(); }); $('#document-list').addEventListener('click', async event => { const reingest = event.target.closest('.reingest-document'); if (reingest) { if (!confirm(`确定重新向量化文档“${reingest.dataset.title}”吗？`)) return; reingest.disabled = true; reingest.textContent = '处理中…'; try { await request(`/api/documents/${reingest.dataset.id}/reingest`, {method: 'POST'}); showToast('文档已重新向量化'); loadDocuments(); } catch (error) { showToast(error.message); reingest.disabled = false; reingest.textContent = '重新向量化'; } return; } const button = event.target.closest('.delete-document'); if (!button || !confirm(`确定删除文档“${button.dataset.title}”吗？`)) return; try { await request(`/api/documents/${button.dataset.id}`, {method: 'DELETE'}); state.selectedDocumentIds.delete(Number(button.dataset.id)); showToast('文档和向量已删除'); loadDocuments(); } catch (error) { showToast(error.message); } });
-$('#new-residence-button').addEventListener('click', () => openResidenceDialog()); $('#import-residence-button').addEventListener('click', () => $('#residence-import-dialog').showModal()); $('#residence-form').addEventListener('submit', saveResidence); $('#residence-import-form').addEventListener('submit', importResidences); $('#residence-search-button').addEventListener('click', () => { state.residencePage = 1; loadResidences(); }); $('#residence-city').addEventListener('change', () => { state.residencePage = 1; loadResidences(); }); $('#residence-region').addEventListener('change', () => { state.residencePage = 1; loadResidences(); }); $('#residence-keyword').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); state.residencePage = 1; loadResidences(); } }); $('#residence-prev').addEventListener('click', () => { if (state.residencePage > 1) { state.residencePage--; loadResidences(); } }); $('#residence-next').addEventListener('click', () => { if (state.residencePage * state.residenceSize < state.residenceTotal) { state.residencePage++; loadResidences(); } }); $('#residence-table-body').addEventListener('click', async event => { const button = event.target.closest('[data-residence-action]'); if (!button) return; if (button.dataset.residenceAction === 'edit') return openResidenceDialog(Number(button.dataset.id)); if (!confirm(`确定删除公寓“${button.dataset.name}”吗？`)) return; try { await request(`/api/residences/${button.dataset.id}`, {method: 'DELETE'}); state.residenceOptions = []; showToast('公寓已删除'); await loadResidences(); } catch (error) { showToast(error.message); } });
+$('#new-residence-button').addEventListener('click', () => openResidenceDialog()); $('#import-residence-button').addEventListener('click', () => $('#residence-import-dialog').showModal()); $('#import-residence-detail-button').addEventListener('click', () => { $('#residence-detail-import-form').reset(); $('#residence-detail-import-error').textContent = ''; $('#residence-detail-import-result').classList.add('hidden'); $('#residence-detail-import-dialog').showModal(); }); $('#residence-form').addEventListener('submit', saveResidence); $('#residence-import-form').addEventListener('submit', importResidences); $('#residence-detail-import-form').addEventListener('submit', importResidenceDetails); $('#residence-detail-form').addEventListener('submit', saveResidenceDetail); $('#residence-search-button').addEventListener('click', () => { state.residencePage = 1; loadResidences(); }); $('#residence-city').addEventListener('change', () => { state.residencePage = 1; loadResidences(); }); $('#residence-region').addEventListener('change', () => { state.residencePage = 1; loadResidences(); }); $('#residence-keyword').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); state.residencePage = 1; loadResidences(); } }); $('#residence-prev').addEventListener('click', () => { if (state.residencePage > 1) { state.residencePage--; loadResidences(); } }); $('#residence-next').addEventListener('click', () => { if (state.residencePage * state.residenceSize < state.residenceTotal) { state.residencePage++; loadResidences(); } }); $('#residence-table-body').addEventListener('click', async event => { const button = event.target.closest('[data-residence-action]'); if (!button) return; if (button.dataset.residenceAction === 'detail') return openResidenceDetailDialog(Number(button.dataset.id)); if (button.dataset.residenceAction === 'edit') return openResidenceDialog(Number(button.dataset.id)); if (!confirm(`确定删除公寓“${button.dataset.name}”吗？`)) return; try { await request(`/api/residences/${button.dataset.id}`, {method: 'DELETE'}); state.residenceOptions = []; showToast('公寓已删除'); await loadResidences(); } catch (error) { showToast(error.message); } });
 $('#new-offer-button').addEventListener('click', () => openOfferDialog()); $('#import-offer-button').addEventListener('click', () => { $('#offer-import-form').reset(); $('#offer-import-error').textContent = ''; $('#offer-import-result').classList.add('hidden'); $('#offer-import-dialog').showModal(); }); $('#offer-form').addEventListener('submit', saveOffer); $('#offer-import-form').addEventListener('submit', importOffers); $('#add-price-tier').addEventListener('click', () => addPriceTier()); $('#price-tier-list').addEventListener('click', event => { const button = event.target.closest('.remove-price-tier'); if (button) button.closest('.price-tier-card').remove(); }); $('#offer-search-button').addEventListener('click', () => { state.offerPage = 1; loadOffers(); }); $('#offer-residence').addEventListener('change', () => { state.offerPage = 1; loadOffers(); }); $('#offer-status').addEventListener('change', () => { state.offerPage = 1; loadOffers(); }); $('#offer-keyword').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); state.offerPage = 1; loadOffers(); } }); $('#offer-prev').addEventListener('click', () => { if (state.offerPage > 1) { state.offerPage--; loadOffers(); } }); $('#offer-next').addEventListener('click', () => { if (state.offerPage * state.offerSize < state.offerTotal) { state.offerPage++; loadOffers(); } }); $('#offer-inventory-status').addEventListener('change', event => { if (event.target.value === 'SOLD_OUT') $('#offer-quantity').value = 0; }); $('#offer-table-body').addEventListener('click', async event => { const button = event.target.closest('[data-offer-action]'); if (!button) return; if (button.dataset.offerAction === 'edit') return openOfferDialog(Number(button.dataset.id)); if (!confirm(`确定删除房型“${button.dataset.name}”及其全部价格档位吗？`)) return; try { await request(`/api/room-offers/${button.dataset.id}`, {method: 'DELETE'}); showToast('房型已删除'); await loadOffers(); } catch (error) { showToast(error.message); } });
 $('#new-recommendation-button').addEventListener('click', () => openRecommendationDialog()); $('#recommendation-form').addEventListener('submit', saveRecommendation); $('#recommendation-table-body').addEventListener('click', async event => { const button = event.target.closest('[data-recommendation-action]'); if (!button) return; if (button.dataset.recommendationAction === 'edit') return openRecommendationDialog(Number(button.dataset.id)); if (!confirm(`确定删除“${button.dataset.name}”的推荐配置吗？`)) return; try { await request(`/api/sales-recommendations/${button.dataset.id}`, {method: 'DELETE'}); showToast('推荐配置已删除'); await loadRecommendations(); } catch (error) { showToast(error.message); } });
 $('#search-button').addEventListener('click', () => { state.userPage = 1; loadUsers(); }); $('#create-button').addEventListener('click', () => openUserDialog()); $('#prev-page').addEventListener('click', () => { if (state.userPage > 1) { state.userPage--; loadUsers(); } }); $('#next-page').addEventListener('click', () => { if (state.userPage * state.userSize < state.userTotal) { state.userPage++; loadUsers(); } }); $('#user-form').addEventListener('submit', saveUser); $('#close-dialog').addEventListener('click', () => $('#user-dialog').close()); $('#cancel-dialog').addEventListener('click', () => $('#user-dialog').close()); $('#user-table-body').addEventListener('click', async event => { const button = event.target.closest('[data-user-action]'); if (!button) return; const user = JSON.parse(button.closest('tr').dataset.user); if (button.dataset.userAction === 'edit') return openUserDialog(user); if (!confirm(`确定删除用户“${user.username}”吗？`)) return; try { await request(`/api/users/${user.id}`, {method: 'DELETE'}); showToast('用户已删除'); loadUsers(); } catch (error) { showToast(error.message); } });

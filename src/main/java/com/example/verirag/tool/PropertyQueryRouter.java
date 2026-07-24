@@ -28,6 +28,14 @@ public final class PropertyQueryRouter {
     private static final Pattern SUMMARY_TERMS = Pattern.compile(
             "多少(?:个)?公寓|几(?:个)?公寓|公寓总数|总共有多少|一共有多少|"
                     + "库存统计|房型数量|多少(?:个)?房型|可预订.*数量");
+    private static final Pattern DETAIL_TERMS = Pattern.compile(
+            "设施|配套|附近学校|附近大学|周边|交通线路|公寓详情|公寓介绍|"
+                    + "facilit(?:y|ies)|amenities|nearby\\s+(?:school|university)",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern OFFER_ACTION_TERMS = Pattern.compile(
+            "推荐|帮我找|查找|可订|预订|入住|退房|起租|租期|价格|报价|预算|"
+                    + "房源|房型|studio|ensuite|weekly\\s*price",
+            Pattern.CASE_INSENSITIVE);
     private static final Pattern LIST_TERMS = Pattern.compile(
             "有哪些公寓|公寓名单|公寓列表|公寓地址|地址在哪|"
                     + "哪个城市|哪些城市|最近车站|地图");
@@ -35,6 +43,13 @@ public final class PropertyQueryRouter {
             "推荐|帮我找|查找|附近|可订|预订|入住|退房|起租|租期|"
                     + "售罄|房源|房型|studio|ensuite|weekly\\s*price",
             Pattern.CASE_INSENSITIVE);
+    private static final Pattern AMBIGUOUS_PROPERTY_TERMS = Pattern.compile(
+            "住宿|宿舍|租房|住哪|住在|学校|大学|校区|通勤|预算|英镑|镑|半年|"
+                    + "ucl|kcl|lse|qmul|accommodation|apartment|residence|rent|"
+                    + "campus|university|commute|怎么样|介绍一下|什么情况",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern FOLLOW_UP_CUE = Pattern.compile(
+            "^(?:那|那么|换成|改成|如果|还有|再看|这个|这家|它|同样)|呢[？?]?$");
 
     private PropertyQueryRouter() {
     }
@@ -55,7 +70,9 @@ public final class PropertyQueryRouter {
             return direct;
         }
         // “那曼彻斯特呢”等短追问继承上一轮具体 Tool 意图。
-        if (normalized.length() <= 30 && history != null) {
+        if (normalized.length() <= 30
+                && FOLLOW_UP_CUE.matcher(normalized).find()
+                && history != null) {
             for (int i = history.size() - 1; i >= 0; i--) {
                 ChatMessage message = history.get(i);
                 if (!"USER".equals(message.getRole())) {
@@ -71,12 +88,30 @@ public final class PropertyQueryRouter {
         return PropertyQueryIntent.NONE;
     }
 
+    /**
+     * 只有存在房源领域或模糊询问信号、但确定性规则未命中时，才值得增加一次模型分类。
+     * 明显的普通知识问题直接走 RAG，避免每个请求都多调用一次模型。
+     */
+    public static boolean needsModelClassification(String question,
+                                                   List<ChatMessage> history) {
+        if (route(question, history).structured()) {
+            return false;
+        }
+        String normalized = normalize(question);
+        return !normalized.isBlank()
+                && AMBIGUOUS_PROPERTY_TERMS.matcher(normalized).find();
+    }
+
     private static PropertyQueryIntent routeCurrent(String normalized) {
         if (QUOTE_TERMS.matcher(normalized).find()) {
             return PropertyQueryIntent.QUOTE;
         }
         if (SUMMARY_TERMS.matcher(normalized).find()) {
             return PropertyQueryIntent.SUMMARY;
+        }
+        if (DETAIL_TERMS.matcher(normalized).find()
+                && !OFFER_ACTION_TERMS.matcher(normalized).find()) {
+            return PropertyQueryIntent.DETAIL;
         }
         boolean recommendation = RECOMMEND_TERMS.matcher(normalized).find();
         if (recommendation) {

@@ -20,7 +20,8 @@ class PropertyQueryToolsIntegrationTests {
         assertThat(summary.roomOfferCount()).isPositive();
 
         PropertyQueryTools.RoomOfferSearchResult result = tools.searchRoomOffers(
-                "London", null, null, "2026-09-01", "2026-09-30",
+                "London", null, null, null, null,
+                "2026-09-01", "2026-09-30",
                 26, null, null, true, 8);
 
         assertThat(result.matchedResidenceCount()).isGreaterThanOrEqualTo(4);

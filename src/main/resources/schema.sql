@@ -45,6 +45,45 @@ WHERE LOWER(source_id) = 'drapery-place'
 ORDER BY active DESC, id ASC
 LIMIT 1;
 
+CREATE TABLE IF NOT EXISTS t_residence_detail (
+    residence_id       BIGINT        NOT NULL COMMENT '公寓ID',
+    official_id        VARCHAR(64)   DEFAULT NULL COMMENT '官网公寓ID',
+    postcode           VARCHAR(32)   DEFAULT NULL COMMENT '邮编',
+    transport_lines    VARCHAR(512)  DEFAULT NULL COMMENT '交通线路',
+    official_url       VARCHAR(1024) DEFAULT NULL COMMENT '官网详情页',
+    page_tags          VARCHAR(512)  DEFAULT NULL COMMENT '官网页面标签',
+    facilities         TEXT          DEFAULT NULL COMMENT '设施列表，每行一项',
+    detail_markdown    MEDIUMTEXT    DEFAULT NULL COMMENT '公寓原始详情Markdown',
+    source_file_name   VARCHAR(255)  DEFAULT NULL COMMENT '最近来源文件',
+    detail_updated_at  DATETIME      DEFAULT NULL COMMENT '详情业务更新时间',
+    create_time        DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time        DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (residence_id),
+    CONSTRAINT fk_residence_detail_residence
+        FOREIGN KEY (residence_id) REFERENCES t_residence(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='公寓扩展详情';
+
+CREATE TABLE IF NOT EXISTS t_residence_nearby_place (
+    id                  BIGINT         NOT NULL AUTO_INCREMENT COMMENT '主键',
+    residence_id        BIGINT         NOT NULL COMMENT '公寓ID',
+    place_type          VARCHAR(16)    NOT NULL COMMENT 'UNIVERSITY/LANDMARK',
+    place_name          VARCHAR(255)   NOT NULL COMMENT '学校或地点名称',
+    travel_description  VARCHAR(512)   DEFAULT NULL COMMENT '原始通勤或距离描述',
+    min_minutes         INT            DEFAULT NULL COMMENT '最短通勤分钟',
+    max_minutes         INT            DEFAULT NULL COMMENT '最长通勤分钟',
+    travel_mode         VARCHAR(32)    DEFAULT NULL COMMENT 'WALK/TUBE/BUS/TRAIN/DLR/BIKE/PUBLIC_TRANSPORT/OTHER',
+    distance_miles      DECIMAL(8, 2) DEFAULT NULL COMMENT '英里距离',
+    sort_order          INT            NOT NULL DEFAULT 0 COMMENT '原文顺序',
+    create_time         DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time         DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    CONSTRAINT fk_residence_nearby_residence
+        FOREIGN KEY (residence_id) REFERENCES t_residence(id) ON DELETE CASCADE,
+    KEY idx_residence_nearby_residence_type (residence_id, place_type),
+    KEY idx_residence_nearby_name (place_name),
+    KEY idx_residence_nearby_minutes (max_minutes)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='公寓附近学校与地标';
+
 CREATE TABLE IF NOT EXISTS t_offer_import_batch (
     id                       BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
     file_name                VARCHAR(255) NOT NULL COMMENT '导入文件名',

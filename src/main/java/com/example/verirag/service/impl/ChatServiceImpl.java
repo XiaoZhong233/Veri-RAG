@@ -17,7 +17,7 @@ import com.example.verirag.prompt.SalesRecommendationPromptManager;
 import com.example.verirag.service.ChatService;
 import com.example.verirag.service.RagAnswerCache;
 import com.example.verirag.tool.PropertyQueryIntent;
-import com.example.verirag.tool.PropertyQueryRouter;
+import com.example.verirag.tool.PropertyIntentClassifier;
 import com.example.verirag.tool.PropertyToolSelector;
 import com.example.verirag.tool.ToolCallEventContext;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -102,6 +102,8 @@ public class ChatServiceImpl implements ChatService {
 
     private final PropertyToolSelector propertyToolSelector;
 
+    private final PropertyIntentClassifier propertyIntentClassifier;
+
     @Value("${rag.retrieval.similarity-threshold:" + DEFAULT_SIMILARITY_THRESHOLD + "}")
     private double similarityThreshold;
 
@@ -124,8 +126,8 @@ public class ChatServiceImpl implements ChatService {
             assertSessionOwner(userId, requestedSessionId);
         }
         List<ChatMessage> history = loadRecentHistory(requestedSessionId);
-        PropertyQueryIntent propertyIntent = PropertyQueryRouter
-                .route(req.getQuestion(), history);
+        PropertyQueryIntent propertyIntent = propertyIntentClassifier
+                .resolve(req.getQuestion(), history);
         boolean structuredPropertyQuery = propertyIntent.structured();
 
         // 追问的答案依赖前文，不参与跨会话回答缓存，避免上下文错配。
@@ -168,7 +170,7 @@ public class ChatServiceImpl implements ChatService {
             }
             answer = prompt
                     .system(structuredPropertyQuery
-                            ? buildPropertyToolSystemPrompt(ragContext, propertyIntent)
+                            ? buildPropertyToolSystemPrompt(propertyIntent)
                             : buildModelSystemPrompt(ragContext))
                     .user(structuredPropertyQuery
                             ? buildPropertyToolUserMessage(
@@ -214,8 +216,8 @@ public class ChatServiceImpl implements ChatService {
             assertSessionOwner(userId, requestedSessionId);
         }
         List<ChatMessage> history = loadRecentHistory(requestedSessionId);
-        PropertyQueryIntent propertyIntent = PropertyQueryRouter
-                .route(req.getQuestion(), history);
+        PropertyQueryIntent propertyIntent = propertyIntentClassifier
+                .resolve(req.getQuestion(), history);
         boolean structuredPropertyQuery = propertyIntent.structured();
 
         var cached = requestedSessionId == null && !structuredPropertyQuery
@@ -283,7 +285,7 @@ public class ChatServiceImpl implements ChatService {
                     propertyIntent, propertyIntent.toolName());
         }
         prompt = prompt.system(structuredPropertyQuery
-                ? buildPropertyToolSystemPrompt(ragContext, propertyIntent)
+                ? buildPropertyToolSystemPrompt(propertyIntent)
                 : buildModelSystemPrompt(ragContext))
                 .user(structuredPropertyQuery
                 ? buildPropertyToolUserMessage(
@@ -520,6 +522,11 @@ public class ChatServiceImpl implements ChatService {
     private List<Document> retrieveKnowledge(String question, List<ChatMessage> history,
                                              List<Long> categoryIds,
                                              PropertyQueryIntent propertyIntent) {
+        if (propertyIntent != null && propertyIntent.structured()) {
+            log.info("Structured property query uses database Tool without vector retrieval: intent={}",
+                    propertyIntent);
+            return List.of();
+        }
         String query = buildRetrievalQuery(question, history);
         boolean structuredPropertyQuery = propertyIntent != null
                 && propertyIntent.structured();
@@ -700,8 +707,7 @@ public class ChatServiceImpl implements ChatService {
         return manualHistoryEnabled ? promptManager.systemPrompt() : promptManager.systemPrompt() + "\n\n" + ragContext;
     }
 
-    private String buildPropertyToolSystemPrompt(String ragContext,
-                                                 PropertyQueryIntent propertyIntent) {
+    private String buildPropertyToolSystemPrompt(PropertyQueryIntent propertyIntent) {
         StringBuilder prompt = new StringBuilder(propertyToolPromptManager.systemPrompt());
         if (propertyIntent == PropertyQueryIntent.RECOMMEND) {
             String salesPrompt = salesRecommendationPromptManager.systemPrompt();
@@ -712,8 +718,6 @@ public class ChatServiceImpl implements ChatService {
         return prompt
                 .append("\n\n当前日期（Europe/London）：")
                 .append(LocalDate.now(LONDON_TIME_ZONE))
-                .append("\n\n## 知识库静态资料\n\n")
-                .append(ragContext)
                 .toString();
     }
 

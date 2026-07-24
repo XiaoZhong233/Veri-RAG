@@ -42,6 +42,9 @@ class PropertyQueryRouterTests {
                 "roomOfferId 123住26周总价多少？", List.of()))
                 .isEqualTo(PropertyQueryIntent.QUOTE);
         assertThat(PropertyQueryRouter.route(
+                "Drapery Place 有哪些设施和附近学校？", List.of()))
+                .isEqualTo(PropertyQueryIntent.DETAIL);
+        assertThat(PropertyQueryRouter.route(
                 "这个房型住26周总价多少？", List.of()))
                 .isEqualTo(PropertyQueryIntent.RECOMMEND);
         assertThat(PropertyQueryRouter.route(
@@ -60,5 +63,20 @@ class PropertyQueryRouterTests {
         assertThat(PropertyQueryRouter.route(
                 "那曼彻斯特呢？", List.of(previous)))
                 .isEqualTo(PropertyQueryIntent.LIST);
+        assertThat(PropertyQueryRouter.route(
+                "谢谢", List.of(previous)))
+                .isEqualTo(PropertyQueryIntent.NONE);
+    }
+
+    @Test
+    void asksModelOnlyForAmbiguousPropertyLikeQuestions() {
+        assertThat(PropertyQueryRouter.needsModelClassification(
+                "UCL九月住半年有什么选择？", List.of())).isTrue();
+        assertThat(PropertyQueryRouter.needsModelClassification(
+                "Drapery Place 怎么样？", List.of())).isTrue();
+        assertThat(PropertyQueryRouter.needsModelClassification(
+                "总结上传文档的主要内容", List.of())).isFalse();
+        assertThat(PropertyQueryRouter.needsModelClassification(
+                "帮我找伦敦公寓", List.of())).isFalse();
     }
 }

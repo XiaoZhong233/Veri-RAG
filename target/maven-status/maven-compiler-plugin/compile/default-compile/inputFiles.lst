@@ -22,6 +22,7 @@
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/controller/FileController.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/controller/HelloWorldController.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/controller/ResidenceController.java
+/Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/controller/ResidenceDetailController.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/controller/RoomOfferController.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/controller/SalesRecommendationController.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/controller/UserController.java
@@ -34,7 +35,14 @@
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/dto/LoginRequest.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/dto/LoginResponse.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/dto/ProfileUpdateRequest.java
+/Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/dto/ResidenceDetailImportResult.java
+/Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/dto/ResidenceDetailSaveRequest.java
+/Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/dto/ResidenceDetailSourceData.java
+/Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/dto/ResidenceDetailView.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/dto/ResidenceImportResult.java
+/Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/dto/ResidenceNearbyPlaceRequest.java
+/Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/dto/ResidenceNearbyPlaceSourceData.java
+/Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/dto/ResidenceNearbyPlaceView.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/dto/ResidenceOption.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/dto/ResidenceSaveRequest.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/dto/ResidenceSourceData.java
@@ -55,6 +63,8 @@
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/entity/Document.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/entity/OfferImportBatch.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/entity/Residence.java
+/Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/entity/ResidenceDetail.java
+/Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/entity/ResidenceNearbyPlace.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/entity/RoomInventory.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/entity/RoomPriceTier.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/entity/SalesRecommendation.java
@@ -68,13 +78,16 @@
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/mapper/ChatSessionMapper.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/mapper/DocumentMapper.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/mapper/OfferImportBatchMapper.java
+/Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/mapper/ResidenceDetailMapper.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/mapper/ResidenceMapper.java
+/Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/mapper/ResidenceNearbyPlaceMapper.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/mapper/RoomInventoryMapper.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/mapper/RoomPriceTierMapper.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/mapper/SalesRecommendationMapper.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/memory/ConversationSummaryService.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/memory/MyBatisChatMemoryRepository.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/observability/RagMetrics.java
+/Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/prompt/PropertyIntentPromptManager.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/prompt/PropertyToolPromptManager.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/prompt/RagPromptManager.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/prompt/SalesRecommendationPromptManager.java
@@ -88,6 +101,7 @@
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/service/FileStorageServiceImpl.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/service/RagAnswerCache.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/service/RagIngestService.java
+/Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/service/ResidenceDetailService.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/service/ResidenceService.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/service/RoomOfferService.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/service/SalesRecommendationService.java
@@ -96,9 +110,11 @@
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/service/impl/ChatServiceImpl.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/service/impl/DocumentServiceImpl.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/service/impl/RagIngestServiceImpl.java
+/Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/service/impl/ResidenceDetailServiceImpl.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/service/impl/ResidenceServiceImpl.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/service/impl/RoomOfferServiceImpl.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/service/impl/SalesRecommendationServiceImpl.java
+/Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/tool/PropertyIntentClassifier.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/tool/PropertyQueryIntent.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/tool/PropertyQueryRouter.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/tool/PropertyQueryTools.java
@@ -106,6 +122,7 @@
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/tool/ToolCallEventContext.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/util/DocumentParseUtil.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/util/ExcelDocumentReader.java
+/Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/util/ResidenceDetailMarkdownReader.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/util/ResidenceHtmlDocumentReader.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/util/ResidenceMarkdownDocumentReader.java
 /Users/li/IdeaProjects/veri-rag/src/main/java/com/example/verirag/util/RoomOfferWorkbookReader.java

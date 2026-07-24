@@ -2,9 +2,13 @@ package com.example.verirag.tool;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.example.verirag.entity.Residence;
+import com.example.verirag.entity.ResidenceDetail;
+import com.example.verirag.entity.ResidenceNearbyPlace;
 import com.example.verirag.entity.RoomInventory;
 import com.example.verirag.entity.RoomPriceTier;
+import com.example.verirag.mapper.ResidenceDetailMapper;
 import com.example.verirag.mapper.ResidenceMapper;
+import com.example.verirag.mapper.ResidenceNearbyPlaceMapper;
 import com.example.verirag.mapper.RoomInventoryMapper;
 import com.example.verirag.mapper.RoomPriceTierMapper;
 import lombok.RequiredArgsConstructor;
@@ -50,6 +54,8 @@ public class PropertyQueryTools {
     private static final int MAX_ROOMS_PER_RESIDENCE = 2;
 
     private final ResidenceMapper residenceMapper;
+    private final ResidenceDetailMapper residenceDetailMapper;
+    private final ResidenceNearbyPlaceMapper nearbyPlaceMapper;
     private final RoomInventoryMapper inventoryMapper;
     private final RoomPriceTierMapper priceTierMapper;
 
@@ -57,11 +63,10 @@ public class PropertyQueryTools {
             查询结构化公寓房型、入住时间、租期价格和库存。适用于找房、报价、
             可预订状态和指定城市/公寓/房型筛选。startDateFrom/startDateTo 表示
             可接受的起租日期窗口，格式 YYYY-MM-DD；stayWeeks 是实际租住周数。
-            residenceNames 用于把结果硬限制在知识库已确认的位置候选公寓中。
-            结果按不同公寓分组。该工具不计算学校或地标通勤距离。
-            有学校、地标或区域条件时，应将当前知识库参考资料中位置明确匹配的
-            全部具名候选一次性传入 residenceNames。本工具每次最多返回4个公寓、
-            每个公寓最多2个房型；结果不足或为空时不要再次调用。
+            nearbyPlaceKeyword 可直接按学校或地标筛选，maxTravelMinutes 限制资料中
+            明确给出的最长通勤时间。结果按不同公寓分组，并返回匹配地点证据。
+            residenceNames 仅用于用户明确指定一组公寓时的硬限制。本工具每次最多
+            返回4个公寓、每个公寓最多2个房型；结果不足或为空时不要再次调用。
             """)
     public RoomOfferSearchResult searchRoomOffers(
             @ToolParam(description = "城市，例如 London、Manchester；不限制时留空",
@@ -70,9 +75,15 @@ public class PropertyQueryTools {
             @ToolParam(description = "公寓名称、编码、地址或车站关键词；不能填写学校名称",
                     required = false)
             String residenceKeyword,
-            @ToolParam(description = "候选公寓名称列表，用逗号分隔；有学校或地标位置条件时必须传入知识库确认的候选公寓，不得传入远处公寓凑数",
+            @ToolParam(description = "用户明确指定的候选公寓名称列表，用逗号分隔；未指定时留空",
                     required = false)
             String residenceNames,
+            @ToolParam(description = "附近学校或地标名称，例如 UCL、LSE、King's College London；没有地点条件时留空",
+                    required = false)
+            String nearbyPlaceKeyword,
+            @ToolParam(description = "允许的最长通勤分钟；查询“附近”时通常传25，仅使用数据库中明确的通勤时间",
+                    required = false)
+            Integer maxTravelMinutes,
             @ToolParam(description = "可接受的最早起租日，YYYY-MM-DD", required = false)
             String startDateFrom,
             @ToolParam(description = "可接受的最晚起租日，YYYY-MM-DD；只给一个日期时可留空",
@@ -95,6 +106,8 @@ public class PropertyQueryTools {
                         "city", city,
                         "residenceKeyword", residenceKeyword,
                         "residenceNames", residenceNames,
+                        "nearbyPlaceKeyword", nearbyPlaceKeyword,
+                        "maxTravelMinutes", maxTravelMinutes,
                         "startDateFrom", startDateFrom,
                         "startDateTo", startDateTo,
                         "stayWeeks", stayWeeks,
@@ -102,7 +115,8 @@ public class PropertyQueryTools {
                         "maxWeeklyPrice", maxWeeklyPrice,
                         "includeSoldOut", includeSoldOut,
                         "limitResidences", limitResidences),
-                () -> searchRoomOffersInternal(city, residenceKeyword, residenceNames, startDateFrom,
+                () -> searchRoomOffersInternal(city, residenceKeyword, residenceNames,
+                        nearbyPlaceKeyword, maxTravelMinutes, startDateFrom,
                         startDateTo, stayWeeks, rootTypes, maxWeeklyPrice,
                         includeSoldOut, limitResidences),
                 result -> toolArguments(
@@ -116,6 +130,8 @@ public class PropertyQueryTools {
             String city,
             String residenceKeyword,
             String residenceNames,
+            String nearbyPlaceKeyword,
+            Integer maxTravelMinutes,
             String startDateFrom,
             String startDateTo,
             Integer stayWeeks,
@@ -138,6 +154,9 @@ public class PropertyQueryTools {
         if (maxWeeklyPrice != null && maxWeeklyPrice.signum() < 0) {
             throw new IllegalArgumentException("maxWeeklyPrice 不能小于0");
         }
+        if (maxTravelMinutes != null && (maxTravelMinutes < 1 || maxTravelMinutes > 180)) {
+            throw new IllegalArgumentException("maxTravelMinutes 必须在1到180之间");
+        }
 
         int safeLimit = Math.min(Math.max(
                 Objects.requireNonNullElse(limitResidences, DEFAULT_RESIDENCE_LIMIT), 1),
@@ -146,7 +165,7 @@ public class PropertyQueryTools {
         Set<String> requestedRootTypes = splitRootTypes(rootTypes);
         List<String> requestedResidenceNames = splitResidenceNames(residenceNames);
 
-        List<Residence> residences = residenceMapper.selectList(
+        List<Residence> cityResidences = residenceMapper.selectList(
                 new LambdaQueryWrapper<Residence>()
                         .eq(Residence::getActive, 1)
                         .orderByAsc(Residence::getCity)
@@ -155,13 +174,23 @@ public class PropertyQueryTools {
                 .filter(item -> matchesResidenceKeyword(item, residenceKeyword))
                 .filter(item -> matchesResidenceCandidates(item, requestedResidenceNames))
                 .toList();
+        Map<Long, List<ResidenceNearbyPlace>> nearbyByResidence =
+                loadMatchingNearby(cityResidences, nearbyPlaceKeyword, maxTravelMinutes);
+        List<Residence> residences = isBlank(nearbyPlaceKeyword)
+                ? cityResidences
+                : cityResidences.stream()
+                        .filter(item -> nearbyByResidence.containsKey(item.getId()))
+                        .toList();
         if (residences.isEmpty()) {
             return new RoomOfferSearchResult(city, residenceKeyword, requestedResidenceNames,
+                    nearbyPlaceKeyword, maxTravelMinutes,
                     startFrom, startTo,
                     stayWeeks, 0, 0, 0, List.of(),
-                    List.of(requestedResidenceNames.isEmpty()
-                            ? "没有找到符合城市或公寓关键词的有效公寓。"
-                            : "知识库候选公寓在结构化地址库中不存在或当前未启用，未使用其它公寓补足结果。"));
+                    List.of(!isBlank(nearbyPlaceKeyword)
+                            ? "数据库中没有找到符合附近地点和通勤时间条件的有效公寓。"
+                            : requestedResidenceNames.isEmpty()
+                                    ? "没有找到符合城市或公寓关键词的有效公寓。"
+                                    : "指定候选公寓在结构化地址库中不存在或当前未启用。"));
         }
 
         Map<Long, Residence> residenceById = residences.stream()
@@ -189,7 +218,8 @@ public class PropertyQueryTools {
                         LinkedHashMap::new,
                         Collectors.toList()));
         List<ResidenceOfferGroup> groups = grouped.entrySet().stream()
-                .map(entry -> toGroup(residenceById.get(entry.getKey()), entry.getValue()))
+                .map(entry -> toGroup(residenceById.get(entry.getKey()), entry.getValue(),
+                        nearbyByResidence.getOrDefault(entry.getKey(), List.of())))
                 .sorted(groupComparator(requestedResidenceNames))
                 .limit(safeLimit)
                 .toList();
@@ -212,9 +242,55 @@ public class PropertyQueryTools {
         }
         warnings.add("库存为业务更新时间对应的快照，最终预订前需要再次确认。");
         return new RoomOfferSearchResult(city, residenceKeyword, requestedResidenceNames,
+                nearbyPlaceKeyword, maxTravelMinutes,
                 startFrom, startTo,
                 stayWeeks, groups.size(), availableResidences, soldOutResidences,
                 groups, List.copyOf(warnings));
+    }
+
+    @Tool(name = "get_residence_details", description = """
+            查询一个或多个公寓的结构化详情，包括地址、邮编、车站、交通线路、
+            设施、附近学校和附近地标。用于回答指定公寓的介绍、配套、交通和周边问题。
+            本工具不返回房型报价或库存。
+            """)
+    public ResidenceDetailResult getResidenceDetails(
+            @ToolParam(description = "公寓名称、编码、地址或车站关键词")
+            String keyword,
+            @ToolParam(description = "最多返回多少个公寓，默认5，最大10", required = false)
+            Integer limit) {
+        return executeTool("get_residence_details",
+                toolArguments("keyword", keyword, "limit", limit),
+                () -> getResidenceDetailsInternal(keyword, limit),
+                result -> toolArguments("residenceCount", result.count()));
+    }
+
+    private ResidenceDetailResult getResidenceDetailsInternal(String keyword, Integer limit) {
+        int safeLimit = Math.min(Math.max(Objects.requireNonNullElse(limit, 5), 1), 10);
+        List<Residence> residences = residenceMapper.selectList(
+                        new LambdaQueryWrapper<Residence>()
+                                .eq(Residence::getActive, 1)
+                                .orderByAsc(Residence::getName)).stream()
+                .filter(item -> matchesResidenceKeyword(item, keyword))
+                .limit(safeLimit)
+                .toList();
+        if (residences.isEmpty()) {
+            return new ResidenceDetailResult(keyword, 0, List.of());
+        }
+        Map<Long, ResidenceDetail> details = residenceDetailMapper.selectBatchIds(
+                        residences.stream().map(Residence::getId).toList()).stream()
+                .collect(Collectors.toMap(ResidenceDetail::getResidenceId, Function.identity()));
+        Map<Long, List<ResidenceNearbyPlace>> nearby = nearbyPlaceMapper.selectList(
+                        new LambdaQueryWrapper<ResidenceNearbyPlace>()
+                                .in(ResidenceNearbyPlace::getResidenceId,
+                                        residences.stream().map(Residence::getId).toList())
+                                .orderByAsc(ResidenceNearbyPlace::getSortOrder)).stream()
+                .collect(Collectors.groupingBy(ResidenceNearbyPlace::getResidenceId,
+                        LinkedHashMap::new, Collectors.toList()));
+        List<ResidenceDetailItem> items = residences.stream()
+                .map(residence -> toDetailItem(residence, details.get(residence.getId()),
+                        nearby.getOrDefault(residence.getId(), List.of())))
+                .toList();
+        return new ResidenceDetailResult(keyword, items.size(), items);
     }
 
     @Tool(name = "quote_room_offer", description = """
@@ -456,6 +532,68 @@ public class PropertyQueryTools {
                         LinkedHashMap::new, Collectors.toList()));
     }
 
+    private Map<Long, List<ResidenceNearbyPlace>> loadMatchingNearby(
+            List<Residence> residences, String nearbyPlaceKeyword,
+            Integer maxTravelMinutes) {
+        if (residences.isEmpty() || isBlank(nearbyPlaceKeyword)) {
+            return Map.of();
+        }
+        Set<Long> residenceIds = residences.stream().map(Residence::getId)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        return nearbyPlaceMapper.selectList(
+                        new LambdaQueryWrapper<ResidenceNearbyPlace>()
+                                .in(ResidenceNearbyPlace::getResidenceId, residenceIds)
+                                .orderByAsc(ResidenceNearbyPlace::getSortOrder)).stream()
+                .filter(place -> matchesNearbyName(place.getPlaceName(), nearbyPlaceKeyword))
+                .filter(place -> withinTravelLimit(place, maxTravelMinutes))
+                .collect(Collectors.groupingBy(
+                        ResidenceNearbyPlace::getResidenceId,
+                        LinkedHashMap::new,
+                        Collectors.toList()));
+    }
+
+    private static boolean matchesNearbyName(String placeName, String keyword) {
+        String name = canonicalPlaceName(placeName);
+        String query = canonicalPlaceName(keyword);
+        if (name.isBlank() || query.isBlank()) {
+            return false;
+        }
+        if (name.contains(query) || query.contains(name)) {
+            return true;
+        }
+        Map<String, Set<String>> aliases = Map.of(
+                "ucl", Set.of("ucl", "universitycollegelondon"),
+                "lse", Set.of("lse", "londonschoolofeconomics"),
+                "kcl", Set.of("kcl", "kingscollegelondon"),
+                "qmul", Set.of("qmul", "queenmaryuniversityoflondon"));
+        return aliases.values().stream().anyMatch(group ->
+                group.stream().anyMatch(query::contains)
+                        && group.stream().anyMatch(name::contains));
+    }
+
+    private static boolean withinTravelLimit(
+            ResidenceNearbyPlace place, Integer maxTravelMinutes) {
+        if (maxTravelMinutes == null) {
+            return true;
+        }
+        if (place.getMaxMinutes() != null) {
+            return place.getMaxMinutes() <= maxTravelMinutes;
+        }
+        String description = normalize(place.getTravelDescription());
+        return description.contains("walking distance")
+                || description.contains("next door")
+                || description.contains("doorstep");
+    }
+
+    private static String canonicalPlaceName(String value) {
+        return Normalizer.normalize(
+                        Objects.toString(value, ""), Normalizer.Form.NFKD)
+                .replaceAll("\\p{M}+", "")
+                .toLowerCase(Locale.ROOT)
+                .replace('’', '\'')
+                .replaceAll("[^a-z0-9]+", "");
+    }
+
     private static MatchedRoom matchRoom(RoomInventory inventory,
                                          List<RoomPriceTier> tiers,
                                          LocalDate startFrom,
@@ -504,7 +642,9 @@ public class PropertyQueryTools {
                 effectivePrice);
     }
 
-    private static ResidenceOfferGroup toGroup(Residence residence, List<MatchedRoom> rooms) {
+    private static ResidenceOfferGroup toGroup(
+            Residence residence, List<MatchedRoom> rooms,
+            List<ResidenceNearbyPlace> nearbyPlaces) {
         List<RoomMatch> roomMatches = rooms.stream()
                 .limit(MAX_ROOMS_PER_RESIDENCE)
                 .map(PropertyQueryTools::toRoomMatch)
@@ -513,7 +653,9 @@ public class PropertyQueryTools {
                 residence.getId(), residence.getSourceId(), residence.getName(),
                 residence.getCity(), residence.getAddress(), residence.getStation(),
                 residence.getZone(), residence.getLatitude(), residence.getLongitude(),
-                residence.getMapUrl(), roomMatches);
+                residence.getMapUrl(),
+                nearbyPlaces.stream().map(PropertyQueryTools::toNearbyMatch).toList(),
+                roomMatches);
     }
 
     private static RoomMatch toRoomMatch(MatchedRoom room) {
@@ -559,6 +701,7 @@ public class PropertyQueryTools {
         return Comparator.comparingInt((ResidenceOfferGroup group) ->
                         group.rooms().stream().map(RoomMatch::inventoryStatus)
                                 .mapToInt(PropertyQueryTools::statusRank).min().orElse(99))
+                .thenComparingInt(PropertyQueryTools::nearbyRank)
                 .thenComparingInt(group -> requestedOrder.getOrDefault(
                         canonicalResidenceName(group.residenceName()), Integer.MAX_VALUE))
                 .thenComparing(group -> group.rooms().stream()
@@ -566,6 +709,14 @@ public class PropertyQueryTools {
                         .min(Comparator.naturalOrder()).orElse(null),
                         Comparator.nullsLast(Comparator.naturalOrder()))
                 .thenComparing(ResidenceOfferGroup::residenceName);
+    }
+
+    private static int nearbyRank(ResidenceOfferGroup group) {
+        return group.nearbyMatches().stream()
+                .map(NearbyPlaceItem::maxMinutes)
+                .filter(Objects::nonNull)
+                .min(Comparator.naturalOrder())
+                .orElse(Integer.MAX_VALUE);
     }
 
     private static int statusRank(String status) {
@@ -690,6 +841,37 @@ public class PropertyQueryTools {
                 residence.getLatitude(), residence.getLongitude(), residence.getMapUrl());
     }
 
+    private static NearbyPlaceItem toNearbyMatch(ResidenceNearbyPlace place) {
+        return new NearbyPlaceItem(
+                place.getPlaceType(), place.getPlaceName(),
+                place.getTravelDescription(), place.getMinMinutes(),
+                place.getMaxMinutes(), place.getTravelMode(),
+                place.getDistanceMiles());
+    }
+
+    private static ResidenceDetailItem toDetailItem(
+            Residence residence, ResidenceDetail detail,
+            List<ResidenceNearbyPlace> nearbyPlaces) {
+        List<String> facilities = detail == null || isBlank(detail.getFacilities())
+                ? List.of()
+                : detail.getFacilities().lines()
+                        .map(String::strip)
+                        .filter(item -> !item.isBlank())
+                        .toList();
+        return new ResidenceDetailItem(
+                residence.getId(), residence.getSourceId(), residence.getName(),
+                residence.getCity(), residence.getRegion(), residence.getZone(),
+                residence.getAddress(), residence.getStation(),
+                residence.getLatitude(), residence.getLongitude(), residence.getMapUrl(),
+                detail == null ? null : detail.getPostcode(),
+                detail == null ? null : detail.getTransportLines(),
+                detail == null ? null : detail.getOfficialUrl(),
+                detail == null ? null : detail.getPageTags(),
+                facilities,
+                nearbyPlaces.stream().map(PropertyQueryTools::toNearbyMatch).toList(),
+                detail == null ? null : detail.getDetailUpdatedAt());
+    }
+
     private record MatchedRoom(
             RoomInventory inventory,
             List<RoomPriceTier> tiers,
@@ -703,6 +885,8 @@ public class PropertyQueryTools {
             String requestedCity,
             String residenceKeyword,
             List<String> requestedResidenceNames,
+            String nearbyPlaceKeyword,
+            Integer maxTravelMinutes,
             LocalDate startDateFrom,
             LocalDate startDateTo,
             Integer stayWeeks,
@@ -725,6 +909,7 @@ public class PropertyQueryTools {
             BigDecimal latitude,
             BigDecimal longitude,
             String mapUrl,
+            List<NearbyPlaceItem> nearbyMatches,
             List<RoomMatch> rooms
     ) {
     }
@@ -781,6 +966,46 @@ public class PropertyQueryTools {
             String keyword,
             int count,
             List<ResidenceItem> residences
+    ) {
+    }
+
+    public record ResidenceDetailResult(
+            String keyword,
+            int count,
+            List<ResidenceDetailItem> residences
+    ) {
+    }
+
+    public record ResidenceDetailItem(
+            Long residenceId,
+            String residenceSourceId,
+            String residenceName,
+            String city,
+            String region,
+            String zone,
+            String address,
+            String station,
+            BigDecimal latitude,
+            BigDecimal longitude,
+            String mapUrl,
+            String postcode,
+            String transportLines,
+            String officialUrl,
+            String pageTags,
+            List<String> facilities,
+            List<NearbyPlaceItem> nearbyPlaces,
+            LocalDateTime detailUpdatedAt
+    ) {
+    }
+
+    public record NearbyPlaceItem(
+            String placeType,
+            String placeName,
+            String travelDescription,
+            Integer minMinutes,
+            Integer maxMinutes,
+            String travelMode,
+            BigDecimal distanceMiles
     ) {
     }
 

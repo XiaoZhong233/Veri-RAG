@@ -26,6 +26,11 @@ public class ResidenceDetailMarkdownReader {
             "(?i)(\\d+)\\s*(?:minutes?|mins?|minute)");
     private static final Pattern MILES = Pattern.compile(
             "(?i)(\\d+(?:\\.\\d+)?)\\s*miles?");
+    private static final Pattern TRAVEL_OPTION = Pattern.compile(
+            "(?i)(\\d+)\\s*(?:[–—-]\\s*(\\d+)\\s*)?"
+                    + "(?:minutes?|mins?)\\s*(?:(?:via|by)\\s*)?"
+                    + "(tube|underground|bus|bike|bicycle|cycle|walk|walking|foot|"
+                    + "train|thameslink|dlr|public\\s+transport)");
 
     public List<ResidenceDetailSourceData> read(Path path) {
         if (path == null || !Files.isRegularFile(path)) {
@@ -104,11 +109,12 @@ public class ResidenceDetailMarkdownReader {
             if (parsed == null) {
                 continue;
             }
-            TravelMetrics metrics = travelMetrics(parsed.description());
-            target.add(new ResidenceNearbyPlaceSourceData(
-                    type, parsed.name(), parsed.description(),
-                    metrics.minMinutes(), metrics.maxMinutes(), metrics.travelMode(),
-                    metrics.distanceMiles(), order++));
+            for (TravelOption option : travelOptions(parsed.description())) {
+                target.add(new ResidenceNearbyPlaceSourceData(
+                        type, parsed.name(), option.description(),
+                        option.minMinutes(), option.maxMinutes(), option.travelMode(),
+                        option.distanceMiles(), order++));
+            }
         }
     }
 
@@ -128,6 +134,38 @@ public class ResidenceDetailMarkdownReader {
 
     public static TravelMetrics travelMetrics(String description) {
         String value = description == null ? "" : description.strip();
+        Matcher option = TRAVEL_OPTION.matcher(value);
+        if (option.find()) {
+            Integer min = Integer.parseInt(option.group(1));
+            Integer max = option.group(2) == null
+                    ? min : Integer.parseInt(option.group(2));
+            return new TravelMetrics(min, max, travelMode(option.group(3)), null);
+        }
+        return fallbackTravelMetrics(value);
+    }
+
+    public static List<TravelOption> travelOptions(String description) {
+        String value = description == null ? "" : description.strip();
+        Matcher matcher = TRAVEL_OPTION.matcher(value);
+        List<TravelOption> options = new ArrayList<>();
+        while (matcher.find()) {
+            Integer min = Integer.parseInt(matcher.group(1));
+            Integer max = matcher.group(2) == null
+                    ? min : Integer.parseInt(matcher.group(2));
+            options.add(new TravelOption(
+                    matcher.group().strip(), min, max,
+                    travelMode(matcher.group(3)), null));
+        }
+        if (!options.isEmpty()) {
+            return List.copyOf(options);
+        }
+        TravelMetrics fallback = fallbackTravelMetrics(value);
+        return List.of(new TravelOption(
+                value, fallback.minMinutes(), fallback.maxMinutes(),
+                fallback.travelMode(), fallback.distanceMiles()));
+    }
+
+    private static TravelMetrics fallbackTravelMetrics(String value) {
         Integer min = null;
         Integer max = null;
         Matcher range = MINUTES_RANGE.matcher(value);
@@ -152,9 +190,14 @@ public class ResidenceDetailMarkdownReader {
 
     private static String travelMode(String value) {
         String normalized = value.toLowerCase(Locale.ROOT);
-        if (normalized.contains("walk") || normalized.contains("next door")
+        if (normalized.contains("walk") || normalized.contains("foot")
+                || normalized.contains("next door")
                 || normalized.contains("doorstep")) {
             return "WALK";
+        }
+        if (normalized.contains("bike") || normalized.contains("bicycle")
+                || normalized.contains("cycle")) {
+            return "BIKE";
         }
         if (normalized.contains("tube") || normalized.contains("underground")) {
             return "TUBE";
@@ -167,9 +210,6 @@ public class ResidenceDetailMarkdownReader {
         }
         if (normalized.contains("dlr")) {
             return "DLR";
-        }
-        if (normalized.contains("bike") || normalized.contains("cycle")) {
-            return "BIKE";
         }
         if (normalized.contains("public transport")) {
             return "PUBLIC_TRANSPORT";
@@ -222,6 +262,15 @@ public class ResidenceDetailMarkdownReader {
     }
 
     public record TravelMetrics(
+            Integer minMinutes,
+            Integer maxMinutes,
+            String travelMode,
+            BigDecimal distanceMiles
+    ) {
+    }
+
+    public record TravelOption(
+            String description,
             Integer minMinutes,
             Integer maxMinutes,
             String travelMode,

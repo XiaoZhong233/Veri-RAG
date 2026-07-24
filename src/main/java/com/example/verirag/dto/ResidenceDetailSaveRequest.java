@@ -27,7 +27,6 @@ public record ResidenceDetailSaveRequest(
 
         List<@Size(max = 255, message = "设施名称不能超过255个字符") String> facilities,
 
-        @Valid
-        List<ResidenceNearbyPlaceRequest> nearbyPlaces
+        List<@Valid ResidenceNearbyPlaceRequest> nearbyPlaces
 ) {
 }

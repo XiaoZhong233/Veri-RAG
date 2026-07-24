@@ -36,6 +36,7 @@ class ResidenceDetailMarkdownReaderTests {
 
                 - University College London (UCL): 18 mins via tube
                 - London Metropolitan University — 15 mins walk
+                - Imperial College London: 28 mins by bus, 10 mins by bike, 27 mins by foot
 
                 ### 附近地标与生活配套
 
@@ -49,10 +50,14 @@ class ResidenceDetailMarkdownReaderTests {
         assertThat(records).singleElement().satisfies(record -> {
             assertThat(record.sourceId()).isEqualTo("islington-residence");
             assertThat(record.facilities()).containsExactly("Wifi", "Laundry", "Gym");
-            assertThat(record.nearbyPlaces()).hasSize(3);
+            assertThat(record.nearbyPlaces()).hasSize(6);
             assertThat(record.nearbyPlaces().getFirst().maxMinutes()).isEqualTo(18);
             assertThat(record.nearbyPlaces().getFirst().travelMode()).isEqualTo("TUBE");
-            assertThat(record.nearbyPlaces().get(2).distanceMiles())
+            assertThat(record.nearbyPlaces().stream()
+                    .filter(place -> "Imperial College London".equals(place.placeName())))
+                    .extracting(place -> place.travelMode() + ":" + place.maxMinutes())
+                    .containsExactly("BUS:28", "BIKE:10", "WALK:27");
+            assertThat(record.nearbyPlaces().get(5).distanceMiles())
                     .isEqualByComparingTo("1.5");
         });
     }

@@ -165,6 +165,42 @@ class PropertyQueryToolsTests {
     }
 
     @Test
+    void keepsResidenceWhenAnyTravelOptionMatchesAndReturnsPreferredEligibleMode() {
+        Residence paddington = residence(
+                5L, "paddington", "Paddington Citi View");
+        ResidenceNearbyPlace bus = nearby(
+                10L, 5L, "Imperial College London", 28);
+        bus.setTravelMode("BUS");
+        bus.setTravelDescription("28 mins by bus");
+        ResidenceNearbyPlace bike = nearby(
+                11L, 5L, "Imperial College London", 10);
+        bike.setTravelMode("BIKE");
+        bike.setTravelDescription("10 mins by bike");
+        RoomInventory room = inventory(
+                68L, 5L, "AVAILABLE", "Bronze Studio");
+
+        when(residenceMapper.selectList(any(Wrapper.class)))
+                .thenReturn(List.of(paddington));
+        when(nearbyPlaceMapper.selectList(any(Wrapper.class)))
+                .thenReturn(List.of(bus, bike));
+        when(inventoryMapper.selectList(any(Wrapper.class)))
+                .thenReturn(List.of(room));
+        when(priceTierMapper.selectList(any(Wrapper.class)))
+                .thenReturn(List.of(tier(202L, 68L, 20, 39, "560")));
+
+        PropertyQueryTools.RoomOfferSearchResult result = tools.searchRoomOffers(
+                "London", null, null, "Imperial College London", 25,
+                "2026-09-01", "2026-09-30",
+                26, null, null, false, 4);
+
+        assertThat(result.residences()).singleElement().satisfies(group ->
+                assertThat(group.nearbyMatches()).singleElement().satisfies(match -> {
+                    assertThat(match.travelMode()).isEqualTo("BIKE");
+                    assertThat(match.maxMinutes()).isEqualTo(10);
+                }));
+    }
+
+    @Test
     void quoteUsesDatesToCalculateWeeksAndTotal() {
         Residence residence = residence(1L, "chapter-islington", "Chapter Islington");
         RoomInventory inventory = inventory(11L, 1L, "AVAILABLE", "Classic Ensuite");

@@ -33,6 +33,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -136,7 +137,7 @@ public class ResidenceDetailServiceImpl implements ResidenceDetailService {
                 applyResidenceFields(residence, source);
                 residenceMapper.updateById(residence);
                 upsertDetail(residence.getId(), source, fileName);
-                replaceNearby(residence.getId(), source.nearbyPlaces());
+                mergeNearbyFromImport(residence.getId(), source.nearbyPlaces());
                 imported++;
             }
             return new ResidenceDetailImportResult(
@@ -212,6 +213,55 @@ public class ResidenceDetailServiceImpl implements ResidenceDetailService {
         }
     }
 
+    /**
+     * Markdown 是增量数据源：更新同一路线，但保留后台为同一地点补充的其它交通方式。
+     * 例如源文件只有 BUS，后台补充的 BIKE/WALK 不会在下次导入时丢失。
+     */
+    private void mergeNearbyFromImport(
+            Long residenceId,
+            List<ResidenceNearbyPlaceSourceData> importedPlaces) {
+        List<ResidenceNearbyPlaceSourceData> merged = new ArrayList<>(
+                importedPlaces == null ? List.of() : importedPlaces);
+        Set<String> importedPlaceKeys = merged.stream()
+                .map(ResidenceDetailServiceImpl::placeKey)
+                .collect(Collectors.toSet());
+        Set<String> importedRouteKeys = merged.stream()
+                .map(ResidenceDetailServiceImpl::routeKey)
+                .collect(Collectors.toSet());
+        List<ResidenceNearbyPlace> existing = nearbyPlaceMapper.selectList(
+                new LambdaQueryWrapper<ResidenceNearbyPlace>()
+                        .eq(ResidenceNearbyPlace::getResidenceId, residenceId)
+                        .orderByAsc(ResidenceNearbyPlace::getSortOrder));
+        for (ResidenceNearbyPlace place : existing) {
+            ResidenceNearbyPlaceSourceData source = new ResidenceNearbyPlaceSourceData(
+                    place.getPlaceType(), place.getPlaceName(),
+                    place.getTravelDescription(), place.getMinMinutes(),
+                    place.getMaxMinutes(), place.getTravelMode(),
+                    place.getDistanceMiles(), place.getSortOrder());
+            if (importedPlaceKeys.contains(placeKey(source))
+                    && importedRouteKeys.add(routeKey(source))) {
+                merged.add(source);
+            }
+        }
+        replaceNearby(residenceId, merged);
+    }
+
+    private static String placeKey(ResidenceNearbyPlaceSourceData place) {
+        return normalizeKey(place.placeType()) + "|" + normalizeKey(place.placeName());
+    }
+
+    private static String routeKey(ResidenceNearbyPlaceSourceData place) {
+        return placeKey(place)
+                + "|" + normalizeKey(place.travelMode());
+    }
+
+    private static String normalizeKey(String value) {
+        return Normalizer.normalize(Objects.toString(value, ""), Normalizer.Form.NFKD)
+                .replaceAll("\\p{M}+", "")
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", "");
+    }
+
     private static List<ResidenceNearbyPlaceSourceData> toSource(
             List<ResidenceNearbyPlaceRequest> requests) {
         if (requests == null) {
@@ -223,17 +273,22 @@ public class ResidenceDetailServiceImpl implements ResidenceDetailService {
             if (request == null) {
                 continue;
             }
-            var metrics = ResidenceDetailMarkdownReader.travelMetrics(
+            int baseOrder = Objects.requireNonNullElse(request.sortOrder(), index);
+            var options = ResidenceDetailMarkdownReader.travelOptions(
                     request.travelDescription());
-            result.add(new ResidenceNearbyPlaceSourceData(
-                    request.placeType(),
-                    request.placeName(),
-                    request.travelDescription(),
-                    metrics.minMinutes(),
-                    metrics.maxMinutes(),
-                    metrics.travelMode(),
-                    metrics.distanceMiles(),
-                    Objects.requireNonNullElse(request.sortOrder(), index++)));
+            for (int optionIndex = 0; optionIndex < options.size(); optionIndex++) {
+                var option = options.get(optionIndex);
+                result.add(new ResidenceNearbyPlaceSourceData(
+                        request.placeType(),
+                        request.placeName(),
+                        option.description(),
+                        option.minMinutes(),
+                        option.maxMinutes(),
+                        option.travelMode(),
+                        option.distanceMiles(),
+                        baseOrder * 10 + optionIndex));
+            }
+            index++;
         }
         return List.copyOf(result);
     }

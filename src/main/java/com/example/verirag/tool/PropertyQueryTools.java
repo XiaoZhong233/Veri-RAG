@@ -546,6 +546,7 @@ public class PropertyQueryTools {
                                 .orderByAsc(ResidenceNearbyPlace::getSortOrder)).stream()
                 .filter(place -> matchesNearbyName(place.getPlaceName(), nearbyPlaceKeyword))
                 .filter(place -> withinTravelLimit(place, maxTravelMinutes))
+                .sorted(nearbyTravelComparator())
                 .collect(Collectors.groupingBy(
                         ResidenceNearbyPlace::getResidenceId,
                         LinkedHashMap::new,
@@ -701,6 +702,7 @@ public class PropertyQueryTools {
         return Comparator.comparingInt((ResidenceOfferGroup group) ->
                         group.rooms().stream().map(RoomMatch::inventoryStatus)
                                 .mapToInt(PropertyQueryTools::statusRank).min().orElse(99))
+                .thenComparingInt(PropertyQueryTools::nearbyModeRank)
                 .thenComparingInt(PropertyQueryTools::nearbyRank)
                 .thenComparingInt(group -> requestedOrder.getOrDefault(
                         canonicalResidenceName(group.residenceName()), Integer.MAX_VALUE))
@@ -717,6 +719,35 @@ public class PropertyQueryTools {
                 .filter(Objects::nonNull)
                 .min(Comparator.naturalOrder())
                 .orElse(Integer.MAX_VALUE);
+    }
+
+    private static int nearbyModeRank(ResidenceOfferGroup group) {
+        return group.nearbyMatches().stream()
+                .map(NearbyPlaceItem::travelMode)
+                .mapToInt(PropertyQueryTools::travelModeRank)
+                .min()
+                .orElse(Integer.MAX_VALUE);
+    }
+
+    private static Comparator<ResidenceNearbyPlace> nearbyTravelComparator() {
+        return Comparator.comparingInt((ResidenceNearbyPlace place) ->
+                        travelModeRank(place.getTravelMode()))
+                .thenComparing(ResidenceNearbyPlace::getMaxMinutes,
+                        Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(ResidenceNearbyPlace::getPlaceName,
+                        Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER))
+                .thenComparing(ResidenceNearbyPlace::getSortOrder,
+                        Comparator.nullsLast(Comparator.naturalOrder()));
+    }
+
+    private static int travelModeRank(String travelMode) {
+        return switch (Objects.toString(travelMode, "").toUpperCase(Locale.ROOT)) {
+            case "WALK" -> 0;
+            case "BIKE" -> 1;
+            case "TUBE" -> 2;
+            case "BUS" -> 3;
+            default -> 4;
+        };
     }
 
     private static int statusRank(String status) {
@@ -868,7 +899,9 @@ public class PropertyQueryTools {
                 detail == null ? null : detail.getOfficialUrl(),
                 detail == null ? null : detail.getPageTags(),
                 facilities,
-                nearbyPlaces.stream().map(PropertyQueryTools::toNearbyMatch).toList(),
+                nearbyPlaces.stream()
+                        .sorted(nearbyTravelComparator())
+                        .map(PropertyQueryTools::toNearbyMatch).toList(),
                 detail == null ? null : detail.getDetailUpdatedAt());
     }
 

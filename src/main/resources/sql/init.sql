@@ -1,6 +1,6 @@
-DROP DATABASE IF EXISTS veri_rag;
-CREATE DATABASE veri_rag DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-USE veri_rag;
+DROP DATABASE IF EXISTS rag;
+CREATE DATABASE rag DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE rag;
 
 -- 用户表（管理员 ADMIN / 普通用户 USER）
 CREATE TABLE t_user (
@@ -88,26 +88,8 @@ INSERT INTO t_user (username, password, real_name, role, status) VALUES
 ('admin', 'e10adc3949ba59abbe56e057f20f883e', 'Admin', 'ADMIN', 1),
 ('user1', 'e10adc3949ba59abbe56e057f20f883e', 'Howell', 'USER', 1);
 
-INSERT INTO t_kb_category (name, description, icon, sort_order) VALUES
+INSERT INTO t_category (name, description, icon, sort_order) VALUES
 ('技术文档', '研发与接口说明类文档', 'Document', 1),
 ('规章制度', '公司制度与流程', 'Notebook', 2),
 ('产品手册', '产品使用说明', 'Goods', 3),
 ('常见问题', 'FAQ 与帮助', 'QuestionFilled', 4);
-
--- 示例文档元数据（实际文件由管理员在界面中上传后解析入库；此处仅演示列表）
-INSERT INTO t_kb_document (category_id, title, file_name, file_path, file_type, file_size, status, vector_count, upload_user_id) VALUES
-(1, '示例-API说明', 'api_example.txt', '202605/example_api.txt', 'txt', 1024, 'SUCCESS', 0, 1),
-(2, '示例-考勤制度', 'hr_rules.pdf', '202605/hr_rules.pdf', 'pdf', 204800, 'PROCESSING', 0, 1);
-
-INSERT INTO t_chat_session (user_id, title) VALUES (2, '新员工入职咨询');
-INSERT INTO t_chat_message (session_id, role, content, refs) VALUES
-(1, 'USER', '公司年假规则是什么？', NULL),
-(1, 'ASSISTANT', '请上传规章制度文档后，我可基于内容回答。', JSON_ARRAY());
-
-INSERT INTO t_system_log (user_id, action, ip, create_time) VALUES
-(1, '登录系统', '127.0.0.1', NOW() - INTERVAL 6 DAY),
-(2, '提问', '127.0.0.1', NOW() - INTERVAL 5 DAY),
-(3, '提问', '127.0.0.1', NOW() - INTERVAL 4 DAY),
-(2, '提问', '127.0.0.1', NOW() - INTERVAL 3 DAY),
-(4, '登录系统', '127.0.0.1', NOW() - INTERVAL 2 DAY),
-(2, '提问', '127.0.0.1', NOW() - INTERVAL 1 DAY);

@@ -20,7 +20,7 @@ class PropertyQueryToolsIntegrationTests {
         assertThat(summary.roomOfferCount()).isPositive();
 
         PropertyQueryTools.RoomOfferSearchResult result = tools.searchRoomOffers(
-                "London", null, null, null, null,
+                "London", null, null, null, null, null,
                 "2026-09-01", "2026-09-30",
                 26, null, null, true, 8);
 
@@ -30,5 +30,17 @@ class PropertyQueryToolsIntegrationTests {
                 .doesNotHaveDuplicates();
         assertThat(result.residences())
                 .allSatisfy(group -> assertThat(group.rooms()).isNotEmpty());
+    }
+
+    @Test
+    void prioritizesDraperyAmongSimilarUclCommutes() {
+        PropertyQueryTools.RoomOfferSearchResult result = tools.searchRoomOffers(
+                "London", null, null, "UCL", 25, null,
+                null, null, null, null, null, false, 4);
+
+        assertThat(result.residences())
+                .extracting(PropertyQueryTools.ResidenceOfferGroup::residenceName)
+                .startsWith("Finsbury House", "Drapery Place Residence")
+                .doesNotContain("The Lyra Residence");
     }
 }

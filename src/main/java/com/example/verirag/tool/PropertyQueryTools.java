@@ -1,6 +1,7 @@
 package com.example.verirag.tool;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.example.verirag.dto.SalesRecommendationView;
 import com.example.verirag.entity.Residence;
 import com.example.verirag.entity.ResidenceDetail;
 import com.example.verirag.entity.ResidenceNearbyPlace;
@@ -11,6 +12,7 @@ import com.example.verirag.mapper.ResidenceMapper;
 import com.example.verirag.mapper.ResidenceNearbyPlaceMapper;
 import com.example.verirag.mapper.RoomInventoryMapper;
 import com.example.verirag.mapper.RoomPriceTierMapper;
+import com.example.verirag.service.SalesRecommendationService;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -52,19 +54,27 @@ public class PropertyQueryTools {
     private static final int DEFAULT_RESIDENCE_LIMIT = 4;
     private static final int MAX_RESIDENCE_LIMIT = 4;
     private static final int MAX_ROOMS_PER_RESIDENCE = 2;
+    /**
+     * 销售优先房源只允许越过通勤时间最多慢 3 分钟的相邻候选。
+     * 这样可以影响“条件相近”的排序，但不会掩盖明显更优的位置。
+     */
+    private static final int SALES_TRAVEL_TOLERANCE_MINUTES = 3;
 
     private final ResidenceMapper residenceMapper;
     private final ResidenceDetailMapper residenceDetailMapper;
     private final ResidenceNearbyPlaceMapper nearbyPlaceMapper;
     private final RoomInventoryMapper inventoryMapper;
     private final RoomPriceTierMapper priceTierMapper;
+    private final SalesRecommendationService salesRecommendationService;
 
     @Tool(name = "search_room_offers", description = """
             查询结构化公寓房型、入住时间、租期价格和库存。适用于找房、报价、
             可预订状态和指定城市/公寓/房型筛选。startDateFrom/startDateTo 表示
             可接受的起租日期窗口，格式 YYYY-MM-DD；stayWeeks 是实际租住周数。
             nearbyPlaceKeyword 可直接按学校或地标筛选，maxTravelMinutes 限制资料中
-            明确给出的最长通勤时间。结果按不同公寓分组，并返回匹配地点证据。
+            明确给出的最长通勤时间。preferredTravelModes 只在用户明确提出交通方式
+            偏好时使用；未指定时仅按通勤分钟排序，不预设步行、地铁或公交的高低。
+            结果按不同公寓分组，并返回匹配地点证据。
             residenceNames 仅用于用户明确指定一组公寓时的硬限制。本工具每次最多
             返回4个公寓、每个公寓最多2个房型；结果不足或为空时不要再次调用。
             """)
@@ -84,6 +94,9 @@ public class PropertyQueryTools {
             @ToolParam(description = "允许的最长通勤分钟；查询“附近”时通常传25，仅使用数据库中明确的通勤时间",
                     required = false)
             Integer maxTravelMinutes,
+            @ToolParam(description = "用户明确指定的交通方式偏好，按优先顺序用逗号分隔：WALK, BIKE, TUBE, BUS, TRAIN, DLR, PUBLIC_TRANSPORT；未明确指定时留空",
+                    required = false)
+            String preferredTravelModes,
             @ToolParam(description = "可接受的最早起租日，YYYY-MM-DD", required = false)
             String startDateFrom,
             @ToolParam(description = "可接受的最晚起租日，YYYY-MM-DD；只给一个日期时可留空",
@@ -108,6 +121,7 @@ public class PropertyQueryTools {
                         "residenceNames", residenceNames,
                         "nearbyPlaceKeyword", nearbyPlaceKeyword,
                         "maxTravelMinutes", maxTravelMinutes,
+                        "preferredTravelModes", preferredTravelModes,
                         "startDateFrom", startDateFrom,
                         "startDateTo", startDateTo,
                         "stayWeeks", stayWeeks,
@@ -116,7 +130,7 @@ public class PropertyQueryTools {
                         "includeSoldOut", includeSoldOut,
                         "limitResidences", limitResidences),
                 () -> searchRoomOffersInternal(city, residenceKeyword, residenceNames,
-                        nearbyPlaceKeyword, maxTravelMinutes, startDateFrom,
+                        nearbyPlaceKeyword, maxTravelMinutes, preferredTravelModes, startDateFrom,
                         startDateTo, stayWeeks, rootTypes, maxWeeklyPrice,
                         includeSoldOut, limitResidences),
                 result -> toolArguments(
@@ -132,6 +146,7 @@ public class PropertyQueryTools {
             String residenceNames,
             String nearbyPlaceKeyword,
             Integer maxTravelMinutes,
+            String preferredTravelModes,
             String startDateFrom,
             String startDateTo,
             Integer stayWeeks,
@@ -164,6 +179,7 @@ public class PropertyQueryTools {
         boolean withSoldOut = Boolean.TRUE.equals(includeSoldOut);
         Set<String> requestedRootTypes = splitRootTypes(rootTypes);
         List<String> requestedResidenceNames = splitResidenceNames(residenceNames);
+        List<String> requestedTravelModes = splitTravelModes(preferredTravelModes);
 
         List<Residence> cityResidences = residenceMapper.selectList(
                 new LambdaQueryWrapper<Residence>()
@@ -175,7 +191,8 @@ public class PropertyQueryTools {
                 .filter(item -> matchesResidenceCandidates(item, requestedResidenceNames))
                 .toList();
         Map<Long, List<ResidenceNearbyPlace>> nearbyByResidence =
-                loadMatchingNearby(cityResidences, nearbyPlaceKeyword, maxTravelMinutes);
+                loadMatchingNearby(cityResidences, nearbyPlaceKeyword, maxTravelMinutes,
+                        requestedTravelModes);
         List<Residence> residences = isBlank(nearbyPlaceKeyword)
                 ? cityResidences
                 : cityResidences.stream()
@@ -217,10 +234,13 @@ public class PropertyQueryTools {
                         room -> room.inventory().getResidenceId(),
                         LinkedHashMap::new,
                         Collectors.toList()));
-        List<ResidenceOfferGroup> groups = grouped.entrySet().stream()
+        List<ResidenceOfferGroup> rankedGroups = grouped.entrySet().stream()
                 .map(entry -> toGroup(residenceById.get(entry.getKey()), entry.getValue(),
                         nearbyByResidence.getOrDefault(entry.getKey(), List.of())))
-                .sorted(groupComparator(requestedResidenceNames))
+                .sorted(groupComparator(requestedResidenceNames, requestedTravelModes))
+                .toList();
+        List<ResidenceOfferGroup> groups = promoteSalesRecommendations(
+                        rankedGroups, requestedResidenceNames, requestedTravelModes).stream()
                 .limit(safeLimit)
                 .toList();
 
@@ -534,7 +554,7 @@ public class PropertyQueryTools {
 
     private Map<Long, List<ResidenceNearbyPlace>> loadMatchingNearby(
             List<Residence> residences, String nearbyPlaceKeyword,
-            Integer maxTravelMinutes) {
+            Integer maxTravelMinutes, List<String> preferredTravelModes) {
         if (residences.isEmpty() || isBlank(nearbyPlaceKeyword)) {
             return Map.of();
         }
@@ -546,7 +566,7 @@ public class PropertyQueryTools {
                                 .orderByAsc(ResidenceNearbyPlace::getSortOrder)).stream()
                 .filter(place -> matchesNearbyName(place.getPlaceName(), nearbyPlaceKeyword))
                 .filter(place -> withinTravelLimit(place, maxTravelMinutes))
-                .sorted(nearbyTravelComparator())
+                .sorted(nearbyTravelComparator(preferredTravelModes))
                 .collect(Collectors.groupingBy(
                         ResidenceNearbyPlace::getResidenceId,
                         LinkedHashMap::new,
@@ -691,7 +711,7 @@ public class PropertyQueryTools {
     }
 
     private static Comparator<ResidenceOfferGroup> groupComparator(
-            List<String> requestedResidenceNames) {
+            List<String> requestedResidenceNames, List<String> preferredTravelModes) {
         Map<String, Integer> requestedOrder = new HashMap<>();
         if (requestedResidenceNames != null) {
             for (int i = 0; i < requestedResidenceNames.size(); i++) {
@@ -702,8 +722,10 @@ public class PropertyQueryTools {
         return Comparator.comparingInt((ResidenceOfferGroup group) ->
                         group.rooms().stream().map(RoomMatch::inventoryStatus)
                                 .mapToInt(PropertyQueryTools::statusRank).min().orElse(99))
-                .thenComparingInt(PropertyQueryTools::nearbyModeRank)
-                .thenComparingInt(PropertyQueryTools::nearbyRank)
+                .thenComparingInt(group ->
+                        preferredModeRank(group, preferredTravelModes))
+                .thenComparingInt(group ->
+                        nearbyRank(group, preferredTravelModes))
                 .thenComparingInt(group -> requestedOrder.getOrDefault(
                         canonicalResidenceName(group.residenceName()), Integer.MAX_VALUE))
                 .thenComparing(group -> group.rooms().stream()
@@ -713,25 +735,124 @@ public class PropertyQueryTools {
                 .thenComparing(ResidenceOfferGroup::residenceName);
     }
 
-    private static int nearbyRank(ResidenceOfferGroup group) {
+    /**
+     * 在基础排序之后，对后台优先房源做有限提升。用户指定的公寓顺序始终优先，
+     * 销售规则不能跨越库存状态、显式交通偏好档位或明显更短的通勤候选。
+     */
+    private List<ResidenceOfferGroup> promoteSalesRecommendations(
+            List<ResidenceOfferGroup> rankedGroups,
+            List<String> requestedResidenceNames,
+            List<String> preferredTravelModes) {
+        if (rankedGroups.size() < 2 || !requestedResidenceNames.isEmpty()) {
+            return rankedGroups;
+        }
+        List<SalesRecommendationView> recommendations =
+                salesRecommendationService.enabledRecommendations();
+        if (recommendations == null || recommendations.isEmpty()) {
+            return rankedGroups;
+        }
+
+        List<ResidenceOfferGroup> promoted = new ArrayList<>(rankedGroups);
+        Map<Long, Integer> recommendationOrder = new HashMap<>();
+        for (int index = 0; index < recommendations.size(); index++) {
+            recommendationOrder.putIfAbsent(
+                    recommendations.get(index).residenceId(), index);
+        }
+        for (SalesRecommendationView recommendation : recommendations) {
+            int currentIndex = indexOfResidence(promoted, recommendation.residenceId());
+            if (currentIndex < 1) {
+                continue;
+            }
+            ResidenceOfferGroup candidate = promoted.get(currentIndex);
+            int targetIndex = currentIndex;
+            while (targetIndex > 0
+                    && canPromoteAheadOf(candidate, promoted.get(targetIndex - 1),
+                    preferredTravelModes, recommendationOrder)) {
+                targetIndex--;
+            }
+            if (targetIndex != currentIndex) {
+                promoted.remove(currentIndex);
+                promoted.add(targetIndex, candidate);
+            }
+        }
+        return List.copyOf(promoted);
+    }
+
+    private static int indexOfResidence(
+            List<ResidenceOfferGroup> groups, Long residenceId) {
+        for (int index = 0; index < groups.size(); index++) {
+            if (Objects.equals(groups.get(index).residenceId(), residenceId)) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    private static boolean canPromoteAheadOf(
+            ResidenceOfferGroup candidate,
+            ResidenceOfferGroup previous,
+            List<String> preferredTravelModes,
+            Map<Long, Integer> recommendationOrder) {
+        Integer candidateRecommendation = recommendationOrder.get(candidate.residenceId());
+        Integer previousRecommendation = recommendationOrder.get(previous.residenceId());
+        if (previousRecommendation != null
+                && previousRecommendation <= Objects.requireNonNull(candidateRecommendation)) {
+            return false;
+        }
+        if (bestStatusRank(candidate) != bestStatusRank(previous)
+                || preferredModeRank(candidate, preferredTravelModes)
+                != preferredModeRank(previous, preferredTravelModes)) {
+            return false;
+        }
+
+        int candidateMinutes = nearbyRank(candidate, preferredTravelModes);
+        int previousMinutes = nearbyRank(previous, preferredTravelModes);
+        if (candidateMinutes == Integer.MAX_VALUE
+                || previousMinutes == Integer.MAX_VALUE) {
+            return candidateMinutes == previousMinutes;
+        }
+        return candidateMinutes - previousMinutes <= SALES_TRAVEL_TOLERANCE_MINUTES;
+    }
+
+    private static int bestStatusRank(ResidenceOfferGroup group) {
+        return group.rooms().stream()
+                .map(RoomMatch::inventoryStatus)
+                .mapToInt(PropertyQueryTools::statusRank)
+                .min()
+                .orElse(99);
+    }
+
+    private static int nearbyRank(
+            ResidenceOfferGroup group, List<String> preferredTravelModes) {
+        int preferredRank = preferredModeRank(group, preferredTravelModes);
         return group.nearbyMatches().stream()
+                .filter(match -> preferredTravelModes.isEmpty()
+                        || travelModePreferenceRank(
+                        match.travelMode(), preferredTravelModes) == preferredRank)
                 .map(NearbyPlaceItem::maxMinutes)
                 .filter(Objects::nonNull)
                 .min(Comparator.naturalOrder())
                 .orElse(Integer.MAX_VALUE);
     }
 
-    private static int nearbyModeRank(ResidenceOfferGroup group) {
+    private static int preferredModeRank(
+            ResidenceOfferGroup group, List<String> preferredTravelModes) {
+        if (preferredTravelModes.isEmpty()) {
+            return 0;
+        }
         return group.nearbyMatches().stream()
                 .map(NearbyPlaceItem::travelMode)
-                .mapToInt(PropertyQueryTools::travelModeRank)
+                .mapToInt(mode ->
+                        travelModePreferenceRank(mode, preferredTravelModes))
                 .min()
-                .orElse(Integer.MAX_VALUE);
+                .orElse(preferredTravelModes.size());
     }
 
-    private static Comparator<ResidenceNearbyPlace> nearbyTravelComparator() {
+    private static Comparator<ResidenceNearbyPlace> nearbyTravelComparator(
+            List<String> preferredTravelModes) {
         return Comparator.comparingInt((ResidenceNearbyPlace place) ->
-                        travelModeRank(place.getTravelMode()))
+                        travelModePreferenceRank(
+                                place.getTravelMode(), preferredTravelModes))
                 .thenComparing(ResidenceNearbyPlace::getMaxMinutes,
                         Comparator.nullsLast(Comparator.naturalOrder()))
                 .thenComparing(ResidenceNearbyPlace::getPlaceName,
@@ -740,14 +861,14 @@ public class PropertyQueryTools {
                         Comparator.nullsLast(Comparator.naturalOrder()));
     }
 
-    private static int travelModeRank(String travelMode) {
-        return switch (Objects.toString(travelMode, "").toUpperCase(Locale.ROOT)) {
-            case "WALK" -> 0;
-            case "BIKE" -> 1;
-            case "TUBE" -> 2;
-            case "BUS" -> 3;
-            default -> 4;
-        };
+    private static int travelModePreferenceRank(
+            String travelMode, List<String> preferredTravelModes) {
+        if (preferredTravelModes.isEmpty()) {
+            return 0;
+        }
+        int index = preferredTravelModes.indexOf(
+                Objects.toString(travelMode, "").toUpperCase(Locale.ROOT));
+        return index >= 0 ? index : preferredTravelModes.size();
     }
 
     private static int statusRank(String status) {
@@ -802,6 +923,18 @@ public class PropertyQueryTools {
         }
         return List.of(value.split("[,，;；\\n]")).stream()
                 .map(String::trim)
+                .filter(item -> !item.isBlank())
+                .distinct()
+                .toList();
+    }
+
+    private static List<String> splitTravelModes(String value) {
+        if (isBlank(value)) {
+            return List.of();
+        }
+        return List.of(value.split("[,，;；]")).stream()
+                .map(String::trim)
+                .map(item -> item.toUpperCase(Locale.ROOT))
                 .filter(item -> !item.isBlank())
                 .distinct()
                 .toList();
@@ -900,7 +1033,7 @@ public class PropertyQueryTools {
                 detail == null ? null : detail.getPageTags(),
                 facilities,
                 nearbyPlaces.stream()
-                        .sorted(nearbyTravelComparator())
+                        .sorted(nearbyTravelComparator(List.of()))
                         .map(PropertyQueryTools::toNearbyMatch).toList(),
                 detail == null ? null : detail.getDetailUpdatedAt());
     }

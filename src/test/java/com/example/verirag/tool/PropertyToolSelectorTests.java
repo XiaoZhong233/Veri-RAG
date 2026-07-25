@@ -9,7 +9,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class PropertyToolSelectorTests {
 
     private final PropertyToolSelector selector = new PropertyToolSelector(
-            new PropertyQueryTools(null, null, null, null, null));
+            new PropertyQueryTools(null, null, null, null, null, null));
 
     @Test
     void exposesOnlyBulkSearchForRecommendation() {

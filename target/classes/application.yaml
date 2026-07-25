@@ -46,6 +46,21 @@ server:
   servlet:
     context-path: /veri-rag
 
+# 企业微信智能机器人长连接。本机主动连接企业微信，不要求公网回调地址。
+wecom:
+  bot:
+    enabled: ${WECOM_BOT_ENABLED:true}
+    bot-id: ${WECOM_BOT_ID:aibcdXe0iwU42vcx24mE5ezz2vkFCzItpor}
+    secret: ${WECOM_BOT_SECRET:f7ivac1WTUBKAsJbr2m1SrK1RqHbsj9YPxNv0ANtTMP}
+    display-name: ${WECOM_BOT_DISPLAY_NAME:londonist 助手}
+    websocket-url: ${WECOM_BOT_WEBSOCKET_URL:wss://openws.work.weixin.qq.com}
+    # 企业微信会话统一归属到这个本地用户；当前开发库默认 user1 的 ID 为 2。
+    user-id: ${WECOM_BOT_USER_ID:2}
+    heartbeat-interval: ${WECOM_BOT_HEARTBEAT_INTERVAL:30s}
+    stream-update-interval: ${WECOM_BOT_STREAM_UPDATE_INTERVAL:2500ms}
+    welcome-message: ${WECOM_BOT_WELCOME_MESSAGE:您好！我是智能房源助手，请问有什么可以帮您？}
+    empty-question-message: "${WECOM_BOT_EMPTY_QUESTION_MESSAGE:请将问题和 @机器人 放在同一条消息中，例如：\\n@londonist 助手 UCL附近有什么房源推荐吗？}"
+
 file:
   upload:
     path: file

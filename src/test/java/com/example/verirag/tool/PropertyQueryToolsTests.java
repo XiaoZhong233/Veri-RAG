@@ -3,6 +3,7 @@ package com.example.verirag.tool;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.example.verirag.dto.SalesRecommendationView;
 import com.example.verirag.entity.Residence;
 import com.example.verirag.entity.ResidenceDetail;
 import com.example.verirag.entity.ResidenceNearbyPlace;
@@ -13,6 +14,7 @@ import com.example.verirag.mapper.ResidenceMapper;
 import com.example.verirag.mapper.ResidenceNearbyPlaceMapper;
 import com.example.verirag.mapper.RoomInventoryMapper;
 import com.example.verirag.mapper.RoomPriceTierMapper;
+import com.example.verirag.service.SalesRecommendationService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -48,6 +50,8 @@ class PropertyQueryToolsTests {
     private RoomInventoryMapper inventoryMapper;
     @Mock
     private RoomPriceTierMapper priceTierMapper;
+    @Mock
+    private SalesRecommendationService salesRecommendationService;
 
     private PropertyQueryTools tools;
 
@@ -67,7 +71,7 @@ class PropertyQueryToolsTests {
     void setUp() {
         tools = new PropertyQueryTools(
                 residenceMapper, residenceDetailMapper, nearbyPlaceMapper,
-                inventoryMapper, priceTierMapper);
+                inventoryMapper, priceTierMapper, salesRecommendationService);
     }
 
     @Test
@@ -87,7 +91,7 @@ class PropertyQueryToolsTests {
 
         PropertyQueryTools.RoomOfferSearchResult result = tools.searchRoomOffers(
                 "London", null, "Chapter Islington, Chapter Highbury",
-                null, null,
+                null, null, null,
                 "2026-09-01", "2026-09-30",
                 26, null, null, true, 8);
 
@@ -119,7 +123,7 @@ class PropertyQueryToolsTests {
 
         PropertyQueryTools.RoomOfferSearchResult result = tools.searchRoomOffers(
                 "London", null, "Highbury Residence",
-                null, null,
+                null, null, null,
                 "2026-09-01", "2026-09-30",
                 26, null, null, false, 4);
 
@@ -149,7 +153,7 @@ class PropertyQueryToolsTests {
                 .thenReturn(List.of(tier(101L, 11L, 20, 39, "430")));
 
         PropertyQueryTools.RoomOfferSearchResult result = tools.searchRoomOffers(
-                "London", null, null, "UCL", 25,
+                "London", null, null, "UCL", 25, null,
                 "2026-09-01", "2026-09-30",
                 26, null, null, false, 4);
 
@@ -189,7 +193,7 @@ class PropertyQueryToolsTests {
                 .thenReturn(List.of(tier(202L, 68L, 20, 39, "560")));
 
         PropertyQueryTools.RoomOfferSearchResult result = tools.searchRoomOffers(
-                "London", null, null, "Imperial College London", 25,
+                "London", null, null, "Imperial College London", 25, null,
                 "2026-09-01", "2026-09-30",
                 26, null, null, false, 4);
 
@@ -198,6 +202,96 @@ class PropertyQueryToolsTests {
                     assertThat(match.travelMode()).isEqualTo("BIKE");
                     assertThat(match.maxMinutes()).isEqualTo(10);
                 }));
+    }
+
+    @Test
+    void ranksByMinutesByDefaultAndOnlyPrefersModeWhenUserRequestsIt() {
+        Residence fastTube = residence(1L, "fast-tube", "Fast Tube");
+        Residence slowerWalk = residence(2L, "slower-walk", "Slower Walk");
+        ResidenceNearbyPlace tube = nearby(
+                1L, 1L, "University College London (UCL)", 10);
+        tube.setTravelMode("TUBE");
+        ResidenceNearbyPlace walk = nearby(
+                2L, 2L, "University College London (UCL)", 20);
+        walk.setTravelMode("WALK");
+        RoomInventory tubeRoom = inventory(
+                11L, 1L, "AVAILABLE", "Classic Ensuite");
+        RoomInventory walkRoom = inventory(
+                22L, 2L, "AVAILABLE", "Classic Ensuite");
+
+        when(residenceMapper.selectList(any(Wrapper.class)))
+                .thenReturn(List.of(fastTube, slowerWalk));
+        when(nearbyPlaceMapper.selectList(any(Wrapper.class)))
+                .thenReturn(List.of(tube, walk));
+        when(inventoryMapper.selectList(any(Wrapper.class)))
+                .thenReturn(List.of(tubeRoom, walkRoom));
+        when(priceTierMapper.selectList(any(Wrapper.class)))
+                .thenReturn(List.of(
+                        tier(101L, 11L, 20, 39, "430"),
+                        tier(202L, 22L, 20, 39, "430")));
+
+        PropertyQueryTools.RoomOfferSearchResult defaultResult = tools.searchRoomOffers(
+                "London", null, null, "UCL", 25, null,
+                null, null, null, null, null, false, 4);
+        PropertyQueryTools.RoomOfferSearchResult walkPreferredResult = tools.searchRoomOffers(
+                "London", null, null, "UCL", 25, "WALK",
+                null, null, null, null, null, false, 4);
+
+        assertThat(defaultResult.residences())
+                .extracting(PropertyQueryTools.ResidenceOfferGroup::residenceName)
+                .containsExactly("Fast Tube", "Slower Walk");
+        assertThat(walkPreferredResult.residences())
+                .extracting(PropertyQueryTools.ResidenceOfferGroup::residenceName)
+                .containsExactly("Slower Walk", "Fast Tube");
+    }
+
+    @Test
+    void promotesSalesResidenceOnlyAcrossCandidatesWithSimilarTravelTime() {
+        Residence finsbury = residence(1L, "finsbury", "Finsbury House");
+        Residence islington = residence(2L, "islington", "Islington Residence");
+        Residence highbury = residence(3L, "highbury", "Highbury Residence");
+        Residence drapery = residence(4L, "drapery", "Drapery Place Residence");
+        Residence lyra = residence(5L, "lyra", "The Lyra Residence");
+        List<Residence> residences =
+                List.of(finsbury, islington, highbury, drapery, lyra);
+        List<ResidenceNearbyPlace> nearbyPlaces = List.of(
+                nearby(1L, 1L, "UCL", 15),
+                nearby(2L, 2L, "UCL", 18),
+                nearby(3L, 3L, "UCL", 18),
+                nearby(4L, 4L, "UCL", 20),
+                nearby(5L, 5L, "UCL", 23));
+        nearbyPlaces.get(4).setTravelMode("WALK");
+        List<RoomInventory> rooms = List.of(
+                inventory(11L, 1L, "AVAILABLE", "Classic Ensuite"),
+                inventory(22L, 2L, "AVAILABLE", "Classic Ensuite"),
+                inventory(33L, 3L, "AVAILABLE", "Classic Ensuite"),
+                inventory(44L, 4L, "AVAILABLE", "Premium Ensuite"),
+                inventory(55L, 5L, "AVAILABLE", "Bronze Studio"));
+
+        when(residenceMapper.selectList(any(Wrapper.class))).thenReturn(residences);
+        when(nearbyPlaceMapper.selectList(any(Wrapper.class)))
+                .thenReturn(nearbyPlaces);
+        when(inventoryMapper.selectList(any(Wrapper.class))).thenReturn(rooms);
+        when(priceTierMapper.selectList(any(Wrapper.class)))
+                .thenReturn(List.of(
+                        tier(101L, 11L, 20, 39, "399"),
+                        tier(202L, 22L, 20, 39, "410"),
+                        tier(303L, 33L, 20, 39, "415"),
+                        tier(404L, 44L, 20, 39, "419"),
+                        tier(505L, 55L, 20, 39, "399")));
+        when(salesRecommendationService.enabledRecommendations()).thenReturn(List.of(
+                new SalesRecommendationView(
+                        1L, 4L, "drapery", "Drapery Place Residence",
+                        "London", 100, 1, null, null, null)));
+
+        PropertyQueryTools.RoomOfferSearchResult result = tools.searchRoomOffers(
+                "London", null, null, "UCL", 25, null,
+                null, null, null, null, null, false, 4);
+
+        assertThat(result.residences())
+                .extracting(PropertyQueryTools.ResidenceOfferGroup::residenceName)
+                .startsWith("Finsbury House", "Drapery Place Residence")
+                .doesNotContain("The Lyra Residence");
     }
 
     @Test
@@ -238,7 +332,8 @@ class PropertyQueryToolsTests {
                 .findFirst().orElseThrow();
         assertThat(search.getToolDefinition().inputSchema())
                 .contains("startDateFrom", "stayWeeks", "residenceNames",
-                        "nearbyPlaceKeyword", "maxTravelMinutes")
+                        "nearbyPlaceKeyword", "maxTravelMinutes",
+                        "preferredTravelModes")
                 .doesNotContain("minResidences");
     }
 

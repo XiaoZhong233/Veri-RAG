@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="api-base" content="/veri-rag">
     <title>Londonist · 智能房源中心</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@4.6.0/fonts/remixicon.css">
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -16,16 +17,16 @@
 
     <section id="console-view" class="console-view hidden">
         <aside class="sidebar"><a class="logo" href="#chat"><span>L</span> Londonist</a><nav>
-            <button class="nav-item active" data-view="chat">✦ 智能问答</button>
-            <button class="nav-item" data-view="knowledge">▤ 知识库</button>
-            <button class="nav-item" data-view="residences">⌖ 公寓地址</button>
-            <button class="nav-item" data-view="offers">▦ 房型库存</button>
-            <button class="nav-item admin-only" data-view="recommendations">★ 推荐管理</button>
-            <button class="nav-item admin-only" data-view="users">♙ 用户管理</button>
-            <button class="nav-item" data-view="profile">◉ 个人设置</button>
-        </nav><button id="logout-button" class="logout-button" type="button">退出登录</button></aside>
+            <button class="nav-item active" data-view="chat"><i class="ri-sparkling-2-line" aria-hidden="true"></i><span>智能问答</span></button>
+            <button class="nav-item" data-view="knowledge"><i class="ri-book-open-line" aria-hidden="true"></i><span>知识库</span></button>
+            <button class="nav-item" data-view="residences"><i class="ri-building-2-line" aria-hidden="true"></i><span>公寓地址</span></button>
+            <button class="nav-item" data-view="offers"><i class="ri-home-6-line" aria-hidden="true"></i><span>房型库存</span></button>
+            <button class="nav-item admin-only" data-view="recommendations"><i class="ri-star-line" aria-hidden="true"></i><span>推荐管理</span></button>
+            <button class="nav-item admin-only" data-view="users"><i class="ri-team-line" aria-hidden="true"></i><span>用户管理</span></button>
+            <button class="nav-item" data-view="profile"><i class="ri-settings-3-line" aria-hidden="true"></i><span>个人设置</span></button>
+        </nav><button id="logout-button" class="logout-button" type="button"><i class="ri-logout-box-r-line" aria-hidden="true"></i><span>退出登录</span></button></aside>
         <div class="content">
-            <header class="topbar"><div><p id="view-eyebrow" class="eyebrow">PROPERTY INTELLIGENCE HUB</p><h1 id="view-title">智能问答</h1></div><button id="avatar-upload-button" class="current-user" type="button" title="点击上传头像"><span id="current-avatar" class="avatar avatar-large"></span><span id="current-user-name"></span></button><input id="avatar-input" type="file" accept="image/jpeg,image/png,image/gif" hidden></header>
+            <header class="topbar"><div><p id="view-eyebrow" class="eyebrow">PROPERTY INTELLIGENCE HUB</p><h1 id="view-title">智能问答</h1></div><div class="topbar-actions"><label class="locale-control"><span class="sr-only">语言</span><i class="ri-global-line" aria-hidden="true"></i><select id="locale-switcher" aria-label="语言"><option value="zh-CN">中文</option><option value="en">English</option></select></label><button id="avatar-upload-button" class="current-user" type="button" title="点击上传头像"><span id="current-avatar" class="avatar avatar-large"></span><span id="current-user-name"></span><i class="ri-arrow-down-s-line" aria-hidden="true"></i></button></div><input id="avatar-input" type="file" accept="image/jpeg,image/png,image/gif" hidden></header>
 
             <section id="chat-view" class="view-panel chat-layout">
                 <aside class="session-panel"><div class="session-heading"><strong>会话历史</strong><button id="new-chat-button" class="icon-button" title="新建会话" type="button">+</button></div><div id="session-list" class="session-list"></div></aside>
@@ -45,8 +46,8 @@
                     <article><span>其他城市</span><strong id="residence-other">0</strong></article>
                 </div>
                 <section class="panel">
-                    <div class="section-heading"><div><h2>公寓地址库</h2><p id="residence-updated" class="muted">维护全部城市的地址、设施、交通和附近学校。</p></div><div class="section-actions admin-only"><button id="new-residence-button" class="secondary-button" type="button">+ 新增公寓</button><button id="import-residence-button" class="secondary-button" type="button">↻ 导入地址 HTML</button><button id="import-residence-detail-button" class="primary-button" type="button">⇧ 导入详情 MD</button></div></div>
-                    <div class="toolbar residence-toolbar"><label class="search-box"><span>⌕</span><input id="residence-name" type="search" placeholder="按公寓名称模糊搜索"></label><select id="residence-city"><option value="">全部城市</option></select><select id="residence-region"><option value="">全部区域</option><option value="east">东部</option><option value="west">西部</option><option value="north">北部</option><option value="south">南部</option></select><button id="residence-search-button" class="secondary-button" type="button">搜索</button></div>
+                    <div class="section-heading"><div><h2>公寓地址库</h2><p id="residence-updated" class="muted">维护全部城市的地址、设施、交通和附近学校。</p></div><div class="section-actions admin-only"><button id="new-residence-button" class="secondary-button" type="button"><i class="ri-add-line" aria-hidden="true"></i><span>新增公寓</span></button><button id="import-residence-button" class="secondary-button" type="button"><i class="ri-upload-2-line" aria-hidden="true"></i><span>导入地址 HTML</span></button><button id="import-residence-detail-button" class="primary-button" type="button"><i class="ri-file-upload-line" aria-hidden="true"></i><span>导入详情 MD</span></button></div></div>
+                    <div class="toolbar residence-toolbar"><label class="search-box"><i class="ri-search-line" aria-hidden="true"></i><input id="residence-query" type="search" placeholder="按公寓名称模糊搜索"></label><select id="residence-city"><option value="">全部城市</option></select><select id="residence-region"><option value="">全部区域</option><option value="east">东部</option><option value="west">西部</option><option value="north">北部</option><option value="south">南部</option></select><button id="residence-search-button" class="secondary-button" type="button">搜索</button></div>
                     <div class="table-wrap residence-table-wrap"><table><thead><tr><th>公寓</th><th>城市</th><th>区域 / Zone</th><th>完整地址</th><th>最近车站</th><th>地图</th><th>操作</th></tr></thead><tbody id="residence-table-body"></tbody></table><p id="residence-empty" class="empty-state hidden">还没有公寓地址，请新增或导入数据。</p></div>
                     <footer class="pagination"><span id="residence-pagination-info">共 0 个公寓</span><div><button id="residence-prev" class="page-button" type="button">上一页</button><span id="residence-page-number">1</span><button id="residence-next" class="page-button" type="button">下一页</button></div></footer>
                 </section>
@@ -122,6 +123,6 @@
 <dialog id="offer-import-dialog" class="user-dialog"><form id="offer-import-form"><div class="dialog-heading"><div><p class="eyebrow">BATCH IMPORT</p><h2>导入房型库存与报价</h2></div><button class="icon-button" data-close-dialog="offer-import-dialog" type="button">×</button></div><label>结构化模板 XLSX<input id="offer-import-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required></label><p class="tip">必须包含“房型库存导入”和“租期价格导入”两个工作表。公寓编码优先关联 MySQL 地址库；同一记录仅由更晚的业务时间覆盖。</p><div id="offer-import-result" class="import-result hidden"></div><p id="offer-import-error" class="form-error"></p><div class="dialog-actions"><button class="secondary-button" data-close-dialog="offer-import-dialog" type="button">取消</button><button id="offer-import-submit" class="primary-button" type="submit">开始导入</button></div></form></dialog>
 <dialog id="recommendation-dialog" class="user-dialog"><form id="recommendation-form"><div class="dialog-heading"><div><p class="eyebrow">SALES PREFERENCE</p><h2 id="recommendation-dialog-title">添加推荐公寓</h2></div><button class="icon-button" data-close-dialog="recommendation-dialog" type="button">×</button></div><input id="recommendation-id" type="hidden"><div class="form-grid"><label class="full-width">公寓<select id="recommendation-residence" required></select></label><label>同等条件优先级<input id="recommendation-priority" type="number" min="1" max="999" value="100" required></label><label>状态<select id="recommendation-enabled"><option value="1">启用</option><option value="0">停用</option></select></label><label class="full-width">内部备注 <span class="optional">（不会注入模型）</span><textarea id="recommendation-note" rows="3" maxlength="512" placeholder="例如：本月主推"></textarea></label></div><p class="tip">只有公寓已被位置资料选中且房型满足用户硬条件时，系统才会应用这个优先级。</p><p id="recommendation-form-error" class="form-error"></p><div class="dialog-actions"><button class="secondary-button" data-close-dialog="recommendation-dialog" type="button">取消</button><button class="primary-button" type="submit">保存推荐配置</button></div></form></dialog>
 <dialog id="reference-dialog" class="user-dialog reference-dialog"><div class="dialog-heading"><div><p class="eyebrow">REFERENCE</p><h2 id="reference-title">引用详情</h2></div><button class="icon-button" data-close-dialog="reference-dialog" type="button">×</button></div><p id="reference-file-name" class="muted"></p><section><h3>命中 Chunk</h3><p id="reference-snippet" class="reference-snippet"></p></section></dialog>
-<div id="toast" class="toast" role="status"></div><script src="app.js"></script>
+<div id="toast" class="toast" role="status"></div><script src="i18n.js"></script><script src="app.js"></script>
 </body>
 </html>

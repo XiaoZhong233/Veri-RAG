@@ -14,6 +14,7 @@
 - RAG 知识库：支持文档上传、向量化、重新向量化、引用展示和分类检索。
 - 流式交互：SSE 返回意图识别、Tool/RAG 处理进度和最终回答。
 - 会话记忆：聊天记录保存在 MySQL，较早内容可压缩为摘要。
+- 企业微信机器人：通过 WebSocket 长连接接收单聊/群聊文本，并流式返回 RAG 或房源 Tool 回答。
 - 中英文界面：默认中文，可切换英文；语言偏好保存在浏览器 `localStorage`。
 - 可观测性：提供 Actuator、Prometheus、OpenTelemetry Trace 和 Grafana 本地环境。
 
@@ -33,6 +34,7 @@ flowchart LR
     RAG --> LLM
     LLM --> SSE["SSE / 普通回答"]
     SSE --> UI
+    WECOM["企业微信智能机器人"] <-->|"WebSocket 长连接"| API
 ```
 
 ### AI 查询路由
@@ -64,6 +66,7 @@ flowchart LR
 | `t_sales_recommendation` | 同等条件下的销售推荐优先级 |
 | `t_category` / `t_document` | 知识库分类和文档元数据 |
 | `t_chat_session` / `t_chat_message` | 会话、消息、引用和记忆摘要 |
+| `t_wecom_conversation` | 企业微信单聊/群聊与本地聊天会话映射 |
 | `t_user` | 后台用户、角色和登录状态 |
 
 库存和价格分开建模：一条 `t_room_inventory` 代表一个可售房型及其日期、库存范围；它可以关联多条 `t_room_price_tier`，例如 12–15 周一个价格、16–25 周一个价格、26 周以上另一个价格。
@@ -218,6 +221,13 @@ http://localhost:8081/veri-rag/
 | `RAG_ANSWER_CACHE_ENABLED` | `false` | 是否启用相似问答缓存 |
 | `RAG_MEMORY_ENABLED` | `true` | 是否启用会话摘要 |
 | `RAG_MEMORY_RECENT_MESSAGES` | `8` | 保留的最近原始消息数 |
+| `WECOM_BOT_ENABLED` | `true` | 是否启动企业微信机器人长连接 |
+| `WECOM_BOT_ID` | 配置文件开发值 | 企业微信智能机器人 BotID |
+| `WECOM_BOT_SECRET` | 配置文件开发值 | 长连接专用 Secret；生产必须使用环境变量 |
+| `WECOM_BOT_DISPLAY_NAME` | `londonist 助手` | 群聊中用于精确移除 `@机器人` 的展示名称 |
+| `WECOM_BOT_USER_ID` | `2` | 企业微信会话归属的本地用户 ID |
+| `WECOM_BOT_HEARTBEAT_INTERVAL` | `30s` | 长连接心跳间隔 |
+| `WECOM_BOT_STREAM_UPDATE_INTERVAL` | `2500ms` | 企业微信流式消息刷新间隔 |
 
 Embedding 服务单次最多接受 20 条文本，因此 `RAG_EMBEDDING_BATCH_SIZE` 不应配置为大于 20。房源、报价和库存查询已经由数据库 Tool 处理，不需要通过提高 RAG `top-k` 解决召回问题。
 

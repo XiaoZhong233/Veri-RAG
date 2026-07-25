@@ -1,3 +1,16 @@
+CREATE TABLE IF NOT EXISTS t_wecom_conversation (
+    id                BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    bot_id            VARCHAR(128) NOT NULL COMMENT '企业微信智能机器人 BotID',
+    conversation_key  VARCHAR(512) NOT NULL COMMENT 'single:userid 或 group:chatid',
+    user_id           BIGINT       NOT NULL COMMENT '本地 RAG 用户ID',
+    session_id        BIGINT       NOT NULL COMMENT '本地聊天会话ID',
+    create_time       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_wecom_bot_conversation (bot_id, conversation_key),
+    KEY idx_wecom_session (session_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='企业微信与本地聊天会话映射';
+
 CREATE TABLE IF NOT EXISTS t_residence (
     id               BIGINT         NOT NULL AUTO_INCREMENT COMMENT '主键',
     source_id        VARCHAR(128)   NOT NULL COMMENT 'HTML 中的公寓唯一标识',

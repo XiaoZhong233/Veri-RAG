@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.verirag.mapper.WeComConversationMapper">
+
+    <select id="selectSessionId" resultType="java.lang.Long">
+        SELECT session_id
+        FROM t_wecom_conversation
+        WHERE bot_id = #{botId}
+          AND conversation_key = #{conversationKey}
+    </select>
+
+    <insert id="upsertSessionId">
+        INSERT INTO t_wecom_conversation
+            (bot_id, conversation_key, user_id, session_id)
+        VALUES
+            (#{botId}, #{conversationKey}, #{userId}, #{sessionId})
+        ON DUPLICATE KEY UPDATE
+            user_id = VALUES(user_id),
+            session_id = VALUES(session_id),
+            update_time = CURRENT_TIMESTAMP
+    </insert>
+</mapper>

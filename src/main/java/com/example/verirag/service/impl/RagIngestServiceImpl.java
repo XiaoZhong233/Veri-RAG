@@ -1,6 +1,7 @@
 package com.example.verirag.service.impl;
 
 import com.example.verirag.service.RagIngestService;
+import com.example.verirag.service.PdfOcrService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
@@ -34,6 +35,7 @@ public class RagIngestServiceImpl implements RagIngestService {
 
     private final RedisVectorStore redisVectorStore;
     private final TokenTextSplitter tokenTextSplitter;
+    private final PdfOcrService pdfOcrService;
     @Value("${spring.ai.vectorstore.redis.index-name:spring-ai-index}")
     private String redisVectorIndexName;
     @Value("${spring.ai.vectorstore.redis.prefix:embedding:}")
@@ -307,12 +309,41 @@ public class RagIngestServiceImpl implements RagIngestService {
                             resource,
                             MarkdownDocumentReaderConfig.defaultConfig()
                     ).get();
-            case "pdf", "doc", "docx", "txt", "text" ->
+            case "pdf" -> loadPdfDocuments(absolutePath);
+            case "doc", "docx", "txt", "text" ->
                     new TikaDocumentReader(resource).get();
             default -> throw new IllegalArgumentException(
                     "Unsupported document type: " + normalizedExt
             );
         };
+    }
+
+    /**
+     * 优先使用 PDF 自带文本层；文字过少时才回退到 Tesseract OCR，避免普通 PDF 的额外耗时。
+     */
+    private List<Document> loadPdfDocuments(Path absolutePath) {
+        int pageCount = pdfOcrService.pageCount(absolutePath);
+        String extractedText = pdfOcrService.extractTextLayer(absolutePath);
+        long extractedCharacters = PdfOcrService.visibleCharacterCount(extractedText);
+        if (!pdfOcrService.needsOcr(pageCount, extractedCharacters)) {
+            log.info("event=document.pdf.text-layer-used file={} pages={} characters={}",
+                    absolutePath.getFileName(), pageCount, extractedCharacters);
+            Map<String, Object> metadata = new HashMap<>();
+            metadata.put("source", absolutePath.toString());
+            metadata.put("ocrApplied", false);
+            metadata.put("pageCount", pageCount);
+            return List.of(new Document(extractedText, metadata));
+        }
+
+        log.info("event=document.ocr.required file={} pages={} extractedCharacters={}",
+                absolutePath.getFileName(), pageCount, extractedCharacters);
+        String ocrText = pdfOcrService.extractText(absolutePath, pageCount);
+        log.info("scan text: {}", ocrText);
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("source", absolutePath.toString());
+        metadata.put("ocrApplied", true);
+        metadata.put("pageCount", pageCount);
+        return List.of(new Document(ocrText, metadata));
     }
 
     //转义符号处理

@@ -7,42 +7,48 @@ spring:
   ai:
     openai:
       api-key: ${DASHSCOPE_API_KEY}
-      base-url: https://llm-1yauwtsqkmv66e2w.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+      base-url: ${DASHSCOPE_BASE_URL:https://llm-1yauwtsqkmv66e2w.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}
       chat:
-#        model: qwen3.6-flash
-#        model: qwen-doc-turbo
-        model: qwen-flash
+        model: ${LLM_CHAT_MODEL:qwen-flash}
         # 限制单次输出，避免冗长回答拉高 LLM 完整生成 P90；可通过 LLM_MAX_TOKENS 覆盖。
         max-tokens: ${LLM_MAX_TOKENS:1000}
         # 企业知识库问答以稳定、简洁为主，降低随机性和重复输出概率。
-        temperature: 0.2
+        temperature: ${LLM_TEMPERATURE:0.2}
       embedding:
-        model: qwen3.7-text-embedding
-        dimensions: 1024
+        model: ${EMBEDDING_MODEL:qwen3.7-text-embedding}
+        dimensions: ${EMBEDDING_DIMENSIONS:1024}
     vectorstore:
       redis:
-        initialize-schema: true
-        index-name: veri-rag-index
-        prefix: "veri-rag:embedding:"
+        initialize-schema: ${SPRING_AI_VECTORSTORE_REDIS_INITIALIZE_SCHEMA:true}
+        index-name: ${SPRING_AI_VECTORSTORE_REDIS_INDEX_NAME:veri-rag-index}
+        prefix: ${SPRING_AI_VECTORSTORE_REDIS_PREFIX:veri-rag:embedding:}
   data:
     redis:
-      url: redis://localhost:6380
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      port: ${SPRING_DATA_REDIS_PORT:6380}
+#      password: ${SPRING_DATA_REDIS_PASSWORD:veri_rag_dev}
       client-type: jedis
   datasource:
-    url: jdbc:mysql://localhost:3306/veri_rag?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
-    username: root
-    password: 123456
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/rag?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false}
+    username: ${SPRING_DATASOURCE_USERNAME:root}
+    password: ${SPRING_DATASOURCE_PASSWORD:123456}
     driver-class-name: com.mysql.cj.jdbc.Driver
+  servlet:
+    multipart:
+      # 单个知识库文件上限；扫描 PDF 常包含高分辨率页面，默认 1MB 不足以使用。
+      max-file-size: ${SPRING_SERVLET_MULTIPART_MAX_FILE_SIZE:50MB}
+      # 包含 multipart 边界、分类和标题字段，略大于单文件上限即可。
+      max-request-size: ${SPRING_SERVLET_MULTIPART_MAX_REQUEST_SIZE:55MB}
 
 
 server:
-  port: 8081
+  port: ${SERVER_PORT:8081}
   servlet:
     context-path: /veri-rag
 
 file:
   upload:
-    path: file
+    path: ${FILE_UPLOAD_PATH:file}
 
 logging:
   file:
@@ -91,8 +97,8 @@ mybatis-plus:
       id-type: auto
 
 jwt:
-  secret: VYdac/JBAW+noUscEgYffr/TlUgPwCHZkFkULziZ8kTZOb6sF6ylZYgXj4XisLr4
-  expire-hours: 24
+  secret: ${JWT_SECRET:VYdac/JBAW+noUscEgYffr/TlUgPwCHZkFkULziZ8kTZOb6sF6ylZYgXj4XisLr4}
+  expire-hours: ${JWT_EXPIRE_HOURS:24}
 
 rag:
   chat:
@@ -106,6 +112,15 @@ rag:
     chunk-size: ${RAG_CHUNK_SIZE:500}
     # 单个源文件最多生成多少个 chunk，防止异常超长文件带来过高 embedding 成本。
     max-num-chunks: ${RAG_MAX_NUM_CHUNKS:10000}
+  ocr:
+    # PDF 文本层平均每页少于 min-chars-per-page 时，使用 Tesseract OCR。
+    enabled: ${RAG_OCR_ENABLED:true}
+    language: ${RAG_OCR_LANGUAGE:chi_sim+eng}
+    min-chars-per-page: ${RAG_OCR_MIN_CHARS_PER_PAGE:40}
+    # 防止超大扫描件长时间占用上传请求线程；可按部署资源调整。
+    max-pages: ${RAG_OCR_MAX_PAGES:50}
+    dpi: ${RAG_OCR_DPI:300}
+    timeout-seconds: ${RAG_OCR_TIMEOUT_SECONDS:120}
   retrieval:
     # 每次向量检索最多返回的 Chunk 数；制度问答默认 2 个即可，减少 Prompt 长度与模型延迟。
     top-k: ${RAG_RETRIEVAL_TOP_K:3}

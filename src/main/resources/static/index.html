@@ -30,7 +30,7 @@
             </section>
 
             <section id="knowledge-view" class="view-panel hidden"><div class="knowledge-grid">
-                <div class="panel"><div class="section-heading"><div><h2>知识分类</h2><p class="muted">用于整理文档和限定检索范围。</p></div><button id="new-category-button" class="primary-button admin-only" type="button">+ 新建分类</button></div><div id="category-list" class="category-list"></div></div>
+                <div class="panel category-panel"><div class="section-heading"><div><p class="eyebrow">ORGANIZE</p><h2>知识分类</h2><p class="muted">选择分类可快速查看对应文档，并限定检索范围。</p></div><button id="new-category-button" class="primary-button admin-only" type="button">+ 新建分类</button></div><div id="category-list" class="category-list"></div></div>
                 <div class="panel"><div class="section-heading"><div><h2>文档管理</h2><p class="muted">上传后会自动解析并写入向量库。</p></div><button id="upload-document-button" class="primary-button admin-only" type="button">+ 上传文档</button></div><div class="toolbar"><label class="search-box"><span>⌕</span><input id="document-keyword" type="search" placeholder="搜索文档"></label><select id="document-category"><option value="">全部分类</option></select><button id="document-search-button" class="secondary-button" type="button">搜索</button><button id="batch-reingest-button" class="secondary-button admin-only" type="button" disabled>批量重新向量化（0）</button></div><div id="document-list" class="document-list"></div><footer class="pagination"><span id="document-pagination-info">共 0 个文档</span><div><button id="document-prev" class="page-button" type="button">上一页</button><span id="document-page-number">1</span><button id="document-next" class="page-button" type="button">下一页</button></div></footer></div>
             </div></section>
 

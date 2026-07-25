@@ -100,18 +100,35 @@ function showView(view) {
 }
 
 async function loadCategories() {
-    try { state.categories = await request('/api/categories'); renderCategories(); renderCategoryInputs(); }
+    try { state.categories = await request('/api/categories'); renderCategoryInputs(); renderCategories(); }
     catch (error) { showToast(error.message); }
 }
+function categoryIcon(icon) {
+    const value = String(icon || '').trim();
+    const legacyIcons = {
+        Document: '📄',
+        Notebook: '📋',
+        Goods: '📦',
+        QuestionFilled: '❓'
+    };
+    return legacyIcons[value] || value || '▤';
+}
 function renderCategoryInputs() {
-    const optionHtml = state.categories.map(c => `<option value="${c.id}">${escapeHtml(c.icon || '▤')} ${escapeHtml(c.name)}</option>`).join('');
+    const selectedDocumentCategory = $('#document-category').value;
+    const selectedUploadCategory = $('#upload-category').value;
+    const optionHtml = state.categories.map(c => `<option value="${c.id}">${escapeHtml(categoryIcon(c.icon))} ${escapeHtml(c.name)}</option>`).join('');
     $('#document-category').innerHTML = `<option value="">全部分类</option>${optionHtml}`;
     $('#upload-category').innerHTML = `<option value="">请选择分类</option>${optionHtml}`;
-    $('#chat-category-filter').innerHTML = `<button class="filter-chip active" data-category="" type="button">全部知识库</button>${state.categories.map(c => `<button class="filter-chip" data-category="${c.id}" type="button">${escapeHtml(c.icon || '▤')} ${escapeHtml(c.name)}</button>`).join('')}`;
+    $('#document-category').value = state.categories.some(c => String(c.id) === selectedDocumentCategory) ? selectedDocumentCategory : '';
+    $('#upload-category').value = state.categories.some(c => String(c.id) === selectedUploadCategory) ? selectedUploadCategory : '';
+    $('#chat-category-filter').innerHTML = `<button class="filter-chip active" data-category="" type="button">全部知识库</button>${state.categories.map(c => `<button class="filter-chip" data-category="${c.id}" type="button">${escapeHtml(categoryIcon(c.icon))} ${escapeHtml(c.name)}</button>`).join('')}`;
 }
 function renderCategories() {
     const list = $('#category-list');
-    list.innerHTML = state.categories.length ? state.categories.map(c => `<article class="category-card"><span class="category-icon">${escapeHtml(c.icon || '▤')}</span><div><strong>${escapeHtml(c.name)}</strong><p>${escapeHtml(c.description || '暂无描述')}</p></div>${isAdmin() ? `<button class="text-button danger delete-category" data-id="${c.id}" type="button">删除</button>` : ''}</article>`).join('') : '<p class="empty-state">还没有知识分类。</p>';
+    const selectedId = $('#document-category')?.value || '';
+    list.innerHTML = state.categories.length
+        ? `<div class="category-list-meta"><span>共 ${state.categories.length} 个分类</span><span>点击分类筛选文档</span></div>${state.categories.map(c => `<article class="category-card ${String(c.id) === selectedId ? 'selected' : ''}"><button class="category-select" data-category-id="${c.id}" type="button" title="查看“${escapeHtml(c.name)}”中的文档"><span class="category-icon" aria-hidden="true">${escapeHtml(categoryIcon(c.icon))}</span><span class="category-copy"><strong>${escapeHtml(c.name)}</strong><span>${escapeHtml(c.description || '暂未添加分类说明')}</span></span><span class="category-arrow" aria-hidden="true">→</span></button>${isAdmin() ? `<button class="category-delete delete-category" data-id="${c.id}" type="button" aria-label="删除分类 ${escapeHtml(c.name)}" title="删除分类">×</button>` : ''}</article>`).join('')}`
+        : '<div class="category-empty"><span>▤</span><strong>还没有知识分类</strong><p>新建一个分类后，上传文档时即可归档和筛选。</p></div>';
 }
 async function saveCategory(event) {
     event.preventDefault(); $('#category-error').textContent = '';
@@ -321,7 +338,7 @@ $('#new-chat-button').addEventListener('click', newChat); $('#chat-form').addEve
 $('#message-list').addEventListener('click', event => { const link = event.target.closest('.reference-link'); if (link) openReferenceDetail(JSON.parse(link.dataset.reference)); });
 $('#session-list').addEventListener('click', async event => { const deleteButton = event.target.closest('[data-delete-session]'); if (deleteButton) { event.stopPropagation(); const id = deleteButton.dataset.deleteSession; if (!confirm('确定删除这个会话吗？')) return; try { await request(`/api/chat/sessions/${id}`, {method: 'DELETE'}); if (state.activeSessionId === Number(id)) newChat(); showToast('会话已删除'); loadSessions(); } catch (error) { showToast(error.message); } return; } const item = event.target.closest('.session-item'); if (item) openSession(item.dataset.id); });
 $('#chat-category-filter').addEventListener('click', event => { const chip = event.target.closest('.filter-chip'); if (!chip) return; document.querySelectorAll('.filter-chip').forEach(button => button.classList.remove('active')); chip.classList.add('active'); });
-$('#new-category-button').addEventListener('click', () => $('#category-dialog').showModal()); $('#category-form').addEventListener('submit', saveCategory); $('#category-list').addEventListener('click', async event => { const button = event.target.closest('.delete-category'); if (!button || !confirm('确定删除该分类吗？')) return; try { await request(`/api/categories/${button.dataset.id}`, {method: 'DELETE'}); showToast('分类已删除'); loadCategories(); } catch (error) { showToast(error.message); } });
+$('#new-category-button').addEventListener('click', () => $('#category-dialog').showModal()); $('#category-form').addEventListener('submit', saveCategory); $('#category-list').addEventListener('click', async event => { const deleteButton = event.target.closest('.delete-category'); if (deleteButton) { if (!confirm('确定删除该分类吗？')) return; try { await request(`/api/categories/${deleteButton.dataset.id}`, {method: 'DELETE'}); showToast('分类已删除'); await loadCategories(); if (state.view === 'knowledge') loadDocuments(); } catch (error) { showToast(error.message); } return; } const categoryButton = event.target.closest('.category-select'); if (!categoryButton) return; $('#document-category').value = categoryButton.dataset.categoryId; state.documentPage = 1; state.selectedDocumentIds.clear(); renderCategories(); await loadDocuments(); });
 $('#upload-document-button').addEventListener('click', () => $('#document-dialog').showModal()); $('#document-form').addEventListener('submit', uploadDocument); $('#document-search-button').addEventListener('click', () => { state.documentPage = 1; loadDocuments(); }); $('#document-category').addEventListener('change', () => { state.documentPage = 1; loadDocuments(); }); $('#document-prev').addEventListener('click', () => { if (state.documentPage > 1) { state.documentPage--; loadDocuments(); } }); $('#document-next').addEventListener('click', () => { if (state.documentPage * state.documentSize < state.documentTotal) { state.documentPage++; loadDocuments(); } }); $('#batch-reingest-button').addEventListener('click', batchReingestDocuments); $('#document-list').addEventListener('change', event => { const checkbox = event.target.closest('.document-select'); if (!checkbox) return; const id = Number(checkbox.dataset.id); if (checkbox.checked) state.selectedDocumentIds.add(id); else state.selectedDocumentIds.delete(id); updateBatchReingestButton(); }); $('#document-list').addEventListener('click', async event => { const reingest = event.target.closest('.reingest-document'); if (reingest) { if (!confirm(`确定重新向量化文档“${reingest.dataset.title}”吗？`)) return; reingest.disabled = true; reingest.textContent = '处理中…'; try { await request(`/api/documents/${reingest.dataset.id}/reingest`, {method: 'POST'}); showToast('文档已重新向量化'); loadDocuments(); } catch (error) { showToast(error.message); reingest.disabled = false; reingest.textContent = '重新向量化'; } return; } const button = event.target.closest('.delete-document'); if (!button || !confirm(`确定删除文档“${button.dataset.title}”吗？`)) return; try { await request(`/api/documents/${button.dataset.id}`, {method: 'DELETE'}); state.selectedDocumentIds.delete(Number(button.dataset.id)); showToast('文档和向量已删除'); loadDocuments(); } catch (error) { showToast(error.message); } });
 $('#search-button').addEventListener('click', () => { state.userPage = 1; loadUsers(); }); $('#create-button').addEventListener('click', () => openUserDialog()); $('#prev-page').addEventListener('click', () => { if (state.userPage > 1) { state.userPage--; loadUsers(); } }); $('#next-page').addEventListener('click', () => { if (state.userPage * state.userSize < state.userTotal) { state.userPage++; loadUsers(); } }); $('#user-form').addEventListener('submit', saveUser); $('#close-dialog').addEventListener('click', () => $('#user-dialog').close()); $('#cancel-dialog').addEventListener('click', () => $('#user-dialog').close()); $('#user-table-body').addEventListener('click', async event => { const button = event.target.closest('[data-user-action]'); if (!button) return; const user = JSON.parse(button.closest('tr').dataset.user); if (button.dataset.userAction === 'edit') return openUserDialog(user); if (!confirm(`确定删除用户“${user.username}”吗？`)) return; try { await request(`/api/users/${user.id}`, {method: 'DELETE'}); showToast('用户已删除'); loadUsers(); } catch (error) { showToast(error.message); } });
 $('#profile-form').addEventListener('submit', saveProfile); $('#password-form').addEventListener('submit', changePassword); document.querySelectorAll('[data-close-dialog]').forEach(button => button.addEventListener('click', () => $(`#${button.dataset.closeDialog}`).close()));

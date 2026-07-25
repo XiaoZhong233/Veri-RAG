@@ -20,7 +20,7 @@ public class ChatClientConfiguration {
         return MessageWindowChatMemory.builder()
                 .chatMemoryRepository(repository)
                 // 一段摘要 SystemMessage + 最近两轮（4 条）原始消息。
-                .maxMessages(5)
+                .maxMessages(10)
                 .build();
     }
 

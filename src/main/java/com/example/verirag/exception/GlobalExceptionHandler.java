@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -41,6 +42,16 @@ public class GlobalExceptionHandler {
         return ResponseEntity.badRequest()
                 .body(R.fail(ResultCode.BAD_REQUEST.getCode(),
                         msg.isEmpty() ? ResultCode.BAD_REQUEST.getMessage() : msg));
+    }
+
+    /**
+     * Multipart 在进入 Controller 前解析；单独处理以便前端得到可操作的上传限制提示。
+     */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<R<Void>> handleMaxUploadSize(MaxUploadSizeExceededException e) {
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(R.fail(HttpStatus.PAYLOAD_TOO_LARGE.value(),
+                        "上传文件过大：单个文件最大 50MB，整个上传请求最大 55MB"));
     }
 
     /**

@@ -1,5 +1,7 @@
 /logs/
-/.DS_Store
+**/.DS_Store
+**/__pycache__/
+**/~$*.docx
 /.env
 /file/
 /target/**

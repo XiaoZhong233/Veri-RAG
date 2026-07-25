@@ -52,4 +52,12 @@ public class ChatClientConfiguration {
     public ChatClient summaryChatClient(OpenAiChatModel model) {
         return ChatClient.builder(model).build();
     }
+
+    /**
+     * 独立的二阶段重排序客户端，不挂载聊天记忆，避免候选片段进入正常会话历史。
+     */
+    @Bean("rerankerChatClient")
+    public ChatClient rerankerChatClient(OpenAiChatModel model) {
+        return ChatClient.builder(model).build();
+    }
 }

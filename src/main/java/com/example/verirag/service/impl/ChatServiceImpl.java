@@ -15,6 +15,7 @@ import com.example.verirag.prompt.RagPromptManager;
 import com.example.verirag.security.PromptInjectionGuard;
 import com.example.verirag.service.ChatService;
 import com.example.verirag.service.RagAnswerCache;
+import com.example.verirag.service.rerank.LlmDocumentReranker;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -81,11 +82,16 @@ public class ChatServiceImpl implements ChatService {
 
     private final PromptInjectionGuard promptInjectionGuard;
 
+    private final LlmDocumentReranker documentReranker;
+
     @Value("${rag.retrieval.similarity-threshold:" + DEFAULT_SIMILARITY_THRESHOLD + "}")
     private double similarityThreshold;
 
     @Value("${rag.retrieval.top-k:" + DEFAULT_RAG_TOP_K + "}")
     private int retrievalTopK;
+
+    @Value("${rag.reranker.enabled:false}")
+    private boolean rerankerEnabled;
 
     /** 用于检索改写和手动拼接的最近对话消息数量。 */
     @Value("${rag.chat.history-max-messages:" + DEFAULT_HISTORY_MAX_MESSAGES + "}")
@@ -402,7 +408,12 @@ public class ChatServiceImpl implements ChatService {
             log.info("event=rag.retrieval.duplicates_removed candidates={} unique={}",
                     sorted.size(), unique.size());
         }
-        return unique.stream().limit(finalTopK).toList();
+        List<Document> ranked = rerankerEnabled
+                ? documentReranker.rerank(question, unique)
+                : unique;
+        log.info("event=rag.reranker.selection enabled={} candidates={} selected={}",
+                rerankerEnabled, unique.size(), Math.min(finalTopK, ranked.size()));
+        return ranked.stream().limit(finalTopK).toList();
     }
 
     /**

@@ -1,0 +1,10 @@
+.git
+.gitignore
+.idea
+.env
+target
+file
+outputs
+logs
+*.iml
+.DS_Store

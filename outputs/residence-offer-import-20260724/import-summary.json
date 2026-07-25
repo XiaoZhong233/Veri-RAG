@@ -1,0 +1,19 @@
+{
+  "output": "/Users/li/IdeaProjects/veri-rag/outputs/residence-offer-import-20260724/结构化模板-已导入.xlsx",
+  "masterResidences": 33,
+  "matchedLondonistProperties": 24,
+  "inventoryRecords": 128,
+  "priceRecords": 384,
+  "uninistProperties": 13,
+  "uninistRoomRows": 17,
+  "unmatchedUninist": 13,
+  "errors": 0,
+  "warnings": 1,
+  "qualityIssues": [
+    [
+      "WARNING",
+      "Greenwich Student Collective",
+      "源表租期存在空档：16-19 weeks 后直接进入 30-39 Weeks"
+    ]
+  ]
+}

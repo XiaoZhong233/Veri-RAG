@@ -123,8 +123,8 @@ rag:
     timeout-seconds: ${RAG_OCR_TIMEOUT_SECONDS:120}
   retrieval:
     # 每次向量检索最多返回的 Chunk 数；制度问答默认 2 个即可，减少 Prompt 长度与模型延迟。
-    top-k: ${RAG_RETRIEVAL_TOP_K:3}
-    # 向量检索最低相似度（0~1）；低于该值不作为上下文或引用，建议 0.70~0.80。
+    top-k: ${RAG_RETRIEVAL_TOP_K:2}
+    # Top-K 已收紧并在服务端去重；阈值保持 0.75，避免 0.80 造成制度题和追问的误拒答。
     similarity-threshold: ${RAG_SIMILARITY_THRESHOLD:0.75}
   answer-cache:
     # 是否启用相似问题回答缓存；命中后跳过检索和大模型调用。

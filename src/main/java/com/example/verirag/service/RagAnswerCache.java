@@ -59,6 +59,7 @@ public class RagAnswerCache {
 
         List<Entry> candidates = entries.values().stream()
                 .filter(entry -> entry.scope.equals(scope))
+                .filter(entry -> entry.language.equals(languageBucket(question)))
                 .toList();
         if (candidates.isEmpty()) {
             return Optional.empty();
@@ -94,7 +95,8 @@ public class RagAnswerCache {
         try {
             evictOverflow();
             String scope = scopeKey(categoryIds);
-            Entry entry = new Entry(scope, answer, List.copyOf(references == null ? List.of() : references),
+            Entry entry = new Entry(scope, languageBucket(question), answer,
+                    List.copyOf(references == null ? List.of() : references),
                     embeddingModel.embed(question), Instant.now().plus(ttl));
             entries.put(key(scope, normalize(question)), entry);
         }
@@ -145,6 +147,23 @@ public class RagAnswerCache {
         return question.toLowerCase(Locale.ROOT).replaceAll("[\\s\\p{Punct}]+", "");
     }
 
+    static String languageBucket(String question) {
+        if (question == null || question.isBlank()) {
+            return "other";
+        }
+        long latinLetters = question.codePoints()
+                .filter(codePoint -> (codePoint >= 'A' && codePoint <= 'Z')
+                        || (codePoint >= 'a' && codePoint <= 'z'))
+                .count();
+        long chineseCharacters = question.codePoints()
+                .filter(codePoint -> Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HAN)
+                .count();
+        if (latinLetters >= 3 && latinLetters > chineseCharacters * 2) {
+            return "en";
+        }
+        return chineseCharacters > 0 ? "zh" : "other";
+    }
+
     private static double cosineSimilarity(float[] left, float[] right) {
         if (left == null || right == null || left.length == 0 || left.length != right.length) {
             return -1;
@@ -161,7 +180,7 @@ public class RagAnswerCache {
     public record Hit(String answer, List<Map<String, Object>> references, double similarity) {
     }
 
-    private record Entry(String scope, String answer, List<Map<String, Object>> references,
+    private record Entry(String scope, String language, String answer, List<Map<String, Object>> references,
                          float[] embedding, Instant expiresAt) {
     }
 }

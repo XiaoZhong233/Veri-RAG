@@ -12,6 +12,7 @@ import com.example.verirag.mapper.ChatSessionMapper;
 import com.example.verirag.memory.ConversationSummaryService;
 import com.example.verirag.observability.RagMetrics;
 import com.example.verirag.prompt.RagPromptManager;
+import com.example.verirag.security.PromptInjectionGuard;
 import com.example.verirag.service.ChatService;
 import com.example.verirag.service.RagAnswerCache;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -51,6 +52,8 @@ public class ChatServiceImpl implements ChatService {
     private static final int DEFAULT_RAG_TOP_K = 2;
     private static final double DEFAULT_SIMILARITY_THRESHOLD = 0.75;
     private static final int DEFAULT_HISTORY_MAX_MESSAGES = 6;
+    private static final String NO_CONTEXT_MARKER = "知识库中未找到相关信息";
+    private static final String NO_CONTEXT_MARKER_EN = "no relevant information was found in the knowledge base";
     private final ChatClient chatClient;
 
     @Qualifier("manualHistoryChatClient")
@@ -76,6 +79,8 @@ public class ChatServiceImpl implements ChatService {
 
     private final RagPromptManager promptManager;
 
+    private final PromptInjectionGuard promptInjectionGuard;
+
     @Value("${rag.retrieval.similarity-threshold:" + DEFAULT_SIMILARITY_THRESHOLD + "}")
     private double similarityThreshold;
 
@@ -97,6 +102,10 @@ public class ChatServiceImpl implements ChatService {
         if (requestedSessionId != null) {
             assertSessionOwner(userId, requestedSessionId);
         }
+        PromptInjectionGuard.Decision guardDecision = promptInjectionGuard.inspect(req.getQuestion());
+        if (guardDecision.blocked()) {
+            return blockedResult(userId, requestedSessionId, req.getQuestion(), guardDecision.policy(), requestStart);
+        }
         List<ChatMessage> history = loadRecentHistory(requestedSessionId);
 
         // 追问的答案依赖前文，不参与跨会话回答缓存，避免上下文错配。
@@ -106,7 +115,8 @@ public class ChatServiceImpl implements ChatService {
         ragMetrics.recordCache(cached.isPresent());
         if (cached.isPresent()) {
             RagAnswerCache.Hit hit = cached.get();
-            String refsJson = objectMapper.writeValueAsString(hit.references());
+            List<Map<String, Object>> references = referencesForAnswer(hit.answer(), hit.references());
+            String refsJson = objectMapper.writeValueAsString(references);
             Long sessionId = transactionTemplate.execute(status ->
                     persistConversation(userId, requestedSessionId, req.getQuestion(), hit.answer(), refsJson));
             if (sessionId == null) {
@@ -115,7 +125,7 @@ public class ChatServiceImpl implements ChatService {
             ChatAskResult result = new ChatAskResult();
             result.setSessionId(sessionId);
             result.setAnswer(hit.answer());
-            result.setReferences(hit.references());
+            result.setReferences(references);
             ragMetrics.recordRequest(java.time.Duration.ofNanos(System.nanoTime() - requestStart), "cache_hit");
             return result;
         }
@@ -141,7 +151,7 @@ public class ChatServiceImpl implements ChatService {
         long llmMs = (System.nanoTime() - llmStart) / 1_000_000L;
         ragMetrics.recordLlm(java.time.Duration.ofMillis(llmMs), "sync", "success");
         log.info("LLM completed: sessionId={}, duration={}ms", requestedSessionId, llmMs);
-        List<Map<String, Object>> refs = toRefs(req.getQuestion(), cited);
+        List<Map<String, Object>> refs = referencesForAnswer(answer, toRefs(req.getQuestion(), cited));
         String refsJson = objectMapper.writeValueAsString(refs);
         if (requestedSessionId == null) {
             ragAnswerCache.put(req.getQuestion(), req.getCategoryIds(), answer, refs);
@@ -169,6 +179,10 @@ public class ChatServiceImpl implements ChatService {
         if (requestedSessionId != null) {
             assertSessionOwner(userId, requestedSessionId);
         }
+        PromptInjectionGuard.Decision guardDecision = promptInjectionGuard.inspect(req.getQuestion());
+        if (guardDecision.blocked()) {
+            return blockedStream(userId, requestedSessionId, req.getQuestion(), guardDecision.policy(), requestStart);
+        }
         List<ChatMessage> history = loadRecentHistory(requestedSessionId);
 
         var cached = requestedSessionId == null
@@ -177,6 +191,7 @@ public class ChatServiceImpl implements ChatService {
         ragMetrics.recordCache(cached.isPresent());
         if (cached.isPresent()) {
             RagAnswerCache.Hit hit = cached.get();
+            List<Map<String, Object>> references = referencesForAnswer(hit.answer(), hit.references());
             Long sessionId = transactionTemplate.execute(status ->
                     persistUserMessage(userId, requestedSessionId, req.getQuestion()));
             if (sessionId == null) {
@@ -184,7 +199,7 @@ public class ChatServiceImpl implements ChatService {
             }
             final String refsJson;
             try {
-                refsJson = objectMapper.writeValueAsString(hit.references());
+                refsJson = objectMapper.writeValueAsString(references);
             }
             catch (Exception ex) {
                 return Flux.error(ex);
@@ -195,7 +210,7 @@ public class ChatServiceImpl implements ChatService {
                         transactionTemplate.executeWithoutResult(status ->
                                 persistAssistantMessage(finalSessionId, hit.answer(), refsJson));
                         conversationSummaryService.maybeSummarize(finalSessionId);
-                        return ChatStreamEvent.done(finalSessionId, hit.references());
+                        return ChatStreamEvent.done(finalSessionId, references);
                     }))
                     .doOnComplete(() -> ragMetrics.recordRequest(
                             java.time.Duration.ofNanos(System.nanoTime() - requestStart), "cache_hit"))
@@ -205,15 +220,6 @@ public class ChatServiceImpl implements ChatService {
 
         List<Document> cited = retrievalTimingAdvisor.advise(requestedSessionId,
                 () -> retrieveForCategories(buildRetrievalQuery(req.getQuestion(), history), req.getCategoryIds()));
-
-        List<Map<String, Object>> references = toRefs(req.getQuestion(), cited);
-        final String referencesJson;
-        try {
-            referencesJson = objectMapper.writeValueAsString(references);
-        }
-        catch (Exception ex) {
-            return Flux.error(ex);
-        }
 
         Long sessionId = transactionTemplate.execute(status ->
                 persistUserMessage(userId, requestedSessionId, req.getQuestion()));
@@ -245,6 +251,9 @@ public class ChatServiceImpl implements ChatService {
                 .startWith(ChatStreamEvent.meta(sessionId))
                 .concatWith(Mono.fromCallable(() -> {
                     Long finalSessionId = sessionId;
+                    List<Map<String, Object>> references = referencesForAnswer(
+                            fullAnswer.toString(), toRefs(req.getQuestion(), cited));
+                    String referencesJson = objectMapper.writeValueAsString(references);
                     transactionTemplate.executeWithoutResult(status ->
                             persistAssistantMessage(finalSessionId, fullAnswer.toString(), referencesJson));
                     conversationSummaryService.maybeSummarize(finalSessionId);
@@ -367,9 +376,12 @@ public class ChatServiceImpl implements ChatService {
     }
 
     private List<Document> vectorSimilaritySearch(String question, Filter.Expression filter) {
+        // 同一文件重复上传时，最靠前的 KNN 候选可能都是重复 chunk；先过采样，去重后再截取最终 Top-K。
+        int finalTopK = Math.max(retrievalTopK, 1);
+        int candidateTopK = finalTopK * 3;
         SearchRequest.Builder builder = SearchRequest.builder()
                 .query(question)
-                .topK(retrievalTopK)
+                .topK(candidateTopK)
                 .similarityThreshold(similarityThreshold);
         if (filter != null) {
             builder.filterExpression(filter);
@@ -380,11 +392,43 @@ public class ChatServiceImpl implements ChatService {
         }
         // Redis KNN 通常已经按距离排序；这里显式按 Spring AI 归一化后的 score
         // 降序再排一次，确保上下文和对外 references 均按相关性从高到低展示。
-        return documents.stream()
+        List<Document> sorted = documents.stream()
                 .filter(document -> document.getScore() != null && document.getScore() >= similarityThreshold)
                 .sorted(Comparator.comparing(Document::getScore,
                         Comparator.nullsLast(Comparator.reverseOrder())))
                 .toList();
+        List<Document> unique = deduplicateDocuments(sorted);
+        if (unique.size() < sorted.size()) {
+            log.info("event=rag.retrieval.duplicates_removed candidates={} unique={}",
+                    sorted.size(), unique.size());
+        }
+        return unique.stream().limit(finalTopK).toList();
+    }
+
+    /**
+     * 重复上传会产生不同 docId 但标题和文本都相同的向量。排序已按分数从高到低完成，因而保留首次出现的最高分记录。
+     */
+    static List<Document> deduplicateDocuments(List<Document> documents) {
+        if (documents == null || documents.isEmpty()) {
+            return Collections.emptyList();
+        }
+        Map<String, Document> unique = new LinkedHashMap<>();
+        for (Document document : documents) {
+            if (document == null) {
+                continue;
+            }
+            Object title = document.getMetadata().get("title");
+            Object source = document.getMetadata().get("source");
+            Object documentId = document.getMetadata().get("docId");
+            // 优先使用用户可见标题：同标题、同文本但不同 docId 表示同一资料被重复上传。
+            String identity = title != null ? String.valueOf(title)
+                    : source != null ? String.valueOf(source)
+                    : documentId != null ? String.valueOf(documentId) : "unknown";
+            String text = document.getText() == null ? "" : document.getText()
+                    .replaceAll("\\s+", " ").strip();
+            unique.putIfAbsent(identity + "\u0000" + text, document);
+        }
+        return new ArrayList<>(unique.values());
     }
 
     private static Filter.Expression buildCategoryIdFilter(Set<String> categoryIds) {
@@ -411,12 +455,15 @@ public class ChatServiceImpl implements ChatService {
     }
 
     /** 用上一轮用户问题补足“这个/它/哪里”等指代不明的追问检索语义。 */
-    private static String buildRetrievalQuery(String question, List<ChatMessage> history) {
+    static String buildRetrievalQuery(String question, List<ChatMessage> history) {
         if (history != null) {
             for (int i = history.size() - 1; i >= 0; i--) {
                 ChatMessage message = history.get(i);
                 if ("USER".equals(message.getRole()) && message.getContent() != null && !message.getContent().isBlank()) {
-                    return message.getContent().strip() + "\n后续问题：" + question.strip();
+                    String followUpLabel = isEnglishQuestion(question)
+                            ? "\nFollow-up question: "
+                            : "\n后续问题：";
+                    return message.getContent().strip() + followUpLabel + question.strip();
                 }
             }
         }
@@ -432,6 +479,73 @@ public class ChatServiceImpl implements ChatService {
         }
         return chatClient.prompt()
                 .advisors(advisors -> advisors.param(ChatMemory.CONVERSATION_ID, String.valueOf(conversationId)));
+    }
+
+    private ChatAskResult blockedResult(Long userId, Long requestedSessionId, String question,
+                                        String policy, long requestStart) {
+        log.warn("event=security.prompt_injection_blocked userId={} policy={}", userId, policy);
+        String answer = blockedAnswer(question);
+        Long sessionId = transactionTemplate.execute(status ->
+                persistConversation(userId, requestedSessionId, question, answer, "[]"));
+        if (sessionId == null) {
+            throw new IllegalStateException("Failed to persist blocked chat conversation");
+        }
+        ChatAskResult result = new ChatAskResult();
+        result.setSessionId(sessionId);
+        result.setAnswer(answer);
+        result.setReferences(List.of());
+        ragMetrics.recordRequest(java.time.Duration.ofNanos(System.nanoTime() - requestStart), "blocked");
+        return result;
+    }
+
+    private Flux<ChatStreamEvent> blockedStream(Long userId, Long requestedSessionId, String question,
+                                                String policy, long requestStart) {
+        log.warn("event=security.prompt_injection_blocked userId={} policy={}", userId, policy);
+        String answer = blockedAnswer(question);
+        Long sessionId = transactionTemplate.execute(status ->
+                persistConversation(userId, requestedSessionId, question, answer, "[]"));
+        if (sessionId == null) {
+            return Flux.error(new IllegalStateException("Failed to persist blocked chat conversation"));
+        }
+        return Flux.just(ChatStreamEvent.meta(sessionId), ChatStreamEvent.chunk(answer),
+                        ChatStreamEvent.done(sessionId, List.of()))
+                .doOnComplete(() -> ragMetrics.recordRequest(
+                        java.time.Duration.ofNanos(System.nanoTime() - requestStart), "blocked"));
+    }
+
+    static String blockedAnswer(String question) {
+        if (isEnglishQuestion(question)) {
+            return "I can't provide system instructions, internal configuration, credentials, or other "
+                    + "sensitive information. I can help query authorized knowledge-base content.";
+        }
+        return "我不能提供系统指令、内部配置、密钥或其他敏感信息。我可以帮助查询已授权的知识库内容。";
+    }
+
+    static boolean isEnglishQuestion(String question) {
+        if (question == null || question.isBlank()) {
+            return false;
+        }
+        long latinLetters = question.codePoints()
+                .filter(codePoint -> (codePoint >= 'A' && codePoint <= 'Z')
+                        || (codePoint >= 'a' && codePoint <= 'z'))
+                .count();
+        long chineseCharacters = question.codePoints()
+                .filter(codePoint -> Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HAN)
+                .count();
+        return latinLetters >= 3 && latinLetters > chineseCharacters * 2;
+    }
+
+    /**
+     * 低相关检索偶尔仍会返回候选 chunk。模型已按契约拒答时，不能把这些无关片段作为引用对外展示。
+     */
+    static List<Map<String, Object>> referencesForAnswer(String answer, List<Map<String, Object>> references) {
+        String normalizedAnswer = answer == null ? "" : answer.toLowerCase(java.util.Locale.ROOT);
+        if (answer != null && (answer.contains(NO_CONTEXT_MARKER)
+                || normalizedAnswer.contains(NO_CONTEXT_MARKER_EN))) {
+            log.info("event=rag.references.suppressed reason=no_context");
+            return List.of();
+        }
+        return references == null ? List.of() : references;
     }
 
     private String buildModelSystemPrompt(String ragContext) {

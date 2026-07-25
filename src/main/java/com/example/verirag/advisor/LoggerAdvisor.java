@@ -14,6 +14,7 @@ import reactor.core.publisher.Flux;
 
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Component
 public class LoggerAdvisor implements CallAdvisor, StreamAdvisor {
@@ -23,10 +24,10 @@ public class LoggerAdvisor implements CallAdvisor, StreamAdvisor {
     @Override
     public ChatClientResponse adviseCall(ChatClientRequest request, CallAdvisorChain chain) {
         long start = System.nanoTime();
-        log.info("AI final prompt: {}", request.prompt().getInstructions());
+        log.info("event=rag.llm.request mode=sync");
         try {
             ChatClientResponse response = chain.nextCall(request);
-            log.info("AI final response: {}", responseText(response));
+            log.info("event=rag.llm.response mode=sync characters={}", responseText(response).length());
             long elapsed = elapsedMillis(start);
             log.info("event=rag.llm.completed mode=sync durationMs={}", elapsed);
             return response;
@@ -43,18 +44,18 @@ public class LoggerAdvisor implements CallAdvisor, StreamAdvisor {
         return Flux.defer(() -> {
             long start = System.nanoTime();
             AtomicBoolean firstChunk = new AtomicBoolean(true);
-            StringBuilder output = new StringBuilder();
-            log.info("AI final prompt: {}", request.prompt().getInstructions());
+            AtomicInteger outputCharacters = new AtomicInteger();
+            log.info("event=rag.llm.request mode=stream");
             return chain.nextStream(request)
                     .doOnNext(response -> {
-                        output.append(responseText(response));
+                        outputCharacters.addAndGet(responseText(response).length());
                         if (firstChunk.compareAndSet(true, false)) {
                             long elapsed = elapsedMillis(start);
                             log.info("event=rag.llm.first_token durationMs={}", elapsed);
                         }
                     })
                     .doOnComplete(() -> {
-                        log.info("AI final response: {}", output);
+                        log.info("event=rag.llm.response mode=stream characters={}", outputCharacters.get());
                         long elapsed = elapsedMillis(start);
                         log.info("event=rag.llm.completed mode=stream durationMs={}", elapsed);
                     })

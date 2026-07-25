@@ -3,3 +3,4 @@
 /.env
 /file/
 /target/**
+/evaluation/output/

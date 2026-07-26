@@ -1,0 +1,284 @@
+# Veri-RAG / 双语企业知识库问答
+
+[English](#english) | [中文](#中文)
+
+## 中文
+
+Veri-RAG 是一个基于 Spring Boot 的企业内部知识库问答服务。它支持中文和英文文档、扫描 PDF OCR、多轮对话、基于检索证据的引用回答，以及基础的监控、安全和离线评测能力。
+
+### 功能概览
+
+- **RAG 问答与引用**：回答基于 Redis 向量检索结果生成，并返回文档标题、文档 ID、分类和证据片段。
+- **双语与 OCR**：支持 CN/EN 文档；PDF 文本层过少时自动使用 Tesseract（`chi_sim+eng`）OCR。
+- **多轮会话**：会话与消息持久化在 MySQL；较早消息可压缩为摘要，保留最近对话上下文。
+- **检索质量控制**：相似度阈值、Top-K、候选过采样（`3 × Top-K`）、精确文本去重，以及可选 LLM Reranker。
+- **安全与可观测性**：JWT 鉴权、Prompt Injection 拦截、无上下文拒答、结构化 RAG 日志、OpenTelemetry Trace/Metrics、Prometheus 与 Grafana。
+- **评测**：47 个真实 API 用例，覆盖普通问答、多轮、OCR、英文、拒答和注入攻击；包含 Accuracy、Context Precision、Faithfulness 和 P90 延迟。
+
+### 架构
+
+```text
+Browser / REST client
+        │ JWT
+        ▼
+Spring Boot API ──► MySQL (users, documents, sessions, messages)
+        │
+        ├──► Redis 8 (vector store, retrieval, optional answer cache)
+        ├──► DashScope-compatible Qwen (chat, embedding, optional reranker)
+        ├──► Apache Tika + Tesseract (scanned PDF ingestion)
+        └──► OpenTelemetry ──► Grafana OTEL LGTM
+```
+
+### 前置条件
+
+- JDK 21
+- Docker Desktop / Docker Compose v2
+- Python 3（运行评测脚本）
+- DashScope 兼容 API Key
+- 本机运行 OCR 时：Tesseract 和 `chi_sim`、`eng` 语言包
+
+macOS：
+
+```bash
+brew install tesseract tesseract-lang
+tesseract --list-langs
+```
+
+Ubuntu / Debian：
+
+```bash
+sudo apt-get install tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng
+tesseract --list-langs
+```
+
+### 快速启动
+
+1. 创建本地配置并填写 API Key：
+
+```bash
+cp .env.example .env
+# 在 .env 中设置 DASHSCOPE_API_KEY；本地开发也应替换 JWT_SECRET。
+```
+
+2. 启动基础服务（MySQL、Redis、Grafana/OTel）：
+
+```bash
+docker compose up -d
+docker compose ps
+```
+
+3. 在宿主机启动应用：
+
+```bash
+set -a
+source .env
+set +a
+./mvnw spring-boot:run
+```
+
+应用默认地址为 `http://localhost:8081/veri-rag`，网页入口为：
+
+```text
+http://localhost:8081/veri-rag/
+```
+
+> `docker compose up` 当前只启动中间件；Spring Boot 应用按上述命令在宿主机运行。Linux 容器化部署见下文。
+
+本地初始化账号仅用于演示：`admin / 123456`。请勿在生产环境使用该账号、默认数据库密码或默认 JWT Secret。
+
+### 使用流程
+
+1. 使用管理员账号登录。
+2. 在网页的文档管理页上传 PDF、DOCX、TXT 或 Markdown 文件，并选择分类。
+3. 等待文档状态变为 `SUCCESS`；扫描 PDF 会在需要时进入 OCR。
+4. 在聊天页提问，回答末尾会返回引用证据。
+5. 追问时复用返回的 `sessionId`，保持同一个会话上下文。
+
+#### REST 示例
+
+登录并保存 Token：
+
+```bash
+API_BASE='http://localhost:8081/veri-rag'
+
+curl -sS "${API_BASE}/api/auth/login" \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"123456"}'
+```
+
+发起问答（将 `${TOKEN}` 替换为登录响应中的 token）：
+
+```bash
+curl -sS "${API_BASE}/api/chat/ask" \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"What does the knowledge base say about employee leave?","categoryIds":[]}'
+```
+
+上传文档（仅管理员）：
+
+```bash
+curl -sS -X POST "${API_BASE}/api/documents?categoryId=1" \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -F 'file=@/absolute/path/to/document.pdf' \
+  -F 'title=Employee Handbook'
+```
+
+常用接口：
+
+| Endpoint | 说明 |
+| --- | --- |
+| `POST /api/auth/login` | 登录并获取 JWT |
+| `POST /api/chat/ask` | 同步 RAG 问答 |
+| `POST /api/chat/ask/stream` | SSE 流式 RAG 问答 |
+| `GET /api/chat/sessions` | 当前用户会话列表 |
+| `GET /api/chat/sessions/{sessionId}/messages` | 会话历史 |
+| `POST /api/documents` | 上传、解析并向量化文档（管理员） |
+| `GET /api/documents/page` | 文档列表（管理员） |
+| `POST /api/documents/{id}/reingest` | 重建单个文档向量（管理员） |
+| `GET /actuator/health` | 健康检查 |
+| `GET /actuator/prometheus` | Prometheus 指标 |
+
+### 关键配置
+
+配置均可通过 `.env` 或环境变量覆盖；完整清单见 [`.env.example`](.env.example)。
+
+| 配置 | 默认值 | 用途 |
+| --- | --- | --- |
+| `LLM_CHAT_MODEL` | `qwen-flash` | 生成模型 |
+| `LLM_TEMPERATURE` | `0.2` | 当前运行默认值 |
+| `EMBEDDING_MODEL` | `qwen3.7-text-embedding` | 向量模型 |
+| `RAG_RETRIEVAL_TOP_K` | `2` | 最终给模型的引用块数 |
+| `RAG_SIMILARITY_THRESHOLD` | `0.75` | 低相关结果拒答阈值 |
+| `RAG_RERANKER_ENABLED` | `false` | 启用额外 LLM 重排序 |
+| `RAG_OCR_ENABLED` | `true` | 允许扫描 PDF OCR |
+| `RAG_OCR_LANGUAGE` | `chi_sim+eng` | OCR 语言 |
+| `SPRING_SERVLET_MULTIPART_MAX_FILE_SIZE` | `50MB` | 单文件上传限制 |
+
+消融实验中，`Top-K=2 / Reranker=OFF / Temperature=0.0` 是推荐的平衡配置；代码默认仍是 `Temperature=0.2`。如需采用推荐配置，请在 `.env` 中显式设置 `LLM_TEMPERATURE=0.0`。完整数据见 [消融实验报告](docs/ablation-study.md)。
+
+### OCR 行为
+
+应用会优先解析 PDF 的文本层。当可见字符平均值低于 `RAG_OCR_MIN_CHARS_PER_PAGE`（默认 40）时，自动触发 Tesseract OCR。默认限制为 50 页、300 DPI、每页 120 秒；扫描质量差或未安装语言包时会明确报错，而不会把空文档标记为成功。
+
+### 评测
+
+确保应用、MySQL、Redis 都已运行后执行：
+
+```bash
+python3 evaluation/run_full_evaluation.py \
+  --username admin \
+  --base-url http://localhost:8081/veri-rag
+```
+
+脚本会登录获取 JWT、运行 47 个真实 API 用例，随后运行 Accuracy、Context Precision 和 Faithfulness LLM Judge，并输出 `evaluation/output/report.md`。详细方法、输出和单项 Judge 命令见 [evaluation/README.md](evaluation/README.md)。
+
+已提交的结果与阈值说明见：[Evaluation Summary](docs/Veri-RAG_Evaluation_Summary.docx) 和 [Ablation Study](docs/ablation-study.md)。
+
+### 监控、日志与安全
+
+- Grafana：`http://localhost:3000`；演示脚本：`bash scripts/observe-rag-demo.sh`。
+- 应用日志只记录事件、结果、耗时和计数；发布样例会去除 Trace/Span、用户、会话、提示词和文档内容。
+- `PromptInjectionGuard` 会拦截常见的提示词覆盖和敏感信息索取请求。
+- 检索无结果、相似度不足或没有可靠上下文时，服务会给出能力边界说明并抑制无关引用。
+- 部署时必须通过环境变量提供 `DASHSCOPE_API_KEY`、`JWT_SECRET`、数据库与 Redis 密码；不要提交 `.env`。
+
+更多观测信息见 [docs/observability.md](docs/observability.md) 与 [docs/observability-demo.md](docs/observability-demo.md)。
+
+### Linux / Docker 部署
+
+`Dockerfile` 使用 Java 21 多阶段构建，并在运行时镜像中安装 Tesseract、中文和英文语言包。
+
+```bash
+docker build -t veri-rag:latest .
+docker run --rm --entrypoint tesseract veri-rag:latest --list-langs
+```
+
+生产环境应使用独立的 `.env.production`，挂载持久化文件目录，并将应用容器接入 MySQL、Redis 与观测服务所在网络。完整示例见 [docs/study-case-environment.md](docs/study-case-environment.md)。
+
+---
+
+## English
+
+Veri-RAG is a Spring Boot knowledge-base QA service for internal enterprise documents. It supports Chinese and English content, OCR for scanned PDFs, multi-turn conversations, citation-backed grounded answers, observability, security controls, and offline evaluation.
+
+### Features
+
+- **Grounded RAG QA** — answers are generated from Redis vector retrieval and return document citations and evidence snippets.
+- **Bilingual OCR** — CN/EN content is supported; PDFs with an insufficient text layer automatically fall back to Tesseract OCR (`chi_sim+eng`).
+- **Conversation continuity** — MySQL persists sessions and messages; older context can be summarized while recent turns remain available to the model.
+- **Retrieval controls** — similarity threshold, final Top-K, `3 × Top-K` candidate oversampling, exact-text deduplication, and an optional LLM reranker.
+- **Security and observability** — JWT authentication, prompt-injection blocking, no-context refusal, structured RAG logs, OpenTelemetry traces/metrics, Prometheus, and Grafana.
+- **Evaluation** — 47 live API cases cover normal QA, multi-turn, OCR, English, abstention, and injection attempts; Accuracy, Context Precision, Faithfulness, and P90 latency are measured.
+
+### Quick start
+
+Requirements: JDK 21, Docker Compose v2, Python 3 for evaluation, a DashScope-compatible API key, and Tesseract with Chinese/English language packs when OCR runs on the host.
+
+```bash
+cp .env.example .env
+# Set DASHSCOPE_API_KEY and replace JWT_SECRET in .env.
+
+docker compose up -d
+
+set -a
+source .env
+set +a
+./mvnw spring-boot:run
+```
+
+Open `http://localhost:8081/veri-rag/`. Compose starts MySQL, Redis, and Grafana/OTel; the Spring Boot application runs on the host in this workflow.
+
+The seeded `admin / 123456` account is for local demonstration only. Never use it, default database passwords, or a default JWT secret in production.
+
+### API quick reference
+
+Base URL: `http://localhost:8081/veri-rag`
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /api/auth/login` | Obtain a JWT |
+| `POST /api/chat/ask` | Synchronous RAG QA |
+| `POST /api/chat/ask/stream` | Streaming SSE RAG QA |
+| `GET /api/chat/sessions` | List the current user's sessions |
+| `POST /api/documents` | Upload, parse, and vectorize a document (admin) |
+| `GET /actuator/health` | Health check |
+| `GET /actuator/prometheus` | Prometheus metrics |
+
+Use `sessionId` from a previous chat response for a follow-up turn. Admin uploads require a multipart `file`, `categoryId`, and optional `title`.
+
+### Configuration and tuning
+
+All values can be overridden through `.env`; see [`.env.example`](.env.example) for the full list. Current runtime defaults are `qwen-flash`, `qwen3.7-text-embedding`, `Top-K=2`, similarity threshold `0.75`, reranker off, and temperature `0.2`.
+
+The ablation study recommends `Top-K=2`, reranker off, and `temperature=0.0` as a balanced configuration. Apply that recommendation explicitly with `LLM_TEMPERATURE=0.0`; the source default intentionally remains `0.2`. See [the ablation study](docs/ablation-study.md) for the data and trade-offs.
+
+### OCR, evaluation, and deployment
+
+OCR runs only when a PDF's average visible text falls below `RAG_OCR_MIN_CHARS_PER_PAGE` (default 40). It is bounded by page count, DPI, and timeout settings, and fails clearly when Tesseract or a required language pack is unavailable.
+
+Run the live evaluation after the application and dependencies are running:
+
+```bash
+python3 evaluation/run_full_evaluation.py \
+  --username admin \
+  --base-url http://localhost:8081/veri-rag
+```
+
+It authenticates, sends the 47 cases, then runs the configured LLM Judges. See [evaluation/README.md](evaluation/README.md) for commands and scoring details.
+
+For Linux deployment, build the included Java 21 image; it contains Tesseract plus `chi_sim` and `eng` packs:
+
+```bash
+docker build -t veri-rag:latest .
+docker run --rm --entrypoint tesseract veri-rag:latest --list-langs
+```
+
+Use injected secrets, persistent uploaded-file storage, and the shared MySQL/Redis/observability network in production. See [the environment guide](docs/study-case-environment.md) for the full deployment example.
+
+### Project evidence
+
+- [Evaluation Summary](docs/Veri-RAG_Evaluation_Summary.docx)
+- [Ablation Study](docs/ablation-study.md)
+- [Observability guide](docs/observability.md)
+- [Local environment and OCR guide](docs/study-case-environment.md)

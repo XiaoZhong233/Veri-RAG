@@ -74,21 +74,19 @@ services:
       start_period: 20s
 
   redis:
-    image: redis:8.2.7-alpine
+    # Redis Stack Server includes RediSearch, required by Spring AI RedisVectorStore (FT.* commands).
+    image: redis/redis-stack-server:7.4.0-v8
     container_name: veri-rag-redis
     restart: unless-stopped
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-veri_rag_dev}
-    command:
-      - sh
-      - -c
-      - exec redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}"
+      REDIS_ARGS: --appendonly yes --requirepass ${REDIS_PASSWORD:-veri_rag_dev}
     ports:
       - "${REDIS_BIND_ADDRESS:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep PONG"]
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep PONG && redis-cli -a \"$${REDIS_PASSWORD}\" FT._LIST >/dev/null"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -98,8 +96,25 @@ services:
     image: grafana/otel-lgtm:0.27.1
     container_name: veri-rag-observability
     restart: unless-stopped
+    environment:
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost/grafana/}
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
     ports:
       - "${GRAFANA_BIND_ADDRESS:-127.0.0.1}:${GRAFANA_PORT:-3000}:3000"
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: veri-rag-nginx
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_started
+      observability:
+        condition: service_started
+    ports:
+      - "${NGINX_BIND_ADDRESS:-0.0.0.0}:${NGINX_HTTP_PORT:-80}:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
 
 volumes:
   app-files:

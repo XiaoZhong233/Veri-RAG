@@ -6,9 +6,10 @@ This environment keeps the case-study demo small: MySQL stores relational applic
 
 | Service | Purpose | Local endpoint |
 | --- | --- | --- |
-| MySQL 8.4 | Document metadata, ingestion jobs, durable conversation history, evaluation cases, and feedback | `localhost:3306` |
-| Redis 8.2.7 | RedisJSON documents, HNSW vectors, metadata filtering, retrieval cache, and active conversation state | `localhost:6379` |
-| Grafana OpenTelemetry LGTM | Local metrics, traces, and logs | Grafana: `http://localhost:3000`, OTLP HTTP: `http://localhost:4318` |
+| Veri-RAG application | Spring Boot API, ingestion, OCR, retrieval, and chat | `http://localhost:8080/veri-rag` |
+| MySQL 8.4 | Document metadata, ingestion jobs, durable conversation history, evaluation cases, and feedback | Docker network only; optional host loopback `127.0.0.1:3306` |
+| Redis 8.2.7 | RedisJSON documents, HNSW vectors, metadata filtering, retrieval cache, and active conversation state | Docker network only; optional host loopback `127.0.0.1:6379` |
+| Grafana OpenTelemetry LGTM | Local metrics, traces, and logs | `http://127.0.0.1:3000` by default |
 
 Redis 8 includes the Search, JSON, and vector functionality previously distributed as Redis Stack. OCR for scanned PDFs belongs in the application ingestion image (for example, Apache Tika plus Tesseract), not in a permanent middleware container.
 
@@ -47,8 +48,10 @@ export PATH="/opt/homebrew/opt/tesseract/bin:$PATH"
 
 ```bash
 cp .env.example .env
-docker compose up -d
+# Set DASHSCOPE_API_KEY and replace all development secrets before production use.
+docker compose up -d --build
 docker compose ps
+docker compose logs -f app
 ```
 
 Stop containers without deleting data:
@@ -83,7 +86,9 @@ OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318/v1/traces
 OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://localhost:4318/v1/metrics
 ```
 
-If the application is later added to this Compose network, replace `localhost` with the service names `mysql`, `redis`, and `observability`.
+The Compose application service already uses Docker service names `mysql`, `redis`, and
+`observability`. The host-oriented values above are only for the optional workflow that starts
+Spring Boot directly with `./mvnw spring-boot:run`.
 
 ## Linux container deployment
 
@@ -92,50 +97,36 @@ If the application is later added to this Compose network, replace `localhost` w
 and language data therefore travel with the application image; no Tesseract installation is
 required on the Linux host.
 
-Build the application image from the repository root:
+The recommended production command builds and starts the complete stack:
+
+```bash
+docker compose --env-file .env.production up -d --build
+docker compose ps
+docker compose logs -f app
+```
+
+The application, MySQL, and Redis use the Compose network; uploaded files, database data, and
+Redis data are persisted in named volumes. `APP_BIND_ADDRESS` defaults to `127.0.0.1`, so put
+Nginx or Caddy in front of it for HTTPS. Do not expose MySQL, Redis, or OTLP ports to the public
+internet. Set `GRAFANA_BIND_ADDRESS` to a restricted address or proxy Grafana behind HTTPS.
+
+To inspect the application image's OCR installation from the repository root:
 
 ```bash
 docker build -t veri-rag:latest .
 docker run --rm --entrypoint tesseract veri-rag:latest --list-langs
 ```
 
-The second command should show `chi_sim` and `eng`. In production, inject secrets and
-service endpoints as environment variables rather than copying the development `.env` file
-into the image. Mount persistent storage for uploaded source files:
-
-```bash
-docker run -d --name veri-rag-app -p 8080:8080 \
-  --network veri-rag_default \
-  --env-file .env.production \
-  -e SPRING_DATASOURCE_URL='jdbc:mysql://mysql:3306/rag?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai' \
-  -e SPRING_DATA_REDIS_HOST=redis \
-  -e OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://observability:4318/v1/traces \
-  -e OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://observability:4318/v1/metrics \
-  -v veri-rag-files:/app/file \
-  veri-rag:latest
-```
-
-The database, Redis, and observability hostnames above assume the app container shares their
-Docker network. Keep `RAG_OCR_MAX_PAGES` and `RAG_OCR_TIMEOUT_SECONDS` bounded in production,
-because OCR is CPU-intensive.
+The second command should show `chi_sim` and `eng`. In production, inject secrets using
+`.env.production` rather than copying it into the image. Keep `RAG_OCR_MAX_PAGES` and
+`RAG_OCR_TIMEOUT_SECONDS` bounded because OCR is CPU-intensive.
 
 ## Quick checks
 
 ```bash
-docker compose exec mysql mysqladmin ping -h localhost -u root -proot_dev
-docker compose exec redis redis-cli -a veri_rag_dev ping
-docker compose exec redis redis-cli -a veri_rag_dev FT._LIST
+docker compose exec mysql sh -c 'mysqladmin ping -h localhost -u root -p"$MYSQL_ROOT_PASSWORD"'
+docker compose exec redis sh -c 'redis-cli -a "$REDIS_PASSWORD" ping'
+docker compose exec redis sh -c 'redis-cli -a "$REDIS_PASSWORD" FT._LIST'
 ```
 
 Expected results are `mysqld is alive`, `PONG`, and a Redis search-index list (initially empty).
-
-## Spring AI dependency to add during application integration
-
-```xml
-<dependency>
-    <groupId>org.springframework.ai</groupId>
-    <artifactId>spring-ai-starter-vector-store-redis</artifactId>
-</dependency>
-```
-
-MySQL also needs its JDBC driver and either Spring Data JDBC/JPA or plain JDBC. Those application dependencies are intentionally separate from the middleware-only Compose setup.

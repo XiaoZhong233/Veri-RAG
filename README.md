@@ -60,29 +60,27 @@ cp .env.example .env
 # 在 .env 中设置 DASHSCOPE_API_KEY；本地开发也应替换 JWT_SECRET。
 ```
 
-2. 启动基础服务（MySQL、Redis、Grafana/OTel）：
+2. 构建并启动完整服务（应用、MySQL、Redis、Grafana/OTel）：
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 docker compose ps
 ```
 
-3. 在宿主机启动应用：
+3. 查看应用启动日志与健康状态：
 
 ```bash
-set -a
-source .env
-set +a
-./mvnw spring-boot:run
+docker compose logs -f app
+curl http://127.0.0.1:8080/veri-rag/actuator/health
 ```
 
-应用默认地址为 `http://localhost:8081/veri-rag`，网页入口为：
+应用容器默认绑定宿主机 `127.0.0.1:8080`，网页入口为：
 
 ```text
-http://localhost:8081/veri-rag/
+http://localhost:8080/veri-rag/
 ```
 
-> `docker compose up` 当前只启动中间件；Spring Boot 应用按上述命令在宿主机运行。Linux 容器化部署见下文。
+> 云服务器请保留 `APP_BIND_ADDRESS=127.0.0.1`，并通过 Nginx/Caddy 将 HTTPS 流量反代到应用。临时直接演示时，可设为 `0.0.0.0`，并在防火墙中限制 8080 的来源。
 
 本地初始化账号仅用于演示：`admin / 123456`。请勿在生产环境使用该账号、默认数据库密码或默认 JWT Secret。
 
@@ -187,14 +185,14 @@ python3 evaluation/run_full_evaluation.py \
 
 ### Linux / Docker 部署
 
-`Dockerfile` 使用 Java 21 多阶段构建，并在运行时镜像中安装 Tesseract、中文和英文语言包。
+`docker compose up -d --build` 会构建并启动应用容器。`Dockerfile` 使用 Java 21 多阶段构建，并在运行时镜像中安装 Tesseract、中文和英文语言包。
 
 ```bash
 docker build -t veri-rag:latest .
 docker run --rm --entrypoint tesseract veri-rag:latest --list-langs
 ```
 
-生产环境应使用独立的 `.env.production`，挂载持久化文件目录，并将应用容器接入 MySQL、Redis 与观测服务所在网络。完整示例见 [docs/study-case-environment.md](docs/study-case-environment.md)。
+生产环境应使用独立的 `.env.production`，并通过 `docker compose --env-file .env.production up -d --build` 启动。上传文件、MySQL 与 Redis 使用 named volume 持久化；MySQL、Redis、OTel 默认不暴露到公网。完整示例见 [docs/study-case-environment.md](docs/study-case-environment.md)。
 
 ---
 
@@ -219,15 +217,10 @@ Requirements: JDK 21, Docker Compose v2, Python 3 for evaluation, a DashScope-co
 cp .env.example .env
 # Set DASHSCOPE_API_KEY and replace JWT_SECRET in .env.
 
-docker compose up -d
-
-set -a
-source .env
-set +a
-./mvnw spring-boot:run
+docker compose up -d --build
 ```
 
-Open `http://localhost:8081/veri-rag/`. Compose starts MySQL, Redis, and Grafana/OTel; the Spring Boot application runs on the host in this workflow.
+Open `http://localhost:8080/veri-rag/`. Compose builds and starts the Spring Boot application, MySQL, Redis, and Grafana/OTel.
 
 The seeded `admin / 123456` account is for local demonstration only. Never use it, default database passwords, or a default JWT secret in production.
 

@@ -173,6 +173,38 @@ python3 evaluation/run_full_evaluation.py \
 
 已提交的结果与阈值说明见：[Evaluation Summary](docs/Veri-RAG_Evaluation_Summary.docx) 和 [Ablation Study](docs/ablation-study.md)。
 
+### 设计、实验与成本摘要
+
+#### 设计说明
+
+系统将 MySQL 用于用户、文档与会话等事务数据，将 Redis Search 用于向量和检索元数据；上传阶段由
+Tika 解析，扫描 PDF 按阈值触发 Tesseract OCR。问答阶段采用候选过采样、去重、Top-K 证据约束和可选
+LLM 重排序；回答语言跟随用户语言，引用由服务端结构化返回。完整的中英文设计说明见
+[Design Note](docs/design-note.md)。
+
+#### 消融实验与推荐配置
+
+在 47 个真实 API 用例上比较 Top-K、重排序和 Temperature（所有配置均为 47/47 HTTP 成功、P90 小于
+10 秒）：
+
+| 配置 | P90 | Accuracy | Context Precision | Faithfulness | 结论 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Top-K 2，Reranker 关闭，T=0.2 | 1,479 ms | 90.2% | 0.927 | 0.984 | 基线 |
+| Top-K 1，Reranker 关闭，T=0.2 | 1,726 ms | 85.4% | 0.875 | 0.894 | 证据不足 |
+| Top-K 4，Reranker 关闭，T=0.2 | 1,610 ms | 92.7% | 0.913 | 0.988 | 召回更高、上下文更长 |
+| Top-K 2，Reranker 开启，T=0.2 | 3,860 ms | 90.2% | 0.963 | 0.978 | 精度最高但成本/延迟更高 |
+| Top-K 2，Reranker 关闭，T=0.0 | 1,483 ms | 90.2% | 0.927 | 1.000 | 推荐平衡配置 |
+
+推荐 `Top-K=2`、关闭 Reranker、`LLM_TEMPERATURE=0.0`；若更重视召回可用 Top-K 4，若更重视证据
+排序精度可按需开启 Reranker。完整实验设计、全部六组数据与局限性见 [Ablation Study](docs/ablation-study.md)。
+
+#### 在线模型成本估算
+
+按 Qwen Flash 输入 ¥0.00015 / 1K tokens、输出 ¥0.0015 / 1K tokens，及 embedding ¥0.0005 /
+1K tokens 估算，默认配置（Top-K 2、关闭 Reranker）每次在线问答约 **¥0.000645**，即每 1,000 次
+约 **¥0.645**。可选 LLM Reranker 约额外增加 **¥1.125 / 1,000 次**。这是基于 token 假设的工程估算，
+不含一次性文档入库 embedding 和离线 Judge 成本；详见双语版 [Cost Estimate](docs/cost-estimate.md)。
+
 ### 监控、日志与安全
 
 - Grafana：`http://localhost:3000`；演示脚本：`bash scripts/observe-rag-demo.sh`。
@@ -182,6 +214,10 @@ python3 evaluation/run_full_evaluation.py \
 - 部署时必须通过环境变量提供 `DASHSCOPE_API_KEY`、`JWT_SECRET`、数据库与 Redis 密码；不要提交 `.env`。
 
 更多观测信息见 [docs/observability.md](docs/observability.md) 与 [docs/observability-demo.md](docs/observability-demo.md)。
+
+Grafana 的 `LLM指标` dashboard 基于 Prometheus 指标展示端到端、LLM 和向量检索的 P50/P90；
+`observability` 服务使用命名卷持久化 Grafana 与监控数据。指标定义、日志/Trace 注意事项和演示查询见
+[Observability Guide](docs/observability.md) 及 [Observability Demo](docs/observability-demo.md)。
 
 ### Linux / Docker 部署
 
@@ -260,6 +296,51 @@ python3 evaluation/run_full_evaluation.py \
 
 It authenticates, sends the 47 cases, then runs the configured LLM Judges. See [evaluation/README.md](evaluation/README.md) for commands and scoring details.
 
+### Design, experiments, cost, and observability
+
+#### Design note
+
+MySQL stores transactional state (users, documents, and conversations), while Redis Search stores
+vectors and retrieval metadata. Tika handles normal parsing and a threshold triggers Tesseract OCR
+for scanned PDFs. At answer time, candidate oversampling, deduplication, Top-K evidence grounding,
+and an optional LLM reranker control retrieval quality. The answer language follows the user's
+question and citations are returned as structured API data. Read the bilingual [Design Note](docs/design-note.md)
+for the full rationale.
+
+#### Ablation result and selected configuration
+
+The 47 live API cases compared Top-K, reranking, and temperature; every configuration returned
+47/47 HTTP successes and stayed below the 10-second P90 target.
+
+| Configuration | P90 | Accuracy | Context Precision | Faithfulness | Outcome |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Top-K 2, reranker off, T=0.2 | 1,479 ms | 90.2% | 0.927 | 0.984 | Baseline |
+| Top-K 1, reranker off, T=0.2 | 1,726 ms | 85.4% | 0.875 | 0.894 | Too little evidence |
+| Top-K 4, reranker off, T=0.2 | 1,610 ms | 92.7% | 0.913 | 0.988 | Higher recall, longer context |
+| Top-K 2, reranker on, T=0.2 | 3,860 ms | 90.2% | 0.963 | 0.978 | Highest precision, added latency/cost |
+| Top-K 2, reranker off, T=0.0 | 1,483 ms | 90.2% | 0.927 | 1.000 | Recommended balance |
+
+The selected configuration is `Top-K=2`, reranker off, and `LLM_TEMPERATURE=0.0`. Use Top-K 4
+when recall takes priority, or enable reranking selectively when evidence-order precision matters.
+See the [Ablation Study](docs/ablation-study.md) for all six runs, method, and limitations.
+
+#### Online cost estimate
+
+Using the supplied Qwen Flash prices (¥0.00015 input / 1K tokens, ¥0.0015 output / 1K tokens)
+and ¥0.0005 / 1K embedding tokens, the default online path is estimated at **¥0.000645 per
+question**, or **¥0.645 per 1,000 questions**. The optional LLM reranker adds approximately
+**¥1.125 per 1,000 questions**. This is a token-assumption engineering estimate: it excludes
+one-time document ingestion embeddings and offline LLM Judge calls. The bilingual assumptions and
+formula are in [Cost Estimate](docs/cost-estimate.md).
+
+#### Observability
+
+The `LLM指标` Grafana dashboard derives end-to-end, LLM, and vector-retrieval P50/P90 from
+Prometheus histograms. The `observability` service uses a named volume to retain Grafana and
+monitoring data across container recreation. Metric definitions, trace/logging guidance, and demo
+queries are available in the [Observability Guide](docs/observability.md) and
+[Observability Demo](docs/observability-demo.md).
+
 For Linux deployment, build the included Java 21 image; it contains Tesseract plus `chi_sim` and `eng` packs:
 
 ```bash
@@ -272,6 +353,8 @@ Use injected secrets, persistent uploaded-file storage, and the shared MySQL/Red
 ### Project evidence
 
 - [Evaluation Summary](docs/Veri-RAG_Evaluation_Summary.docx)
+- [Design Note](docs/design-note.md)
+- [Online Model Cost Estimate](docs/cost-estimate.md)
 - [Ablation Study](docs/ablation-study.md)
 - [Observability guide](docs/observability.md)
 - [Local environment and OCR guide](docs/study-case-environment.md)

@@ -60,10 +60,11 @@ quality threshold with low latency and the strongest observed Faithfulness. Use 
 answer recall and Accuracy are more important than prompt size. Enable the LLM reranker
 selectively for difficult queries or a higher-precision tier rather than for every request.
 
-## Limitation and pending cost evidence
+## Limitation and cost evidence
 
 Each configuration was run once, so small latency and Judge-score differences may contain
 sampling noise. A repeated run is recommended before treating sub-percentage changes as
 significant. The application and evaluation result currently do not expose provider token usage;
-therefore token cost per 1,000 calls is still pending. Runtime cost must include query embedding,
-generation, and the optional reranker call, while excluding offline LLM Judge calls.
+therefore provider token usage is not yet measured directly. The supplied-price estimate is
+documented in [Online Model Cost Estimate](cost-estimate.md); runtime cost includes query
+embedding, generation, and the optional reranker call, while excluding offline LLM Judge calls.

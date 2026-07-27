@@ -1,6 +1,8 @@
 # Study Case Local Environment
 
-This environment keeps the case-study demo small: MySQL stores relational application data and Redis 8 provides the former Redis Stack capabilities for vector retrieval, caching, and short-lived conversation state.
+This environment keeps the case-study demo small: MySQL stores relational application data and
+Redis Stack Server provides Redis Search vector retrieval, caching, and short-lived conversation
+state.
 
 ## Services
 
@@ -8,10 +10,12 @@ This environment keeps the case-study demo small: MySQL stores relational applic
 | --- | --- | --- |
 | Veri-RAG application | Spring Boot API, ingestion, OCR, retrieval, and chat | `http://localhost:8080/veri-rag` |
 | MySQL 8.4 | Document metadata, ingestion jobs, durable conversation history, evaluation cases, and feedback | Docker network only; optional host loopback `127.0.0.1:3306` |
-| Redis 8.2.7 | RedisJSON documents, HNSW vectors, metadata filtering, retrieval cache, and active conversation state | Docker network only; optional host loopback `127.0.0.1:6379` |
+| Redis Stack Server 7.4 | RedisJSON documents, HNSW vectors, metadata filtering, retrieval cache, and active conversation state | Docker network only; optional host loopback `127.0.0.1:6379` |
 | Grafana OpenTelemetry LGTM | Local metrics, traces, and logs | `http://127.0.0.1:3000` by default |
 
-Redis 8 includes the Search, JSON, and vector functionality previously distributed as Redis Stack. OCR for scanned PDFs belongs in the application ingestion image (for example, Apache Tika plus Tesseract), not in a permanent middleware container.
+`redis/redis-stack-server` is used because Spring AI `RedisVectorStore` requires RediSearch
+`FT.*` commands. OCR for scanned PDFs belongs in the application ingestion image (for example,
+Apache Tika plus Tesseract), not in a permanent middleware container.
 
 ## Scanned PDF OCR
 
@@ -105,10 +109,12 @@ docker compose ps
 docker compose logs -f app
 ```
 
-The application, MySQL, and Redis use the Compose network; uploaded files, database data, and
-Redis data are persisted in named volumes. `APP_BIND_ADDRESS` defaults to `127.0.0.1`, so put
-Nginx or Caddy in front of it for HTTPS. Do not expose MySQL, Redis, or OTLP ports to the public
-internet. Set `GRAFANA_BIND_ADDRESS` to a restricted address or proxy Grafana behind HTTPS.
+The application, MySQL, and Redis use the Compose network; uploaded files, database data, Redis
+data, and Grafana/Prometheus data are persisted in named volumes. The built-in Nginx service
+publishes port 80 and proxies the application at `/veri-rag/` and Grafana at `/grafana/`.
+`APP_BIND_ADDRESS` and `GRAFANA_BIND_ADDRESS` default to `127.0.0.1`; do not expose MySQL,
+Redis, or OTLP ports to the public internet. For a real public deployment, terminate HTTPS at
+Nginx and set `GRAFANA_ROOT_URL` to the external HTTPS URL ending in `/grafana/`.
 
 To inspect the application image's OCR installation from the repository root:
 

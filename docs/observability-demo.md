@@ -25,17 +25,17 @@ RAG_DEMO_USERNAME=your_user RAG_DEMO_PASSWORD=your_password \
 
 ```promql
 # 流式 LLM 调用次数
-rag_llm_duration_milliseconds_count{mode="stream",outcome="success"}
+rag_llm_duration_seconds_count{mode="stream",outcome="success"}
 
 # 流式 LLM 平均首 Token 耗时（应用启动以来）
-sum(rag_llm_duration_milliseconds_sum{mode="stream",outcome="success"})
+sum(rag_llm_duration_seconds_sum{mode="stream",outcome="success"})
 /
-sum(rag_llm_duration_milliseconds_count{mode="stream",outcome="success"})
+sum(rag_llm_duration_seconds_count{mode="stream",outcome="success"})
 
 # 最近 5 分钟的端到端 RAG P90 耗时
 histogram_quantile(
   0.90,
-  sum(rate(rag_request_duration_milliseconds_bucket{outcome="success"}[5m])) by (le)
+  sum(rate(rag_request_duration_seconds_bucket{outcome="success"}[5m])) by (le)
 )
 
 # 回答缓存命中数
@@ -43,3 +43,7 @@ rag_cache_requests_total{result="hit"}
 ```
 
 P90 初次显示 `No data` 时，继续运行脚本一次并等待至少两个 15 秒上报周期；`rate` 需要多个采样点。
+
+完整 Compose 部署会让 Prometheus 直接抓取应用的 `/veri-rag/actuator/prometheus`，并在
+Grafana 的 `LLM指标` dashboard 展示端到端、LLM 和向量检索的 P50/P90。Grafana 的 `/data`
+目录由命名卷持久化，因此重建 observability 容器不会清除 dashboard 或指标数据。

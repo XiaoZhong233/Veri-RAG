@@ -15,7 +15,6 @@
     },
     "editable": true,
     "graphTooltip": 0,
-    "id": 770056891777024,
     "panels": [
       {
         "datasource": { "type": "prometheus", "uid": "prometheus" },

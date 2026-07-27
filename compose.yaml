@@ -100,6 +100,8 @@ services:
       GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost/grafana/}
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
     volumes:
+      # Persists Grafana dashboards/users and Prometheus data across container recreation.
+      - observability-data:/data
       - ./observability/prometheus.yml:/otel-lgtm/prometheus.yaml:ro
     ports:
       - "${GRAFANA_BIND_ADDRESS:-127.0.0.1}:${GRAFANA_PORT:-3000}:3000"
@@ -122,3 +124,4 @@ volumes:
   app-files:
   mysql-data:
   redis-data:
+  observability-data:

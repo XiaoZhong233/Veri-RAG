@@ -126,6 +126,11 @@ rag:
     top-k: ${RAG_RETRIEVAL_TOP_K:2}
     # Top-K 已收紧并在服务端去重；阈值保持 0.75，避免 0.80 造成制度题和追问的误拒答。
     similarity-threshold: ${RAG_SIMILARITY_THRESHOLD:0.75}
+  reranker:
+    # 关闭时保留原向量排序基线；开启时对过采样、去重后的候选使用独立 LLM 相关性评分。
+    enabled: ${RAG_RERANKER_ENABLED:false}
+    # 限制每个候选送入重排序模型的字符数，控制延迟和 Token 成本。
+    max-document-characters: ${RAG_RERANKER_MAX_DOCUMENT_CHARACTERS:3000}
   answer-cache:
     # 是否启用相似问题回答缓存；命中后跳过检索和大模型调用。
     enabled: ${RAG_ANSWER_CACHE_ENABLED:false}

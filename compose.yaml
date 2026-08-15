@@ -90,7 +90,7 @@ services:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_dev}
       TZ: ${TZ:-Asia/Shanghai}
     ports:
-      - "${MYSQL_BIND_ADDRESS:-127.0.0.1}:${MYSQL_PORT:-3306}:3306"
+      - "${MYSQL_BIND_ADDRESS:-127.0.0.1}:${MYSQL_PORT:-3307}:3306"
     volumes:
       - mysql-data:/var/lib/mysql
       - ./src/main/resources/sql/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro

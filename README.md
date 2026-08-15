@@ -254,7 +254,7 @@ docker compose up -d mysql redis observability
 ```bash
 export DASHSCOPE_API_KEY="你的模型服务 API Key"
 export JWT_SECRET="本地开发随机密钥"
-export MYSQL_URL="jdbc:mysql://localhost:3306/veri_rag?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false"
+export MYSQL_URL="jdbc:mysql://localhost:3307/veri_rag?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false"
 export MYSQL_USERNAME="veri_rag"
 export MYSQL_PASSWORD="veri_rag_dev"
 export SPRING_DATA_REDIS_HOST="localhost"

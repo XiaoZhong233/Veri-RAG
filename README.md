@@ -258,7 +258,7 @@ export MYSQL_URL="jdbc:mysql://localhost:3306/veri_rag?useUnicode=true&character
 export MYSQL_USERNAME="veri_rag"
 export MYSQL_PASSWORD="veri_rag_dev"
 export SPRING_DATA_REDIS_HOST="localhost"
-export SPRING_DATA_REDIS_PORT="6379"
+export SPRING_DATA_REDIS_PORT="6380"
 export SPRING_DATA_REDIS_PASSWORD="veri_rag_dev"
 ./mvnw spring-boot:run
 ```

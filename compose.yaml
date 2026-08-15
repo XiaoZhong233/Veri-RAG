@@ -110,7 +110,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-veri_rag_dev}
       REDIS_ARGS: --appendonly yes --requirepass ${REDIS_PASSWORD:-veri_rag_dev}
     ports:
-      - "${REDIS_BIND_ADDRESS:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
+      - "${REDIS_BIND_ADDRESS:-127.0.0.1}:${REDIS_PORT:-6380}:6379"
     volumes:
       - redis-data:/data
     healthcheck:

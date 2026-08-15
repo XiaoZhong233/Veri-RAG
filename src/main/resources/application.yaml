@@ -7,20 +7,20 @@ spring:
   ai:
     openai:
       api-key: ${DASHSCOPE_API_KEY}
-      base-url: https://llm-1yauwtsqkmv66e2w.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+      base-url: ${DASHSCOPE_BASE_URL:https://llm-1yauwtsqkmv66e2w.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}
       chat:
 #        model: qwen3.7-plus
-        model: qwen3.7-flash
+        model: ${LLM_CHAT_MODEL:qwen3.7-flash}
 #        model: qwen-flash
         # OpenAI Java SDK 默认整次请求仅允许 60 秒；推理模型即使已开始流式输出也可能被总超时取消。
         timeout: ${LLM_TIMEOUT:5m}
         # 限制单次输出，避免冗长回答拉高 LLM 完整生成 P90；可通过 LLM_MAX_TOKENS 覆盖。
         max-tokens: ${LLM_MAX_TOKENS:1000}
         # 企业知识库问答以稳定、简洁为主，降低随机性和重复输出概率。
-        temperature: 0.2
+        temperature: ${LLM_TEMPERATURE:0.2}
       embedding:
-        model: qwen3.7-text-embedding
-        dimensions: 1024
+        model: ${EMBEDDING_MODEL:qwen3.7-text-embedding}
+        dimensions: ${EMBEDDING_DIMENSIONS:1024}
     vectorstore:
       redis:
         initialize-schema: true
@@ -28,7 +28,9 @@ spring:
         prefix: "veri-rag:embedding:"
   data:
     redis:
-      url: redis://localhost:6380
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      port: ${SPRING_DATA_REDIS_PORT:6380}
+      password: ${SPRING_DATA_REDIS_PASSWORD:}
       client-type: jedis
   datasource:
     url: ${MYSQL_URL:jdbc:mysql://localhost:3306/veri_rag?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false}

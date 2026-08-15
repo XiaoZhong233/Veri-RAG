@@ -11,15 +11,11 @@ COPY src ./src
 RUN mvn --batch-mode --no-transfer-progress -DskipTests package
 
 
-# Tesseract must be in the same runtime image as the application: scanned PDFs are
-# processed by Apache Tika in the Spring Boot process, not by the database containers.
 FROM eclipse-temurin:21-jre-jammy
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        tesseract-ocr \
-        tesseract-ocr-eng \
-        tesseract-ocr-chi-sim \
+        curl \
         tzdata \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system spring \
@@ -30,8 +26,6 @@ COPY --from=build /workspace/target/*.jar /app/app.jar
 
 ENV TZ=Asia/Shanghai \
     SERVER_PORT=8080 \
-    RAG_OCR_ENABLED=true \
-    RAG_OCR_LANGUAGE=chi_sim+eng \
     FILE_UPLOAD_PATH=/app/file
 
 RUN mkdir -p /app/file && chown -R spring:spring /app

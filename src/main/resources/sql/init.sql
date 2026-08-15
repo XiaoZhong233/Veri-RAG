@@ -1,9 +1,5 @@
-DROP DATABASE IF EXISTS veri_rag;
-CREATE DATABASE veri_rag DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-USE veri_rag;
-
 -- 用户表（管理员 ADMIN / 普通用户 USER）
-CREATE TABLE t_user (
+CREATE TABLE IF NOT EXISTS t_user (
   id            BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
   username      VARCHAR(64)  NOT NULL COMMENT '登录名',
   password      VARCHAR(32)  NOT NULL COMMENT 'MD5 密码',
@@ -17,7 +13,7 @@ CREATE TABLE t_user (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户表';
 
 -- 知识库分类表
-CREATE TABLE t_category (
+CREATE TABLE IF NOT EXISTS t_category (
   id          BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
   name        VARCHAR(128) NOT NULL COMMENT '分类名称',
   description VARCHAR(512) DEFAULT NULL COMMENT '描述',
@@ -28,7 +24,7 @@ CREATE TABLE t_category (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识库分类';
 
 -- 知识文档元数据表
-CREATE TABLE t_document (
+CREATE TABLE IF NOT EXISTS t_document (
   id             BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
   category_id    BIGINT       NOT NULL COMMENT '分类ID',
   title          VARCHAR(255) NOT NULL COMMENT '显示标题',
@@ -47,7 +43,7 @@ CREATE TABLE t_document (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识文档';
 
 -- 问答会话
-CREATE TABLE t_chat_session (
+CREATE TABLE IF NOT EXISTS t_chat_session (
   id          BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
   user_id     BIGINT      NOT NULL COMMENT '用户ID',
   title       VARCHAR(255) DEFAULT NULL COMMENT '会话标题',
@@ -60,7 +56,7 @@ CREATE TABLE t_chat_session (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='聊天会话';
 
 -- 问答消息
-CREATE TABLE t_chat_message (
+CREATE TABLE IF NOT EXISTS t_chat_message (
   id          BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
   session_id  BIGINT      NOT NULL COMMENT '会话ID',
   role        VARCHAR(16) NOT NULL COMMENT 'USER / ASSISTANT',
@@ -72,7 +68,7 @@ CREATE TABLE t_chat_message (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='聊天消息';
 
 -- 系统日志（统计用）
-CREATE TABLE t_system_log (
+CREATE TABLE IF NOT EXISTS t_system_log (
   id          BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
   user_id     BIGINT      DEFAULT NULL COMMENT '用户ID',
   action      VARCHAR(128) NOT NULL COMMENT '动作描述',
@@ -84,18 +80,18 @@ CREATE TABLE t_system_log (
 
 -- ========== 测试数据 ==========
 -- 密码均为 123456 的 MD5
-INSERT INTO t_user (username, password, real_name, role, status) VALUES
+INSERT IGNORE INTO t_user (username, password, real_name, role, status) VALUES
 ('admin', 'e10adc3949ba59abbe56e057f20f883e', 'Admin', 'ADMIN', 1),
 ('user1', 'e10adc3949ba59abbe56e057f20f883e', 'Howell', 'USER', 1);
 
-INSERT INTO t_kb_category (name, description, icon, sort_order) VALUES
+INSERT INTO t_category (name, description, icon, sort_order) VALUES
 ('技术文档', '研发与接口说明类文档', 'Document', 1),
 ('规章制度', '公司制度与流程', 'Notebook', 2),
 ('产品手册', '产品使用说明', 'Goods', 3),
 ('常见问题', 'FAQ 与帮助', 'QuestionFilled', 4);
 
 -- 示例文档元数据（实际文件由管理员在界面中上传后解析入库；此处仅演示列表）
-INSERT INTO t_kb_document (category_id, title, file_name, file_path, file_type, file_size, status, vector_count, upload_user_id) VALUES
+INSERT INTO t_document (category_id, title, file_name, file_path, file_type, file_size, status, vector_count, upload_user_id) VALUES
 (1, '示例-API说明', 'api_example.txt', '202605/example_api.txt', 'txt', 1024, 'SUCCESS', 0, 1),
 (2, '示例-考勤制度', 'hr_rules.pdf', '202605/hr_rules.pdf', 'pdf', 204800, 'PROCESSING', 0, 1);
 

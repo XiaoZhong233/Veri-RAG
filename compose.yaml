@@ -13,12 +13,13 @@ services:
       FILE_UPLOAD_PATH: /app/file
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:?Set DASHSCOPE_API_KEY in your environment file}
       DASHSCOPE_BASE_URL: ${DASHSCOPE_BASE_URL:-https://llm-1yauwtsqkmv66e2w.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}
-      LLM_CHAT_MODEL: ${LLM_CHAT_MODEL:-qwen-flash}
+      LLM_CHAT_MODEL: ${LLM_CHAT_MODEL:-qwen3.7-flash}
+      LLM_TIMEOUT: ${LLM_TIMEOUT:-5m}
       LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-1000}
       LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.2}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-qwen3.7-text-embedding}
       EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1024}
-      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-rag}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-veri_rag}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
       SPRING_DATASOURCE_USERNAME: ${MYSQL_USER:-veri_rag}
       SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in your environment file}
       SPRING_DATA_REDIS_HOST: redis
@@ -27,20 +28,41 @@ services:
       SPRING_AI_VECTORSTORE_REDIS_INITIALIZE_SCHEMA: ${SPRING_AI_VECTORSTORE_REDIS_INITIALIZE_SCHEMA:-true}
       SPRING_AI_VECTORSTORE_REDIS_INDEX_NAME: ${SPRING_AI_VECTORSTORE_REDIS_INDEX_NAME:-veri-rag-index}
       SPRING_AI_VECTORSTORE_REDIS_PREFIX: ${SPRING_AI_VECTORSTORE_REDIS_PREFIX:-veri-rag:embedding:}
+      SPRING_SERVLET_MULTIPART_MAX_FILE_SIZE: ${SPRING_SERVLET_MULTIPART_MAX_FILE_SIZE:-50MB}
+      SPRING_SERVLET_MULTIPART_MAX_REQUEST_SIZE: ${SPRING_SERVLET_MULTIPART_MAX_REQUEST_SIZE:-55MB}
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in your environment file}
       JWT_EXPIRE_HOURS: ${JWT_EXPIRE_HOURS:-24}
-      RAG_OCR_ENABLED: ${RAG_OCR_ENABLED:-true}
-      RAG_OCR_LANGUAGE: ${RAG_OCR_LANGUAGE:-chi_sim+eng}
-      RAG_OCR_MIN_CHARS_PER_PAGE: ${RAG_OCR_MIN_CHARS_PER_PAGE:-40}
-      RAG_OCR_MAX_PAGES: ${RAG_OCR_MAX_PAGES:-50}
-      RAG_OCR_DPI: ${RAG_OCR_DPI:-300}
-      RAG_OCR_TIMEOUT_SECONDS: ${RAG_OCR_TIMEOUT_SECONDS:-120}
-      RAG_RETRIEVAL_TOP_K: ${RAG_RETRIEVAL_TOP_K:-2}
+      RAG_INTENT_CLASSIFIER_ENABLED: ${RAG_INTENT_CLASSIFIER_ENABLED:-true}
+      RAG_INTENT_JAVA_RULES_ENABLED: ${RAG_INTENT_JAVA_RULES_ENABLED:-false}
+      RAG_INTENT_CLASSIFIER_TIMEOUT: ${RAG_INTENT_CLASSIFIER_TIMEOUT:-15s}
+      RAG_INTENT_CLASSIFIER_MODEL: ${RAG_INTENT_CLASSIFIER_MODEL:-}
+      RAG_INTENT_CLASSIFIER_THINKING_ENABLED: ${RAG_INTENT_CLASSIFIER_THINKING_ENABLED:-false}
+      RAG_MANUAL_HISTORY_ENABLED: ${RAG_MANUAL_HISTORY_ENABLED:-false}
+      RAG_HISTORY_MAX_MESSAGES: ${RAG_HISTORY_MAX_MESSAGES:-6}
+      RAG_CHUNK_SIZE: ${RAG_CHUNK_SIZE:-500}
+      RAG_MAX_NUM_CHUNKS: ${RAG_MAX_NUM_CHUNKS:-10000}
+      RAG_EMBEDDING_BATCH_SIZE: ${RAG_EMBEDDING_BATCH_SIZE:-20}
+      RAG_RETRIEVAL_TOP_K: ${RAG_RETRIEVAL_TOP_K:-8}
       RAG_SIMILARITY_THRESHOLD: ${RAG_SIMILARITY_THRESHOLD:-0.75}
-      RAG_RERANKER_ENABLED: ${RAG_RERANKER_ENABLED:-false}
-      RAG_RERANKER_MAX_DOCUMENT_CHARACTERS: ${RAG_RERANKER_MAX_DOCUMENT_CHARACTERS:-3000}
+      RAG_ANSWER_CACHE_ENABLED: ${RAG_ANSWER_CACHE_ENABLED:-false}
+      RAG_ANSWER_CACHE_SIMILARITY_THRESHOLD: ${RAG_ANSWER_CACHE_SIMILARITY_THRESHOLD:-0.93}
+      RAG_ANSWER_CACHE_TTL_MINUTES: ${RAG_ANSWER_CACHE_TTL_MINUTES:-15}
+      RAG_ANSWER_CACHE_MAX_ENTRIES: ${RAG_ANSWER_CACHE_MAX_ENTRIES:-200}
+      RAG_MEMORY_ENABLED: ${RAG_MEMORY_ENABLED:-true}
+      RAG_MEMORY_RECENT_MESSAGES: ${RAG_MEMORY_RECENT_MESSAGES:-8}
+      RAG_MEMORY_SUMMARY_TRIGGER_MESSAGES: ${RAG_MEMORY_SUMMARY_TRIGGER_MESSAGES:-12}
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://observability:4318/v1/traces
       OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: http://observability:4318/v1/metrics
+      OTEL_METRICS_EXPORT_STEP: ${OTEL_METRICS_EXPORT_STEP:-15s}
+      OTEL_TRACING_SAMPLING_PROBABILITY: ${OTEL_TRACING_SAMPLING_PROBABILITY:-1.0}
+      WECOM_BOT_ENABLED: ${WECOM_BOT_ENABLED:-false}
+      WECOM_BOT_ID: ${WECOM_BOT_ID:-}
+      WECOM_BOT_SECRET: ${WECOM_BOT_SECRET:-}
+      WECOM_BOT_DISPLAY_NAME: ${WECOM_BOT_DISPLAY_NAME:-londonist 助手}
+      WECOM_BOT_WEBSOCKET_URL: ${WECOM_BOT_WEBSOCKET_URL:-wss://openws.work.weixin.qq.com}
+      WECOM_BOT_USER_ID: ${WECOM_BOT_USER_ID:-2}
+      WECOM_BOT_HEARTBEAT_INTERVAL: ${WECOM_BOT_HEARTBEAT_INTERVAL:-30s}
+      WECOM_BOT_STREAM_UPDATE_INTERVAL: ${WECOM_BOT_STREAM_UPDATE_INTERVAL:-2500ms}
     ports:
       - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-8080}:8080"
     volumes:
@@ -50,13 +72,19 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://localhost:8080/veri-rag/actuator/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
 
   mysql:
     image: mysql:8.4
     container_name: veri-rag-mysql
     restart: unless-stopped
     environment:
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-rag}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-veri_rag}
       MYSQL_USER: ${MYSQL_USER:-veri_rag}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-veri_rag_dev}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_dev}
@@ -105,6 +133,8 @@ services:
       - ./observability/prometheus.yml:/otel-lgtm/prometheus.yaml:ro
     ports:
       - "${GRAFANA_BIND_ADDRESS:-127.0.0.1}:${GRAFANA_PORT:-3000}:3000"
+      - "${OTLP_BIND_ADDRESS:-127.0.0.1}:${OTLP_HTTP_PORT:-4318}:4318"
+      - "${PROMETHEUS_BIND_ADDRESS:-127.0.0.1}:${PROMETHEUS_PORT:-9090}:9090"
 
   nginx:
     image: nginx:1.27-alpine
@@ -112,7 +142,7 @@ services:
     restart: unless-stopped
     depends_on:
       app:
-        condition: service_started
+        condition: service_healthy
       observability:
         condition: service_started
     ports:

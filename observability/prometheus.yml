@@ -1,0 +1,31 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_native_histograms: true
+
+# Preserve resource attributes received through the OTLP endpoint bundled with LGTM.
+otlp:
+  keep_identifying_resource_attributes: true
+  promote_resource_attributes:
+    - service.instance.id
+    - service.name
+    - service.namespace
+    - service.version
+    - deployment.environment
+    - deployment.environment.name
+    - container.name
+    - host.name
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          app: prometheus
+
+  - job_name: veri-rag-app
+    metrics_path: /veri-rag/actuator/prometheus
+    static_configs:
+      - targets: ["app:8080"]
+        labels:
+          app: veri-rag

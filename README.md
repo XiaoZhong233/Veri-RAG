@@ -89,7 +89,11 @@ flowchart LR
 
 ```text
 veri-rag/
-├── compose.yaml                         # MySQL、Redis、Grafana/OTel 本地环境
+├── .env.example                         # Docker 部署环境变量模板
+├── Dockerfile                           # Java 21 多阶段应用镜像
+├── compose.yaml                         # 应用及完整依赖编排
+├── nginx/default.conf                   # 应用、SSE 与 Grafana 反向代理
+├── observability/prometheus.yml         # Prometheus 抓取与 OTLP 资源配置
 ├── docs/                                # 可观测性与演示说明
 ├── outputs/                             # 抓取文档、结构化模板和转换结果
 ├── scripts/
@@ -138,71 +142,128 @@ veri-rag/
 - OpenTelemetry + Prometheus + Grafana
 - 原生 HTML、CSS、JavaScript
 
-## 本地运行
+## Docker 部署
 
-### 1. 环境要求
+Compose 会启动 Spring Boot、MySQL 8.4、Redis Stack、Grafana OTEL LGTM 和 Nginx。宿主机只需安装 Docker Engine 与 Docker Compose v2；Java 和 Maven 仅在镜像构建阶段使用。
 
-- JDK 21
-- Docker / Docker Compose
-- 可用的 OpenAI 兼容模型与 Embedding 服务
-- Maven Wrapper 已包含在项目中
-
-### 2. 启动基础设施
+### 1. 创建环境文件
 
 ```bash
-docker compose up -d
+cp .env.example .env
 ```
 
-`compose.yaml` 默认启动：
+至少修改以下配置：
 
-- MySQL：`localhost:3306`
-- Redis：`localhost:6379`
-- Grafana：`http://localhost:3000`
-- OTLP HTTP：`localhost:4318`
+```dotenv
+DASHSCOPE_API_KEY=你的模型服务密钥
+JWT_SECRET=长度足够的随机密钥
+MYSQL_PASSWORD=数据库业务用户密码
+MYSQL_ROOT_PASSWORD=数据库 root 密码
+REDIS_PASSWORD=Redis 密码
+```
 
-### 3. 配置环境变量
+`.env` 已被 Git 忽略，不要把真实密钥提交到仓库。公网部署时还应设置：
 
-当前 `application.yaml` 的本地默认值与 `compose.yaml` 的默认账号、Redis 端口不完全一致，建议显式设置：
+```dotenv
+GRAFANA_ROOT_URL=https://your-domain.example/grafana/
+```
+
+企业微信机器人在 Docker 部署中默认关闭。需要启用时设置 `WECOM_BOT_ENABLED=true`，并填写 `WECOM_BOT_ID` 和 `WECOM_BOT_SECRET`。
+
+### 2. 构建并启动
+
+```bash
+docker compose up -d --build
+docker compose ps
+```
+
+服务启动顺序为 MySQL/Redis 健康 → 应用健康 → Nginx。首次构建需要下载 Maven 和系统依赖，耗时会比后续启动更长。
+
+默认入口：
+
+| 地址 | 用途 |
+|---|---|
+| `http://localhost/` | 重定向到管理页面 |
+| `http://localhost/veri-rag/` | 管理页面和 API |
+| `http://localhost/grafana/` | Grafana，可观测性入口 |
+| `http://127.0.0.1:8080/veri-rag/actuator/health` | 应用健康检查 |
+| `http://127.0.0.1:3000` | Grafana 本机直连入口 |
+
+MySQL、Redis、应用直连端口和 Grafana 直连端口默认只绑定 `127.0.0.1`；Nginx 的 80 端口默认绑定所有网卡。
+
+### 3. 数据库初始化与持久化
+
+首次创建 `mysql-data` 卷时，MySQL 会执行 `src/main/resources/sql/init.sql`，创建基础用户、知识库和会话表。应用启动后会继续执行幂等的 `schema.sql`，补齐房源、详情、库存、报价和企业微信相关表。
+
+初始化脚本只会在空 MySQL 数据卷上执行。更新 SQL 后，已有环境应使用迁移脚本升级，不能依赖重启容器重复初始化。
+
+以下命名卷保存持久化数据：
+
+- `app-files`：上传文件
+- `mysql-data`：业务数据库
+- `redis-data`：向量和 Redis 数据
+- `observability-data`：Grafana、Prometheus、Tempo 与 Loki 数据
+
+执行 `docker compose down` 不会删除这些卷；执行 `docker compose down -v` 会永久删除全部上述数据，使用前务必确认。
+
+初始化演示账号为 `admin / 123456`。它仅供首次登录，部署后应立即修改，生产环境禁止继续使用默认密码。
+
+### 4. 验证与排障
+
+```bash
+docker compose ps
+docker compose logs -f app
+docker compose logs -f mysql redis observability nginx
+curl --fail http://127.0.0.1:8080/veri-rag/actuator/health
+```
+
+验证 Redis Search 模块和向量索引：
+
+```bash
+docker compose exec redis sh -c 'redis-cli -a "$REDIS_PASSWORD" FT._LIST'
+```
+
+Grafana/Prometheus 会从 `app:8080/veri-rag/actuator/prometheus` 抓取指标；应用通过内部地址 `observability:4318` 上报 OTLP Trace 和 Metrics，不需要把 OTLP 或 Prometheus 端口暴露到公网。
+
+### 5. 更新与停止
+
+```bash
+git pull
+docker compose up -d --build
+docker compose logs --tail=200 app
+```
+
+停止但保留数据：
+
+```bash
+docker compose down
+```
+
+生产环境应在 Nginx 前配置 HTTPS，或将 `nginx/default.conf` 扩展为证书终止节点，并限制 MySQL、Redis、Actuator 和 Grafana 的访问来源。
+
+## 宿主机开发运行
+
+只在 Docker 中启动依赖：
+
+```bash
+docker compose up -d mysql redis observability
+```
+
+然后配置本机应用连接并启动：
 
 ```bash
 export DASHSCOPE_API_KEY="你的模型服务 API Key"
+export JWT_SECRET="本地开发随机密钥"
 export MYSQL_URL="jdbc:mysql://localhost:3306/veri_rag?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false"
 export MYSQL_USERNAME="veri_rag"
 export MYSQL_PASSWORD="veri_rag_dev"
-export SPRING_DATA_REDIS_URL="redis://:veri_rag_dev@localhost:6379"
-```
-
-### 4. 初始化数据库
-
-应用启动时会执行 `src/main/resources/schema.sql`，补齐公寓、详情、库存、价格和推荐相关业务表。
-
-> 注意：`src/main/resources/sql/init.sql` 会先删除整个 `veri_rag` 数据库，而且其中仍存在旧表名示例，只适合开发环境参考，当前不要直接在已有数据的数据库上执行。基础用户、知识库和会话表应通过受控迁移脚本初始化。此项已列入下方 P0 优化计划。
-
-开发库中如已存在初始化用户，可以使用对应账号登录。旧演示 SQL 中的默认管理员为 `admin / 123456`，生产环境禁止继续使用该密码。
-
-### 5. 启动应用
-
-```bash
+export SPRING_DATA_REDIS_HOST="localhost"
+export SPRING_DATA_REDIS_PORT="6379"
+export SPRING_DATA_REDIS_PASSWORD="veri_rag_dev"
 ./mvnw spring-boot:run
 ```
 
-访问：
-
-```text
-http://localhost:8081/veri-rag/
-```
-
-### 6. 运行测试
-
-```bash
-./mvnw test
-```
-
-只执行与房源 Tool 相关的测试：
-
-```bash
-./mvnw -Dtest='PropertyQueryToolsTests,PropertyQueryToolsIntegrationTests,PropertyQueryRouterTests,PropertyIntentClassifierTests' test
-```
+本机开发入口为 `http://localhost:8081/veri-rag/`。
 
 ## 常用配置
 
@@ -221,8 +282,8 @@ http://localhost:8081/veri-rag/
 | `RAG_ANSWER_CACHE_ENABLED` | `false` | 是否启用相似问答缓存 |
 | `RAG_MEMORY_ENABLED` | `true` | 是否启用会话摘要 |
 | `RAG_MEMORY_RECENT_MESSAGES` | `8` | 保留的最近原始消息数 |
-| `WECOM_BOT_ENABLED` | `true` | 是否启动企业微信机器人长连接 |
-| `WECOM_BOT_ID` | 配置文件开发值 | 企业微信智能机器人 BotID |
+| `WECOM_BOT_ENABLED` | Docker 中为 `false` | 是否启动企业微信机器人长连接 |
+| `WECOM_BOT_ID` | 无 | 企业微信智能机器人 BotID |
 | `WECOM_BOT_SECRET` | 配置文件开发值 | 长连接专用 Secret；生产必须使用环境变量 |
 | `WECOM_BOT_DISPLAY_NAME` | `londonist 助手` | 群聊中用于精确移除 `@机器人` 的展示名称 |
 | `WECOM_BOT_USER_ID` | `2` | 企业微信会话归属的本地用户 ID |

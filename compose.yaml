@@ -1,20 +1,71 @@
 name: veri-rag
 
 services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: veri-rag:latest
+    container_name: veri-rag-app
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: "8080"
+      FILE_UPLOAD_PATH: /app/file
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:?Set DASHSCOPE_API_KEY in your environment file}
+      DASHSCOPE_BASE_URL: ${DASHSCOPE_BASE_URL:-https://llm-1yauwtsqkmv66e2w.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}
+      LLM_CHAT_MODEL: ${LLM_CHAT_MODEL:-qwen-flash}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-1000}
+      LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.2}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-qwen3.7-text-embedding}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1024}
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-rag}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USER:-veri_rag}
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in your environment file}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: "6379"
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in your environment file}
+      SPRING_AI_VECTORSTORE_REDIS_INITIALIZE_SCHEMA: ${SPRING_AI_VECTORSTORE_REDIS_INITIALIZE_SCHEMA:-true}
+      SPRING_AI_VECTORSTORE_REDIS_INDEX_NAME: ${SPRING_AI_VECTORSTORE_REDIS_INDEX_NAME:-veri-rag-index}
+      SPRING_AI_VECTORSTORE_REDIS_PREFIX: ${SPRING_AI_VECTORSTORE_REDIS_PREFIX:-veri-rag:embedding:}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in your environment file}
+      JWT_EXPIRE_HOURS: ${JWT_EXPIRE_HOURS:-24}
+      RAG_OCR_ENABLED: ${RAG_OCR_ENABLED:-true}
+      RAG_OCR_LANGUAGE: ${RAG_OCR_LANGUAGE:-chi_sim+eng}
+      RAG_OCR_MIN_CHARS_PER_PAGE: ${RAG_OCR_MIN_CHARS_PER_PAGE:-40}
+      RAG_OCR_MAX_PAGES: ${RAG_OCR_MAX_PAGES:-50}
+      RAG_OCR_DPI: ${RAG_OCR_DPI:-300}
+      RAG_OCR_TIMEOUT_SECONDS: ${RAG_OCR_TIMEOUT_SECONDS:-120}
+      RAG_RETRIEVAL_TOP_K: ${RAG_RETRIEVAL_TOP_K:-2}
+      RAG_SIMILARITY_THRESHOLD: ${RAG_SIMILARITY_THRESHOLD:-0.75}
+      RAG_RERANKER_ENABLED: ${RAG_RERANKER_ENABLED:-false}
+      RAG_RERANKER_MAX_DOCUMENT_CHARACTERS: ${RAG_RERANKER_MAX_DOCUMENT_CHARACTERS:-3000}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://observability:4318/v1/traces
+      OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: http://observability:4318/v1/metrics
+    ports:
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-8080}:8080"
+    volumes:
+      - app-files:/app/file
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   mysql:
     image: mysql:8.4
     container_name: veri-rag-mysql
     restart: unless-stopped
     environment:
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-veri_rag}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-rag}
       MYSQL_USER: ${MYSQL_USER:-veri_rag}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-veri_rag_dev}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_dev}
       TZ: ${TZ:-Asia/Shanghai}
     ports:
-      - "${MYSQL_PORT:-3306}:3306"
+      - "${MYSQL_BIND_ADDRESS:-127.0.0.1}:${MYSQL_PORT:-3306}:3306"
     volumes:
       - mysql-data:/var/lib/mysql
+      - ./src/main/resources/sql/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p\"$${MYSQL_ROOT_PASSWORD}\" --silent"]
       interval: 5s
@@ -23,21 +74,19 @@ services:
       start_period: 20s
 
   redis:
-    image: redis:latest
+    # Redis Stack Server includes RediSearch, required by Spring AI RedisVectorStore (FT.* commands).
+    image: redis/redis-stack-server:7.4.0-v8
     container_name: veri-rag-redis
     restart: unless-stopped
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-veri_rag_dev}
-    command:
-      - sh
-      - -c
-      - exec redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}"
+      REDIS_ARGS: --appendonly yes --requirepass ${REDIS_PASSWORD:-veri_rag_dev}
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${REDIS_BIND_ADDRESS:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep PONG"]
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep PONG && redis-cli -a \"$${REDIS_PASSWORD}\" FT._LIST >/dev/null"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -47,12 +96,32 @@ services:
     image: grafana/otel-lgtm:0.27.1
     container_name: veri-rag-observability
     restart: unless-stopped
+    environment:
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost/grafana/}
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+    volumes:
+      # Persists Grafana dashboards/users and Prometheus data across container recreation.
+      - observability-data:/data
+      - ./observability/prometheus.yml:/otel-lgtm/prometheus.yaml:ro
     ports:
-      - "${GRAFANA_PORT:-3000}:3000"
-      - "${OTLP_GRPC_PORT:-4317}:4317"
-      - "${OTLP_HTTP_PORT:-4318}:4318"
-      - "${PROMETHEUS_PORT:-9090}:9090"
+      - "${GRAFANA_BIND_ADDRESS:-127.0.0.1}:${GRAFANA_PORT:-3000}:3000"
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: veri-rag-nginx
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_started
+      observability:
+        condition: service_started
+    ports:
+      - "${NGINX_BIND_ADDRESS:-0.0.0.0}:${NGINX_HTTP_PORT:-80}:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
 
 volumes:
+  app-files:
   mysql-data:
   redis-data:
+  observability-data:

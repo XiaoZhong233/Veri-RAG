@@ -9,7 +9,7 @@ docker compose up -d observability
 ./mvnw spring-boot:run
 ```
 
-- Grafana: http://localhost:3000 或 http://localhost/grafana/ （默认账号 `admin` / `admin`）
+- Grafana: http://localhost:3000 或 http://localhost:8088/grafana/ （默认账号 `admin` / `admin`）
 - Prometheus: http://localhost:9090
 - 应用 health: http://localhost:8081/veri-rag/actuator/health
 - 应用 Prometheus 指标: http://localhost:8081/veri-rag/actuator/prometheus

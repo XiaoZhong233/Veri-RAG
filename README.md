@@ -183,13 +183,13 @@ docker compose ps
 
 | 地址 | 用途 |
 |---|---|
-| `http://localhost/` | 重定向到管理页面 |
-| `http://localhost/veri-rag/` | 管理页面和 API |
-| `http://localhost/grafana/` | Grafana，可观测性入口 |
+| `http://localhost:8088/` | 重定向到管理页面 |
+| `http://localhost:8088/veri-rag/` | 管理页面和 API |
+| `http://localhost:8088/grafana/` | Grafana，可观测性入口 |
 | `http://127.0.0.1:8080/veri-rag/actuator/health` | 应用健康检查 |
 | `http://127.0.0.1:3000` | Grafana 本机直连入口 |
 
-MySQL、Redis、应用直连端口和 Grafana 直连端口默认只绑定 `127.0.0.1`；Nginx 的 80 端口默认绑定所有网卡。
+MySQL、Redis、应用直连端口和 Grafana 直连端口默认只绑定 `127.0.0.1`；Nginx 的 `8088` 端口默认绑定所有网卡。
 
 ### 3. 数据库初始化与持久化
 

@@ -21,7 +21,6 @@ import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.text.Normalizer;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -43,8 +42,8 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 /**
- * 面向模型的只读房源工具。所有日期、租期、价格和库存判断都在服务端完成，
- * 模型只负责收集条件和组织结果。
+ * 面向模型的只读房源工具。所有日期、租期、预算和库存判断都在服务端完成。
+ * 价格仅用于服务端预算过滤，不通过 Tool 返回给模型。
  */
 @Component
 @RequiredArgsConstructor
@@ -54,6 +53,7 @@ public class PropertyQueryTools {
     private static final int DEFAULT_RESIDENCE_LIMIT = 4;
     private static final int MAX_RESIDENCE_LIMIT = 4;
     private static final int MAX_ROOMS_PER_RESIDENCE = 2;
+    private static final int MAX_ROOM_OPTIONS = 6;
     /**
      * 销售优先房源只允许越过通勤时间最多慢 3 分钟的相邻候选。
      * 这样可以影响“条件相近”的排序，但不会掩盖明显更优的位置。
@@ -68,13 +68,14 @@ public class PropertyQueryTools {
     private final SalesRecommendationService salesRecommendationService;
 
     @Tool(name = "search_room_offers", description = """
-            查询结构化公寓房型、入住时间、租期价格和库存。适用于找房、报价、
+            查询结构化公寓房型、入住时间、租期和库存。适用于找房、预算筛选、
             可预订状态和指定城市/公寓/房型筛选。startDateFrom/startDateTo 表示
             可接受的起租日期窗口，格式 YYYY-MM-DD；stayWeeks 是实际租住周数。
             nearbyPlaceKeyword 可直接按学校或地标筛选，maxTravelMinutes 限制资料中
             明确给出的最长通勤时间。preferredTravelModes 只在用户明确提出交通方式
             偏好时使用；未指定时仅按通勤分钟排序，不预设步行、地铁或公交的高低。
-            结果按不同公寓分组，并返回匹配地点证据。
+            结果按不同公寓分组，并返回匹配地点证据。具体价格不会返回；即使用户
+            提供预算，也只在服务端过滤是否符合预算。
             residenceNames 仅用于用户明确指定一组公寓时的硬限制。本工具每次最多
             返回4个公寓、每个公寓最多2个房型；结果不足或为空时不要再次调用。
             """)
@@ -190,8 +191,10 @@ public class PropertyQueryTools {
                 .filter(item -> matchesResidenceKeyword(item, residenceKeyword))
                 .filter(item -> matchesResidenceCandidates(item, requestedResidenceNames))
                 .toList();
+        Integer effectiveMaxTravelMinutes = !isBlank(nearbyPlaceKeyword)
+                && maxTravelMinutes == null ? Integer.valueOf(25) : maxTravelMinutes;
         Map<Long, List<ResidenceNearbyPlace>> nearbyByResidence =
-                loadMatchingNearby(cityResidences, nearbyPlaceKeyword, maxTravelMinutes,
+                loadMatchingNearby(cityResidences, nearbyPlaceKeyword, effectiveMaxTravelMinutes,
                         requestedTravelModes);
         List<Residence> residences = isBlank(nearbyPlaceKeyword)
                 ? cityResidences
@@ -200,9 +203,9 @@ public class PropertyQueryTools {
                         .toList();
         if (residences.isEmpty()) {
             return new RoomOfferSearchResult(city, residenceKeyword, requestedResidenceNames,
-                    nearbyPlaceKeyword, maxTravelMinutes,
+                    nearbyPlaceKeyword, effectiveMaxTravelMinutes,
                     startFrom, startTo,
-                    stayWeeks, 0, 0, 0, List.of(),
+                    stayWeeks, "CONSULTANT_CONFIRMATION_REQUIRED", 0, 0, 0, List.of(),
                     List.of(!isBlank(nearbyPlaceKeyword)
                             ? "数据库中没有找到符合附近地点和通勤时间条件的有效公寓。"
                             : requestedResidenceNames.isEmpty()
@@ -239,10 +242,10 @@ public class PropertyQueryTools {
                         nearbyByResidence.getOrDefault(entry.getKey(), List.of())))
                 .sorted(groupComparator(requestedResidenceNames, requestedTravelModes))
                 .toList();
-        List<ResidenceOfferGroup> groups = promoteSalesRecommendations(
+        List<ResidenceOfferGroup> groups = limitRoomOptions(promoteSalesRecommendations(
                         rankedGroups, requestedResidenceNames, requestedTravelModes).stream()
                 .limit(safeLimit)
-                .toList();
+                .toList());
 
         int availableResidences = (int) groups.stream()
                 .filter(group -> group.rooms().stream()
@@ -258,13 +261,15 @@ public class PropertyQueryTools {
             warnings.add("未提供起租日期，结果没有验证入住时间。");
         }
         if (stayWeeks == null) {
-            warnings.add("未提供租期周数，结果返回全部价格档位，未计算确定报价。");
+            warnings.add("未提供租期周数，结果没有验证适用租期。");
         }
+        warnings.add("具体价格不向 AI 展示，须由 Londonist 顾问确认。");
         warnings.add("库存为业务更新时间对应的快照，最终预订前需要再次确认。");
         return new RoomOfferSearchResult(city, residenceKeyword, requestedResidenceNames,
-                nearbyPlaceKeyword, maxTravelMinutes,
+                nearbyPlaceKeyword, effectiveMaxTravelMinutes,
                 startFrom, startTo,
-                stayWeeks, groups.size(), availableResidences, soldOutResidences,
+                stayWeeks, "CONSULTANT_CONFIRMATION_REQUIRED",
+                groups.size(), availableResidences, soldOutResidences,
                 groups, List.copyOf(warnings));
     }
 
@@ -313,28 +318,30 @@ public class PropertyQueryTools {
         return new ResidenceDetailResult(keyword, items.size(), items);
     }
 
-    @Tool(name = "quote_room_offer", description = """
-            对指定 roomOfferId 做确定性报价。可直接提供 stayWeeks，或同时提供
-            startDate 和 endDate（YYYY-MM-DD），系统会按实际天数向上取整为周数，
-            匹配正确价格档位并验证日期范围和库存。
+    @Tool(name = "check_room_offer_availability", description = """
+            对指定 roomOfferId 核验日期、租期和库存，不返回任何具体价格。
+            可直接提供 stayWeeks，或同时提供 startDate 和 endDate（YYYY-MM-DD），
+            系统会按实际天数向上取整为周数，验证日期范围、租期是否受支持以及库存。
+            具体价格须由 Londonist 顾问确认。
             """)
-    public RoomOfferQuote quoteRoomOffer(
+    public RoomOfferAvailability checkRoomOfferAvailability(
             @ToolParam(description = "search_room_offers 返回的 roomOfferId")
             Long roomOfferId,
-            @ToolParam(description = "入住日 YYYY-MM-DD；只算价格时可留空", required = false)
+            @ToolParam(description = "入住日 YYYY-MM-DD；只核验租期时可留空", required = false)
             String startDate,
             @ToolParam(description = "退房日 YYYY-MM-DD；与入住日成对提供", required = false)
             String endDate,
             @ToolParam(description = "租住周数；与日期同时提供时以日期计算结果为准",
                     required = false)
             Integer stayWeeks) {
-        return executeTool("quote_room_offer",
+        return executeTool("check_room_offer_availability",
                 toolArguments(
                         "roomOfferId", roomOfferId,
                         "startDate", startDate,
                         "endDate", endDate,
                         "stayWeeks", stayWeeks),
-                () -> quoteRoomOfferInternal(roomOfferId, startDate, endDate, stayWeeks),
+                () -> checkRoomOfferAvailabilityInternal(
+                        roomOfferId, startDate, endDate, stayWeeks),
                 result -> toolArguments(
                         "roomOfferId", result.roomOfferId(),
                         "residenceName", result.residenceName(),
@@ -344,7 +351,7 @@ public class PropertyQueryTools {
                         "warningCount", result.warnings().size()));
     }
 
-    private RoomOfferQuote quoteRoomOfferInternal(
+    private RoomOfferAvailability checkRoomOfferAvailabilityInternal(
             Long roomOfferId,
             String startDate,
             String endDate,
@@ -380,17 +387,18 @@ public class PropertyQueryTools {
         if (resolvedWeeks == null) {
             throw new IllegalArgumentException("请提供 stayWeeks，或同时提供 startDate 和 endDate");
         }
-        RoomPriceTier tier = findTier(priceTierMapper.selectList(
+        boolean staySupported = findTier(priceTierMapper.selectList(
                 new LambdaQueryWrapper<RoomPriceTier>()
                         .eq(RoomPriceTier::getInventoryId, roomOfferId)
-                        .orderByAsc(RoomPriceTier::getMinWeeks)), resolvedWeeks);
-        if (tier == null) {
-            return new RoomOfferQuote(roomOfferId, residenceName(residence),
+                        .orderByAsc(RoomPriceTier::getMinWeeks)), resolvedWeeks) != null;
+        if (!staySupported) {
+            return new RoomOfferAvailability(roomOfferId, residenceName(residence),
                     inventory.getRoomName(), start, end, resolvedWeeks,
-                    "NO_PRICE_TIER", false, inventory.getInventoryStatus(),
-                    inventory.getRemainingQuantity(), null, null, null,
+                    "UNSUPPORTED_STAY", false, inventory.getInventoryStatus(),
+                    inventory.getRemainingQuantity(),
+                    "CONSULTANT_CONFIRMATION_REQUIRED",
                     inventory.getInventoryUpdatedAt(),
-                    List.of("该租期没有对应价格档位，无法报价。"));
+                    List.of("该租期没有可用的合同档位。", "具体价格须由 Londonist 顾问确认。"));
         }
         boolean dateMatched = start == null
                 || (!start.isBefore(inventory.getEarliestStartDate())
@@ -401,15 +409,13 @@ public class PropertyQueryTools {
         boolean available = dateMatched
                 && ("AVAILABLE".equals(inventory.getInventoryStatus())
                 || "LIMITED".equals(inventory.getInventoryStatus()));
-        BigDecimal total = tier.getWeeklyPrice()
-                .multiply(BigDecimal.valueOf(resolvedWeeks))
-                .setScale(2, RoundingMode.HALF_UP);
-        warnings.add("库存和报价是数据更新时间对应的快照，最终预订前需要再次确认。");
-        return new RoomOfferQuote(roomOfferId, residenceName(residence),
+        warnings.add("具体价格须由 Londonist 顾问确认。");
+        warnings.add("库存是数据更新时间对应的快照，最终预订前需要再次确认。");
+        return new RoomOfferAvailability(roomOfferId, residenceName(residence),
                 inventory.getRoomName(), start, end, resolvedWeeks,
                 dateMatched ? "MATCHED" : "OUT_OF_RANGE", available,
                 inventory.getInventoryStatus(), inventory.getRemainingQuantity(),
-                toTier(tier), tier.getWeeklyPrice(), total,
+                "CONSULTANT_CONFIRMATION_REQUIRED",
                 inventory.getInventoryUpdatedAt(), List.copyOf(warnings));
     }
 
@@ -659,8 +665,7 @@ public class PropertyQueryTools {
                 && (effectivePrice == null || effectivePrice.compareTo(maxWeeklyPrice) > 0)) {
             return null;
         }
-        return new MatchedRoom(inventory, matchedTiers, matchedStart, matchedEnd,
-                effectivePrice);
+        return new MatchedRoom(inventory, matchedStart, matchedEnd);
     }
 
     private static ResidenceOfferGroup toGroup(
@@ -679,34 +684,46 @@ public class PropertyQueryTools {
                 roomMatches);
     }
 
+    /**
+     * Enforces the presentation contract before data reaches the model: every selected
+     * residence keeps one representative room, then remaining slots are assigned in
+     * ranking order. With four residences this produces at most 2+2+1+1 options.
+     */
+    private static List<ResidenceOfferGroup> limitRoomOptions(
+            List<ResidenceOfferGroup> groups) {
+        if (groups.isEmpty()) {
+            return groups;
+        }
+        int remainingExtras = Math.max(0, MAX_ROOM_OPTIONS - groups.size());
+        List<ResidenceOfferGroup> limited = new ArrayList<>(groups.size());
+        for (ResidenceOfferGroup group : groups) {
+            int roomLimit = 1;
+            if (remainingExtras > 0 && group.rooms().size() > 1) {
+                roomLimit++;
+                remainingExtras--;
+            }
+            limited.add(new ResidenceOfferGroup(
+                    group.residenceId(), group.residenceSourceId(), group.residenceName(),
+                    group.city(), group.address(), group.station(), group.zone(),
+                    group.latitude(), group.longitude(), group.mapUrl(),
+                    group.nearbyMatches(), group.rooms().stream().limit(roomLimit).toList()));
+        }
+        return List.copyOf(limited);
+    }
+
     private static RoomMatch toRoomMatch(MatchedRoom room) {
         RoomInventory inventory = room.inventory();
-        List<PriceTierItem> tiers = room.tiers().stream()
-                .map(PropertyQueryTools::toTier).toList();
-        BigDecimal total = room.matchedEnd() == null || room.effectiveWeeklyPrice() == null
-                ? null
-                : room.effectiveWeeklyPrice().multiply(BigDecimal.valueOf(
-                        ChronoUnit.WEEKS.between(room.matchedStart(), room.matchedEnd())))
-                .setScale(2, RoundingMode.HALF_UP);
         return new RoomMatch(inventory.getId(), inventory.getRoomCode(),
                 inventory.getRoomName(), inventory.getRootType(),
                 inventory.getEarliestStartDate(), inventory.getLatestEndDate(),
                 room.matchedStart(), room.matchedEnd(),
                 inventory.getInventoryStatus(), inventory.getRemainingQuantity(),
-                tiers, room.effectiveWeeklyPrice(), total,
-                inventory.getInventoryUpdatedAt(), inventory.getNote());
-    }
-
-    private static PriceTierItem toTier(RoomPriceTier tier) {
-        return new PriceTierItem(tier.getMinWeeks(), tier.getMaxWeeks(),
-                tier.getWeeklyPrice(), tier.getCurrency(), tier.getPriceUpdatedAt());
+                inventory.getInventoryUpdatedAt());
     }
 
     private static Comparator<MatchedRoom> roomComparator() {
         return Comparator.comparingInt((MatchedRoom room) ->
                         statusRank(room.inventory().getInventoryStatus()))
-                .thenComparing(MatchedRoom::effectiveWeeklyPrice,
-                        Comparator.nullsLast(Comparator.naturalOrder()))
                 .thenComparing(room -> room.inventory().getRoomName());
     }
 
@@ -728,10 +745,6 @@ public class PropertyQueryTools {
                         nearbyRank(group, preferredTravelModes))
                 .thenComparingInt(group -> requestedOrder.getOrDefault(
                         canonicalResidenceName(group.residenceName()), Integer.MAX_VALUE))
-                .thenComparing(group -> group.rooms().stream()
-                        .map(RoomMatch::weeklyPrice).filter(Objects::nonNull)
-                        .min(Comparator.naturalOrder()).orElse(null),
-                        Comparator.nullsLast(Comparator.naturalOrder()))
                 .thenComparing(ResidenceOfferGroup::residenceName);
     }
 
@@ -1040,10 +1053,8 @@ public class PropertyQueryTools {
 
     private record MatchedRoom(
             RoomInventory inventory,
-            List<RoomPriceTier> tiers,
             LocalDate matchedStart,
-            LocalDate matchedEnd,
-            BigDecimal effectiveWeeklyPrice
+            LocalDate matchedEnd
     ) {
     }
 
@@ -1056,6 +1067,7 @@ public class PropertyQueryTools {
             LocalDate startDateFrom,
             LocalDate startDateTo,
             Integer stayWeeks,
+            String priceDisclosure,
             int matchedResidenceCount,
             int availableResidenceCount,
             int soldOutResidenceCount,
@@ -1091,24 +1103,11 @@ public class PropertyQueryTools {
             LocalDate matchedEndDate,
             String inventoryStatus,
             Integer remainingQuantity,
-            List<PriceTierItem> priceTiers,
-            BigDecimal weeklyPrice,
-            BigDecimal estimatedTotalPrice,
-            LocalDateTime inventoryUpdatedAt,
-            String note
+            LocalDateTime inventoryUpdatedAt
     ) {
     }
 
-    public record PriceTierItem(
-            Integer minWeeks,
-            Integer maxWeeks,
-            BigDecimal weeklyPrice,
-            String currency,
-            LocalDateTime priceUpdatedAt
-    ) {
-    }
-
-    public record RoomOfferQuote(
+    public record RoomOfferAvailability(
             Long roomOfferId,
             String residenceName,
             String roomName,
@@ -1119,9 +1118,7 @@ public class PropertyQueryTools {
             boolean available,
             String inventoryStatus,
             Integer remainingQuantity,
-            PriceTierItem priceTier,
-            BigDecimal weeklyPrice,
-            BigDecimal estimatedTotalPrice,
+            String priceDisclosure,
             LocalDateTime inventoryUpdatedAt,
             List<String> warnings
     ) {

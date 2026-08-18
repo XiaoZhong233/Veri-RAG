@@ -1,0 +1,11 @@
+{
+  "generatedAt": "2026-08-18T12:30:48+08:00",
+  "gitRevision": "7a3cb018cfba1595d159021a547b39690fc29b7c",
+  "baseUrl": "http://localhost:8081/veri-rag",
+  "baseCaseCount": 48,
+  "samplesPerCase": 1,
+  "residenceCount": 56,
+  "roomOfferCount": 128,
+  "inventoryAsOf": "2026-07-20T00:00:00",
+  "detailAsOf": "2026-07-25T23:39:32"
+}

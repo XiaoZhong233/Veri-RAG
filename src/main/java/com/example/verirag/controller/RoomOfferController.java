@@ -29,6 +29,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/room-offers")
 @RequiredArgsConstructor
+@PreAuthorize("hasRole('ADMIN')")
 public class RoomOfferController {
 
     private final RoomOfferService roomOfferService;

@@ -18,6 +18,7 @@ import com.example.verirag.service.ChatService;
 import com.example.verirag.service.RagAnswerCache;
 import com.example.verirag.tool.PropertyQueryIntent;
 import com.example.verirag.tool.PropertyIntentClassifier;
+import com.example.verirag.tool.PropertyPriceGuard;
 import com.example.verirag.tool.PropertyToolSelector;
 import com.example.verirag.tool.ToolCallEventContext;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -61,7 +62,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 @Slf4j
 public class ChatServiceImpl implements ChatService {
-    private static final int DEFAULT_RAG_TOP_K = 8;
+    private static final int DEFAULT_RAG_TOP_K = 4;
     private static final int PROPERTY_CANDIDATE_RETRIEVAL_TOP_K = 30;
     private static final int PROPERTY_MAX_DISTINCT_RESIDENCES = 12;
     private static final Pattern RESIDENCE_NAME_PREFIX =
@@ -103,6 +104,8 @@ public class ChatServiceImpl implements ChatService {
     private final PropertyToolSelector propertyToolSelector;
 
     private final PropertyIntentClassifier propertyIntentClassifier;
+
+    private final PropertyPriceGuard propertyPriceGuard;
 
     @Value("${rag.retrieval.similarity-threshold:" + DEFAULT_SIMILARITY_THRESHOLD + "}")
     private double similarityThreshold;
@@ -159,7 +162,7 @@ public class ChatServiceImpl implements ChatService {
 
         long llmStart = System.nanoTime();
         String ragContext = buildRagContext(cited);
-        String answer;
+        String rawAnswer;
         try {
             ChatClient.ChatClientRequestSpec prompt = newChatPrompt(requestedSessionId);
             if (structuredPropertyQuery) {
@@ -168,9 +171,9 @@ public class ChatServiceImpl implements ChatService {
                 log.info("Property Tool selected: intent={}, tool={}",
                         propertyIntent, propertyIntent.toolName());
             }
-            answer = prompt
+            rawAnswer = prompt
                     .system(structuredPropertyQuery
-                            ? buildPropertyToolSystemPrompt(propertyIntent)
+                            ? buildPropertyToolSystemPrompt(propertyIntent, req.getQuestion())
                             : buildModelSystemPrompt(ragContext))
                     .user(structuredPropertyQuery
                             ? buildPropertyToolUserMessage(
@@ -184,6 +187,10 @@ public class ChatServiceImpl implements ChatService {
             ragMetrics.recordLlm(java.time.Duration.ofNanos(System.nanoTime() - llmStart), "sync", "error");
             throw ex;
         }
+        String answer = priceRestricted(propertyIntent)
+                || propertyPriceGuard.shouldProtect(req.getQuestion())
+                ? propertyPriceGuard.enforce(rawAnswer, req.getQuestion())
+                : rawAnswer;
         long llmMs = (System.nanoTime() - llmStart) / 1_000_000L;
         ragMetrics.recordLlm(java.time.Duration.ofMillis(llmMs), "sync", "success");
         log.info("LLM completed: sessionId={}, duration={}ms", requestedSessionId, llmMs);
@@ -327,16 +334,18 @@ public class ChatServiceImpl implements ChatService {
                     propertyIntent, propertyIntent.toolName());
         }
         prompt = prompt.system(structuredPropertyQuery
-                ? buildPropertyToolSystemPrompt(propertyIntent)
+                ? buildPropertyToolSystemPrompt(propertyIntent, req.getQuestion())
                 : buildModelSystemPrompt(ragContext))
                 .user(structuredPropertyQuery
                 ? buildPropertyToolUserMessage(
                         req.getQuestion(), requestedSessionId, history)
                 : buildModelUserMessage(req.getQuestion(),
                         requestedSessionId, history, ragContext));
-        if (structuredPropertyQuery) {
-            return streamPropertyToolAnswer(prompt, sessionId, references,
-                    referencesJson, llmStart, requestStart);
+        boolean protectPrice = priceRestricted(propertyIntent)
+                || propertyPriceGuard.shouldProtect(req.getQuestion());
+        if (structuredPropertyQuery || protectPrice) {
+            return streamBufferedAnswer(prompt, protectPrice, req.getQuestion(), sessionId,
+                    references, referencesJson, llmStart, requestStart);
         }
         return prompt
                 .stream().content()
@@ -396,7 +405,7 @@ public class ChatServiceImpl implements ChatService {
     private static String propertyIntentLabel(PropertyQueryIntent intent) {
         return switch (intent) {
             case RECOMMEND -> "房源推荐";
-            case QUOTE -> "精确报价";
+            case QUOTE -> "指定房型可订性核验";
             case DETAIL -> "公寓详情";
             case LIST -> "公寓列表";
             case SUMMARY -> "库存汇总";
@@ -409,8 +418,10 @@ public class ChatServiceImpl implements ChatService {
      * providers omit the function name in continuation chunks. The outer API remains
      * SSE and publishes local tool progress events while the blocking call runs.
      */
-    private Flux<ChatStreamEvent> streamPropertyToolAnswer(
+    private Flux<ChatStreamEvent> streamBufferedAnswer(
             ChatClient.ChatClientRequestSpec prompt,
+            boolean protectPrice,
+            String question,
             Long sessionId,
             List<Map<String, Object>> references,
             String referencesJson,
@@ -420,13 +431,16 @@ public class ChatServiceImpl implements ChatService {
         return Flux.deferContextual(contextView -> Flux.<ChatStreamEvent>create(sink -> {
             var task = Mono.fromRunnable(() -> {
                 try {
-                    String answer = ToolCallEventContext.withListener(
+                    String rawAnswer = ToolCallEventContext.withListener(
                             event -> {
                                 if (!sink.isCancelled()) {
                                     sink.next(toToolProgressEvent(event));
                                 }
                             },
                             () -> prompt.call().content());
+                    String answer = protectPrice
+                            ? propertyPriceGuard.enforce(rawAnswer, question)
+                            : rawAnswer;
                     long llmMillis = (System.nanoTime() - llmStart) / 1_000_000L;
                     ragMetrics.recordLlmFirstToken(java.time.Duration.ofMillis(llmMillis));
                     ragMetrics.recordLlm(java.time.Duration.ofMillis(llmMillis),
@@ -473,8 +487,8 @@ public class ChatServiceImpl implements ChatService {
 
     private static ChatStreamEvent toToolProgressEvent(ToolCallEventContext.Event event) {
         String label = switch (event.toolName()) {
-            case "search_room_offers" -> "房源、报价和库存";
-            case "quote_room_offer" -> "指定房型报价";
+            case "search_room_offers" -> "房源和库存";
+            case "check_room_offer_availability" -> "指定房型可订状态";
             case "get_residence_details" -> "公寓设施和周边详情";
             case "list_residences" -> "公寓地址";
             case "get_inventory_summary" -> "公寓和库存统计";
@@ -488,6 +502,11 @@ public class ChatServiceImpl implements ChatService {
             case FAILED -> ChatStreamEvent.toolError(
                     event.toolName(), label + "查询失败，正在处理错误…");
         };
+    }
+
+    private static boolean priceRestricted(PropertyQueryIntent intent) {
+        return intent == PropertyQueryIntent.RECOMMEND
+                || intent == PropertyQueryIntent.QUOTE;
     }
 
     static String friendlyStreamError(Throwable error) {
@@ -765,7 +784,8 @@ public class ChatServiceImpl implements ChatService {
         return manualHistoryEnabled ? promptManager.systemPrompt() : promptManager.systemPrompt() + "\n\n" + ragContext;
     }
 
-    private String buildPropertyToolSystemPrompt(PropertyQueryIntent propertyIntent) {
+    private String buildPropertyToolSystemPrompt(PropertyQueryIntent propertyIntent,
+                                                 String question) {
         StringBuilder prompt = new StringBuilder(propertyToolPromptManager.systemPrompt());
         if (propertyIntent == PropertyQueryIntent.RECOMMEND) {
             String salesPrompt = salesRecommendationPromptManager.systemPrompt();
@@ -773,6 +793,12 @@ public class ChatServiceImpl implements ChatService {
                 prompt.append("\n\n").append(salesPrompt);
             }
         }
+        boolean chineseQuestion = question != null
+                && question.codePoints().anyMatch(codePoint ->
+                Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HAN);
+        prompt.append(chineseQuestion
+                ? "\n\n本次用户消息的主要语言是中文，最终回答必须全部使用中文。"
+                : "\n\nThe current user message is in English. Write the entire final answer in English, including table headings, statuses, notes, and the consultant-confirmation notice.");
         return prompt
                 .append("\n\n当前日期（Europe/London）：")
                 .append(LocalDate.now(LONDON_TIME_ZONE))

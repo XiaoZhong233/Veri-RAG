@@ -26,7 +26,7 @@ class PropertyToolSelectorTests {
         assertThat(toolNames(PropertyQueryIntent.SUMMARY))
                 .containsExactly("get_inventory_summary");
         assertThat(toolNames(PropertyQueryIntent.QUOTE))
-                .containsExactly("quote_room_offer");
+                .containsExactly("check_room_offer_availability");
         assertThat(selector.callbacksFor(PropertyQueryIntent.NONE)).isEmpty();
     }
 

@@ -277,7 +277,7 @@ export SPRING_DATA_REDIS_PASSWORD="veri_rag_dev"
 | `RAG_INTENT_CLASSIFIER_TIMEOUT` | `15s` | 意图分类超时 |
 | `RAG_CHUNK_SIZE` | `500` | 文档切片最大 Token 数 |
 | `RAG_EMBEDDING_BATCH_SIZE` | `20` | Embedding 单批文本数 |
-| `RAG_RETRIEVAL_TOP_K` | `8` | 普通知识问答召回数量 |
+| `RAG_RETRIEVAL_TOP_K` | `4` | 普通知识问答召回数量 |
 | `RAG_SIMILARITY_THRESHOLD` | `0.75` | 最低向量相似度 |
 | `RAG_ANSWER_CACHE_ENABLED` | `false` | 是否启用相似问答缓存 |
 | `RAG_MEMORY_ENABLED` | `true` | 是否启用会话摘要 |

@@ -15,6 +15,7 @@ import com.example.verirag.mapper.ResidenceNearbyPlaceMapper;
 import com.example.verirag.mapper.RoomInventoryMapper;
 import com.example.verirag.mapper.RoomPriceTierMapper;
 import com.example.verirag.service.SalesRecommendationService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -75,7 +76,7 @@ class PropertyQueryToolsTests {
     }
 
     @Test
-    void searchesAndGroupsByResidenceWithMatchedTier() {
+    void searchesAndGroupsByResidenceWithoutExposingPrices() throws Exception {
         Residence first = residence(1L, "chapter-islington", "Chapter Islington");
         Residence second = residence(2L, "chapter-highbury", "Chapter Highbury");
         RoomInventory available = inventory(11L, 1L, "AVAILABLE", "Classic Ensuite");
@@ -101,8 +102,12 @@ class PropertyQueryToolsTests {
         assertThat(result.residences()).extracting(
                 PropertyQueryTools.ResidenceOfferGroup::residenceName)
                 .containsExactly("Chapter Islington", "Chapter Highbury");
-        assertThat(result.residences().getFirst().rooms().getFirst().weeklyPrice())
-                .isEqualByComparingTo("430");
+        assertThat(result.priceDisclosure())
+                .isEqualTo("CONSULTANT_CONFIRMATION_REQUIRED");
+        String json = new ObjectMapper().findAndRegisterModules()
+                .writeValueAsString(result);
+        assertThat(json)
+                .doesNotContain("weeklyPrice", "priceTiers", "estimatedTotalPrice", "430");
     }
 
     @Test
@@ -166,6 +171,39 @@ class PropertyQueryToolsTests {
                     assertThat(match.placeName()).contains("UCL");
                     assertThat(match.maxMinutes()).isEqualTo(18);
                 });
+    }
+
+    @Test
+    void defaultsNearbyQueriesToTwentyFiveMinutesWhenModelOmitsLimit() {
+        Residence nearbyResidence = residence(1L, "nearby", "Nearby Residence");
+        Residence farResidence = residence(2L, "far", "Far Residence");
+        ResidenceNearbyPlace nearbyUcl = nearby(1L, 1L, "UCL", 25);
+        ResidenceNearbyPlace farUcl = nearby(2L, 2L, "UCL", 30);
+        RoomInventory nearbyRoom = inventory(
+                11L, 1L, "AVAILABLE", "Classic Ensuite");
+        RoomInventory farRoom = inventory(
+                22L, 2L, "AVAILABLE", "Classic Ensuite");
+
+        when(residenceMapper.selectList(any(Wrapper.class)))
+                .thenReturn(List.of(nearbyResidence, farResidence));
+        when(nearbyPlaceMapper.selectList(any(Wrapper.class)))
+                .thenReturn(List.of(nearbyUcl, farUcl));
+        when(inventoryMapper.selectList(any(Wrapper.class)))
+                .thenReturn(List.of(nearbyRoom, farRoom));
+        when(priceTierMapper.selectList(any(Wrapper.class)))
+                .thenReturn(List.of(
+                        tier(101L, 11L, 20, 39, "430"),
+                        tier(202L, 22L, 20, 39, "430")));
+
+        PropertyQueryTools.RoomOfferSearchResult result = tools.searchRoomOffers(
+                "London", null, null, "UCL", null, null,
+                "2026-09-01", "2026-09-30", 26,
+                null, null, false, 4);
+
+        assertThat(result.maxTravelMinutes()).isEqualTo(25);
+        assertThat(result.residences())
+                .extracting(PropertyQueryTools.ResidenceOfferGroup::residenceName)
+                .containsExactly("Nearby Residence");
     }
 
     @Test
@@ -295,7 +333,43 @@ class PropertyQueryToolsTests {
     }
 
     @Test
-    void quoteUsesDatesToCalculateWeeksAndTotal() {
+    void capsRoomOptionsAcrossFourResidencesAtSix() {
+        List<Residence> residences = List.of(
+                residence(1L, "one", "Residence One"),
+                residence(2L, "two", "Residence Two"),
+                residence(3L, "three", "Residence Three"),
+                residence(4L, "four", "Residence Four"));
+        List<RoomInventory> rooms = new java.util.ArrayList<>();
+        List<RoomPriceTier> tiers = new java.util.ArrayList<>();
+        long roomId = 10;
+        long tierId = 100;
+        for (Residence residence : residences) {
+            for (int option = 1; option <= 2; option++) {
+                RoomInventory room = inventory(
+                        roomId, residence.getId(), "AVAILABLE",
+                        "Classic Ensuite " + option);
+                rooms.add(room);
+                tiers.add(tier(tierId++, roomId++, 20, 39, "430"));
+            }
+        }
+        when(residenceMapper.selectList(any(Wrapper.class))).thenReturn(residences);
+        when(inventoryMapper.selectList(any(Wrapper.class))).thenReturn(rooms);
+        when(priceTierMapper.selectList(any(Wrapper.class))).thenReturn(tiers);
+
+        PropertyQueryTools.RoomOfferSearchResult result = tools.searchRoomOffers(
+                "London", null, null, null, null, null,
+                "2026-09-01", "2026-09-30", 26,
+                null, null, false, 4);
+
+        assertThat(result.residences()).hasSize(4);
+        assertThat(result.residences()).extracting(group -> group.rooms().size())
+                .containsExactly(2, 2, 1, 1);
+        assertThat(result.residences().stream()
+                .mapToInt(group -> group.rooms().size()).sum()).isEqualTo(6);
+    }
+
+    @Test
+    void checksSpecificOfferWithoutExposingPrice() {
         Residence residence = residence(1L, "chapter-islington", "Chapter Islington");
         RoomInventory inventory = inventory(11L, 1L, "AVAILABLE", "Classic Ensuite");
         RoomPriceTier priceTier = tier(101L, 11L, 20, 39, "430");
@@ -304,13 +378,15 @@ class PropertyQueryToolsTests {
         when(residenceMapper.selectById(1L)).thenReturn(residence);
         when(priceTierMapper.selectList(any(Wrapper.class))).thenReturn(List.of(priceTier));
 
-        PropertyQueryTools.RoomOfferQuote quote = tools.quoteRoomOffer(
+        PropertyQueryTools.RoomOfferAvailability availability =
+                tools.checkRoomOfferAvailability(
                 11L, "2026-09-01", "2027-03-01", null);
 
-        assertThat(quote.stayWeeks()).isEqualTo(26);
-        assertThat(quote.dateStatus()).isEqualTo("MATCHED");
-        assertThat(quote.available()).isTrue();
-        assertThat(quote.estimatedTotalPrice()).isEqualByComparingTo("11180.00");
+        assertThat(availability.stayWeeks()).isEqualTo(26);
+        assertThat(availability.dateStatus()).isEqualTo("MATCHED");
+        assertThat(availability.available()).isTrue();
+        assertThat(availability.priceDisclosure())
+                .isEqualTo("CONSULTANT_CONFIRMATION_REQUIRED");
     }
 
     @Test
@@ -322,7 +398,7 @@ class PropertyQueryToolsTests {
 
         assertThat(names).containsExactlyInAnyOrder(
                 "search_room_offers",
-                "quote_room_offer",
+                "check_room_offer_availability",
                 "get_residence_details",
                 "list_residences",
                 "get_inventory_summary");

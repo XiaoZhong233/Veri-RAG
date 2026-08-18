@@ -10,7 +10,7 @@ spring:
       base-url: ${DASHSCOPE_BASE_URL:https://llm-1yauwtsqkmv66e2w.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}
       chat:
 #        model: qwen3.7-plus
-        model: ${LLM_CHAT_MODEL:qwen3.7-flash}
+        model: ${LLM_CHAT_MODEL:qwen3.7-flash-2026-07-15}
 #        model: qwen-flash
         # OpenAI Java SDK 默认整次请求仅允许 60 秒；推理模型即使已开始流式输出也可能被总超时取消。
         timeout: ${LLM_TIMEOUT:5m}
@@ -144,7 +144,7 @@ rag:
     embedding-batch-size: ${RAG_EMBEDDING_BATCH_SIZE:20}
   retrieval:
     # 普通知识库问答的最大召回数量；房源、报价和库存查询改由数据库 Tool 处理。
-    top-k: ${RAG_RETRIEVAL_TOP_K:8}
+    top-k: ${RAG_RETRIEVAL_TOP_K:4}
     # 向量检索最低相似度（0~1）；低于该值不作为上下文或引用，建议 0.70~0.80。
     similarity-threshold: ${RAG_SIMILARITY_THRESHOLD:0.75}
   answer-cache:

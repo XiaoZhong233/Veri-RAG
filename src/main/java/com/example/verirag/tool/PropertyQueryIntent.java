@@ -4,7 +4,7 @@ package com.example.verirag.tool;
 public enum PropertyQueryIntent {
     NONE(null),
     RECOMMEND("search_room_offers"),
-    QUOTE("quote_room_offer"),
+    QUOTE("check_room_offer_availability"),
     DETAIL("get_residence_details"),
     LIST("list_residences"),
     SUMMARY("get_inventory_summary");

@@ -3,6 +3,7 @@ package com.example.verirag.tool;
 /** 房源问题的确定性 Tool 路由意图。 */
 public enum PropertyQueryIntent {
     NONE(null),
+    ACKNOWLEDGE(null),
     CLARIFY(null),
     GUIDANCE(null),
     RESTRICTED(null),
@@ -26,7 +27,7 @@ public enum PropertyQueryIntent {
         return toolName != null;
     }
 
-    /** 房源领域请求；其中 CLARIFY/GUIDANCE/RESTRICTED 不检索 RAG，也不调用 Tool。 */
+    /** 房源领域请求；其中 ACKNOWLEDGE/CLARIFY/GUIDANCE/RESTRICTED 不检索 RAG，也不调用 Tool。 */
     public boolean propertyHandled() {
         return this != NONE;
     }

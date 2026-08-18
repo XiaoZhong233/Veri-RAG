@@ -1,6 +1,7 @@
 package com.example.verirag.service.impl;
 
 import com.example.verirag.advisor.RetrievalTimingAdvisor;
+import com.example.verirag.advisor.PropertyResponseAdvisor;
 import com.example.verirag.dto.ChatAskRequest;
 import com.example.verirag.dto.ChatAskResult;
 import com.example.verirag.dto.ChatStreamEvent;
@@ -29,6 +30,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.document.Document;
+import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.filter.Filter;
@@ -40,6 +42,7 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.io.InterruptedIOException;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -53,7 +56,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -121,6 +126,10 @@ public class ChatServiceImpl implements ChatService {
     @Value("${rag.chat.manual-history-enabled:false}")
     private boolean manualHistoryEnabled;
 
+    /** 主回答生成上限；独立于15秒的轻量意图分类超时。 */
+    @Value("${rag.chat.response-timeout:30s}")
+    private Duration llmResponseTimeout;
+
     @Override
     public ChatAskResult ask(Long userId, ChatAskRequest req) throws Exception {
         long requestStart = System.nanoTime();
@@ -131,6 +140,10 @@ public class ChatServiceImpl implements ChatService {
         List<ChatMessage> history = loadRecentHistory(requestedSessionId);
         PropertyQueryIntent propertyIntent = propertyIntentClassifier
                 .resolve(req.getQuestion(), history);
+        if (propertyIntent == PropertyQueryIntent.ACKNOWLEDGE) {
+            return completeAcknowledgement(
+                    userId, requestedSessionId, req.getQuestion(), requestStart);
+        }
         boolean structuredPropertyQuery = propertyIntent.structured();
         boolean propertyHandled = propertyIntent.propertyHandled();
 
@@ -172,26 +185,29 @@ public class ChatServiceImpl implements ChatService {
                 log.info("Property Tool selected: intent={}, tool={}",
                         propertyIntent, propertyIntent.toolName());
             }
-            rawAnswer = prompt
-                    .system(propertyHandled
+            prompt = prompt.system(propertyHandled
                             ? buildPropertyToolSystemPrompt(propertyIntent, req.getQuestion())
                             : buildModelSystemPrompt(ragContext))
                     .user(propertyHandled
                             ? buildPropertyToolUserMessage(
                                     req.getQuestion(), requestedSessionId, history)
                             : buildModelUserMessage(req.getQuestion(),
-                                    requestedSessionId, history, ragContext))
-                    .call()
-                    .content();
+                                    requestedSessionId, history, ragContext));
+            prompt = withModelTimeout(prompt);
+            boolean protectPrice = priceRestricted(propertyIntent)
+                    || propertyPriceGuard.shouldProtect(req.getQuestion());
+            prompt = enablePropertyResponseGuard(prompt, protectPrice, req.getQuestion());
+            ChatClient.ChatClientRequestSpec finalPrompt = prompt;
+            rawAnswer = callModelWithTimeout(() -> finalPrompt.call().content());
         }
         catch (RuntimeException ex) {
             ragMetrics.recordLlm(java.time.Duration.ofNanos(System.nanoTime() - llmStart), "sync", "error");
+            if (isModelTimeout(ex)) {
+                throw new BusinessException(504, "模型响应超过30秒，已中断本次请求，请重试。");
+            }
             throw ex;
         }
-        String answer = priceRestricted(propertyIntent)
-                || propertyPriceGuard.shouldProtect(req.getQuestion())
-                ? propertyPriceGuard.enforce(rawAnswer, req.getQuestion())
-                : rawAnswer;
+        String answer = rawAnswer;
         long llmMs = (System.nanoTime() - llmStart) / 1_000_000L;
         ragMetrics.recordLlm(java.time.Duration.ofMillis(llmMs), "sync", "success");
         log.info("LLM completed: sessionId={}, duration={}ms", requestedSessionId, llmMs);
@@ -257,8 +273,12 @@ public class ChatServiceImpl implements ChatService {
             long requestStart) {
         boolean structuredPropertyQuery = propertyIntent.structured();
         boolean propertyHandled = propertyIntent.propertyHandled();
-        ChatStreamEvent intentDone = ChatStreamEvent.progress(
-                "intent_done", intentProgressMessage(propertyIntent));
+        ChatStreamEvent intentDone = ChatStreamEvent.intentDone(
+                propertyIntent.name(), intentProgressMessage(propertyIntent));
+        if (propertyIntent == PropertyQueryIntent.ACKNOWLEDGE) {
+            return streamAcknowledgement(
+                    req.getQuestion(), sessionId, intentDone, requestStart);
+        }
         ChatStreamEvent routeStart = ChatStreamEvent.progress(
                 "route_start", structuredPropertyQuery
                         ? "正在准备调用" + propertyIntentLabel(propertyIntent) + "工具…"
@@ -346,14 +366,17 @@ public class ChatServiceImpl implements ChatService {
                         req.getQuestion(), requestedSessionId, history)
                 : buildModelUserMessage(req.getQuestion(),
                         requestedSessionId, history, ragContext));
+        prompt = withModelTimeout(prompt);
         boolean protectPrice = priceRestricted(propertyIntent)
                 || propertyPriceGuard.shouldProtect(req.getQuestion());
         if (propertyHandled || protectPrice) {
-            return streamBufferedAnswer(prompt, protectPrice, req.getQuestion(), sessionId,
+            prompt = enablePropertyResponseGuard(prompt, protectPrice, req.getQuestion());
+            return streamBufferedAnswer(prompt, sessionId,
                     references, referencesJson, llmStart, requestStart);
         }
         return prompt
                 .stream().content()
+                .timeout(llmResponseTimeout)
                 .doOnNext(chunk -> {
                     fullAnswer.append(chunk);
                     if (firstToken.compareAndSet(true, false)) {
@@ -402,6 +425,9 @@ public class ChatServiceImpl implements ChatService {
     }
 
     private static String intentProgressMessage(PropertyQueryIntent intent) {
+        if (intent == PropertyQueryIntent.ACKNOWLEDGE) {
+            return "已识别为对话确认。";
+        }
         return intent.propertyHandled()
                 ? "已识别为" + propertyIntentLabel(intent) + "需求。"
                 : "已识别为知识库问答。";
@@ -409,6 +435,7 @@ public class ChatServiceImpl implements ChatService {
 
     private static String propertyIntentLabel(PropertyQueryIntent intent) {
         return switch (intent) {
+            case ACKNOWLEDGE -> "对话确认";
             case CLARIFY -> "房源咨询意图澄清";
             case GUIDANCE -> "房源咨询补充条件";
             case RESTRICTED -> "受限房源咨询";
@@ -428,8 +455,6 @@ public class ChatServiceImpl implements ChatService {
      */
     private Flux<ChatStreamEvent> streamBufferedAnswer(
             ChatClient.ChatClientRequestSpec prompt,
-            boolean protectPrice,
-            String question,
             Long sessionId,
             List<Map<String, Object>> references,
             String referencesJson,
@@ -439,16 +464,14 @@ public class ChatServiceImpl implements ChatService {
         return Flux.deferContextual(contextView -> Flux.<ChatStreamEvent>create(sink -> {
             var task = Mono.fromRunnable(() -> {
                 try {
-                    String rawAnswer = ToolCallEventContext.withListener(
-                            event -> {
-                                if (!sink.isCancelled()) {
-                                    sink.next(toToolProgressEvent(event));
-                                }
-                            },
-                            () -> prompt.call().content());
-                    String answer = protectPrice
-                            ? propertyPriceGuard.enforce(rawAnswer, question)
-                            : rawAnswer;
+                    String answer = callModelWithTimeout(() ->
+                            ToolCallEventContext.withListener(
+                                    event -> {
+                                        if (!sink.isCancelled()) {
+                                            sink.next(toToolProgressEvent(event));
+                                        }
+                                    },
+                                    () -> prompt.call().content()));
                     long llmMillis = (System.nanoTime() - llmStart) / 1_000_000L;
                     ragMetrics.recordLlmFirstToken(java.time.Duration.ofMillis(llmMillis));
                     ragMetrics.recordLlm(java.time.Duration.ofMillis(llmMillis),
@@ -516,15 +539,96 @@ public class ChatServiceImpl implements ChatService {
         return intent != null && intent.propertyHandled();
     }
 
+    private ChatAskResult completeAcknowledgement(
+            Long userId, Long requestedSessionId, String question, long requestStart) throws Exception {
+        String answer = acknowledgementAnswer(question);
+        List<Map<String, Object>> references = List.of();
+        Long sessionId = transactionTemplate.execute(status ->
+                persistConversation(userId, requestedSessionId, question, answer, "[]"));
+        if (sessionId == null) {
+            throw new IllegalStateException("Failed to persist acknowledgement conversation");
+        }
+        conversationSummaryService.maybeSummarize(sessionId);
+        ragMetrics.recordCache(false);
+        ragMetrics.recordRequest(java.time.Duration.ofNanos(System.nanoTime() - requestStart),
+                "acknowledgement");
+        ChatAskResult result = new ChatAskResult();
+        result.setSessionId(sessionId);
+        result.setAnswer(answer);
+        result.setReferences(references);
+        return result;
+    }
+
+    private Flux<ChatStreamEvent> streamAcknowledgement(
+            String question, Long sessionId, ChatStreamEvent intentDone, long requestStart) {
+        String answer = acknowledgementAnswer(question);
+        return Flux.just(
+                        intentDone,
+                        ChatStreamEvent.progress("route_start", "正在回复…"),
+                        ChatStreamEvent.chunk(answer))
+                .concatWith(Mono.fromCallable(() -> {
+                    transactionTemplate.executeWithoutResult(status ->
+                            persistAssistantMessage(sessionId, answer, "[]"));
+                    conversationSummaryService.maybeSummarize(sessionId);
+                    ragMetrics.recordCache(false);
+                    ragMetrics.recordRequest(
+                            java.time.Duration.ofNanos(System.nanoTime() - requestStart),
+                            "acknowledgement");
+                    return ChatStreamEvent.done(sessionId, List.of());
+                }));
+    }
+
+    static String acknowledgementAnswer(String question) {
+        boolean chinese = Objects.toString(question, "").codePoints().anyMatch(codePoint ->
+                Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HAN);
+        return chinese
+                ? "好的，有需要随时告诉我。"
+                : "Of course. Let me know whenever you need anything else.";
+    }
+
+    private static ChatClient.ChatClientRequestSpec enablePropertyResponseGuard(
+            ChatClient.ChatClientRequestSpec prompt, boolean enabled, String question) {
+        if (!enabled) {
+            return prompt;
+        }
+        return prompt.advisors(advisors -> advisors
+                .param(PropertyResponseAdvisor.ENABLED, true)
+                .param(PropertyResponseAdvisor.QUESTION, Objects.toString(question, "")));
+    }
+
+    private ChatClient.ChatClientRequestSpec withModelTimeout(
+            ChatClient.ChatClientRequestSpec prompt) {
+        return prompt.options(OpenAiChatOptions.builder()
+                .timeout(llmResponseTimeout));
+    }
+
+    /**
+     * 对包含多轮 Tool Calling 的同步调用增加端到端看门狗；超时会取消 boundedElastic 任务并中断底层调用。
+     */
+    private String callModelWithTimeout(Supplier<String> invocation) {
+        return Mono.fromCallable(invocation::get)
+                .subscribeOn(Schedulers.boundedElastic())
+                .timeout(llmResponseTimeout)
+                .block();
+    }
+
     static String friendlyStreamError(Throwable error) {
-        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
-            if (cause instanceof InterruptedIOException
-                    || (cause.getMessage() != null
-                    && cause.getMessage().toLowerCase(Locale.ROOT).contains("timeout"))) {
-                return "模型响应超时，已保留当前生成内容，请重试。";
-            }
+        if (isModelTimeout(error)) {
+            return "模型响应超过30秒，已中断本次请求，请重试。";
         }
         return "模型响应中断，已保留当前生成内容，请重试。";
+    }
+
+    static boolean isModelTimeout(Throwable error) {
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            if (cause instanceof TimeoutException
+                    || cause instanceof InterruptedIOException
+                    || (cause.getMessage() != null
+                    && cause.getMessage().toLowerCase(Locale.ROOT).contains("timeout"))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** 持久化发生在一个短事务内，避免在 LLM 调用期间长时间占用数据库事务。 */
@@ -830,7 +934,7 @@ public class ChatServiceImpl implements ChatService {
                 Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HAN);
         prompt.append(chineseQuestion
                 ? "\n\n本次用户消息的主要语言是中文，最终回答必须全部使用中文。"
-                : "\n\nThe current user message is in English. Write the entire final answer in English, including table headings, statuses, notes, and the consultant-confirmation notice.");
+                : "\n\nThe current user message is in English. Write the entire final answer in English, including table headings, statuses, and notes.");
         return prompt
                 .append("\n\n当前日期（Europe/London）：")
                 .append(LocalDate.now(LONDON_TIME_ZONE))

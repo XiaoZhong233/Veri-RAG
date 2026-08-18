@@ -89,12 +89,18 @@ class ChatRetrievalQueryTests {
     }
 
     @Test
-    void reportsTimeoutAsRecoverablePartialStreamError() {
+    void reportsTimeoutAsInterruptedRequest() {
         RuntimeException streamFailure = new RuntimeException(
                 "Stream failed", new InterruptedIOException("timeout"));
 
         assertThat(ChatServiceImpl.friendlyStreamError(streamFailure))
-                .isEqualTo("模型响应超时，已保留当前生成内容，请重试。");
+                .isEqualTo("模型响应超过30秒，已中断本次请求，请重试。");
+        assertThat(ChatServiceImpl.isModelTimeout(
+                new RuntimeException(new java.util.concurrent.TimeoutException())))
+                .isTrue();
+        assertThat(ChatServiceImpl.isModelTimeout(
+                new RuntimeException("provider unavailable")))
+                .isFalse();
     }
 
 }

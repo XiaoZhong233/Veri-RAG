@@ -18,6 +18,8 @@ class PropertyIntentClassifierTests {
                 .isEqualTo(PropertyQueryIntent.CLARIFY);
         assertThat(PropertyIntentClassifier.parseIntent("RESTRICTED"))
                 .isEqualTo(PropertyQueryIntent.RESTRICTED);
+        assertThat(PropertyIntentClassifier.parseIntent("ACKNOWLEDGE"))
+                .isEqualTo(PropertyQueryIntent.ACKNOWLEDGE);
     }
 
     @Test

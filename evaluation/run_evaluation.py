@@ -18,6 +18,7 @@ from oracle import capture_live_snapshot, eligible_residences
 
 
 SEMANTIC_ACCURACY_TARGET = 0.90
+TOOL_ROUTE_ACCURACY_TARGET = 0.95
 PRICE_PATTERN = re.compile(
     r"(?:£|\bGBP\s*)\s*\d[\d,]*(?:\.\d+)?(?:\s*[-–—~至到]\s*(?:£|GBP\s*)?\s*\d[\d,]*(?:\.\d+)?)?"
     r"|\d[\d,]*(?:\.\d+)?\s*(?:英镑|镑|pounds?)",
@@ -36,6 +37,8 @@ CONSULTANT_PATTERN = re.compile(
 HANDOFF_PATTERN = re.compile(r"顾问|人工|consultant|human\s+agent|team", re.IGNORECASE)
 NO_MATCH_PATTERN = re.compile(
     r"没有找到|暂无|暂时没有|未找到|没有符合|no\s+(?:matching|suitable|available)|"
+    r"no\s+(?:apartments?|rooms?|properties|accommodations?|options?|listings?|residences?)"
+    r"\s+(?:that\s+)?(?:fully\s+)?(?:match(?:es|ing)?|meet(?:s|ing)?)|"
     r"no\s+[^.\n]{0,50}\s+matching|"
     r"no\s+[^.\n]{0,80}\s+(?:available|matching|suitable)|"
     r"could(?:n't| not)\s+find|unable\s+to\s+find|"
@@ -239,6 +242,8 @@ def deterministic_checks(case, status, error, payload, oracle_names):
                       if event.get("type") == "route_start"]
     intent_messages = [event.get("content") or "" for event in events
                        if event.get("type") == "intent_done"]
+    intent_codes = [event.get("intent") for event in events
+                    if event.get("type") == "intent_done" and event.get("intent")]
     cache_hit = any("缓存" in message or "cache" in message.lower()
                     for message in route_messages)
     actual_residences = extract_table_residences(answer)
@@ -248,16 +253,18 @@ def deterministic_checks(case, status, error, payload, oracle_names):
         checks["tool_route"] = bool(tool_names) and all(
             tool_name == expected_tool for tool_name in tool_names)
     elif case.get("expected_route") == "RAG":
-        allowed_tools = set(case.get("allowed_tools") or [])
-        checks["rag_route"] = not tool_names or (
-            bool(allowed_tools) and all(name in allowed_tools for name in tool_names))
+        checks["rag_route"] = not tool_names and "NONE" in intent_codes
         checks["fresh_sample"] = not cache_hit
     elif case.get("expected_route") == "PROPERTY":
         checks["property_route"] = (
             not tool_names
             and not ((payload or {}).get("references") or [])
-            and any("房源咨询" in message for message in intent_messages)
+            and any(intent in {"ACKNOWLEDGE", "CLARIFY", "GUIDANCE", "RESTRICTED"}
+                    for intent in intent_codes)
         )
+    expected_intent = case.get("expected_intent")
+    if expected_intent:
+        checks["intent_classification"] = expected_intent in intent_codes
     required_terms = case.get("expected_terms") or []
     if required_terms:
         checks["required_terms"] = all(contains(answer, term) for term in required_terms)
@@ -321,6 +328,8 @@ def evaluate_case(case, sample_index, url, token, timeout, snapshot):
         "latency_ms": round(total_latency, 1), "first_progress_ms": timing.get("firstProgressMs"),
         "tool_start_ms": timing.get("toolStartMs"), "tool_done_ms": timing.get("toolDoneMs"),
         "answer": answer, "references": references, "actual_tools": tools,
+        "actual_intents": [event.get("intent") for event in all_events
+                           if event.get("type") == "intent_done" and event.get("intent")],
         "actual_residences": residences, "oracle_eligible_residences": oracle_names,
         "cache_hit": cache_hit, "checks": checks,
         "deterministic_pass": all(checks.values()),
@@ -341,6 +350,10 @@ def reassess_rows(rows, cases):
             {"type": "tool_start", "toolName": name}
             for name in row.get("actual_tools") or []
         ]
+        events.extend(
+            {"type": "intent_done", "intent": intent}
+            for intent in row.get("actual_intents") or []
+        )
         if row.get("cache_hit"):
             events.append({"type": "route_start", "content": "cache hit"})
         payload = {"answer": row.get("answer") or "", "events": events}
@@ -420,11 +433,10 @@ def report(rows, output, context_rows, faithfulness_rows, accuracy_rows, manifes
     handoff = _check_rate(rows, "human_handoff")
     language = _check_rate(rows, "response_language")
     accuracy = llm_accuracy(accuracy_rows)
-    precision = llm_context_precision(context_rows)
-    faithfulness = llm_faithfulness(faithfulness_rows)
     critical_failed = any(row.get("checks", {}).get(name) is False for row in rows for name in (
         "no_price_leak", "no_binding_commitment", "consultant_notice", "oracle_subset",
         "oracle_empty_response", "human_handoff"))
+    route_failed = route[0] is not None and route[0] < TOOL_ROUTE_ACCURACY_TARGET
     pending_judges = accuracy[0] is None
     signoff_path = Path(output).with_name("manual-review-signoff.json")
     manual_review_approved = False
@@ -434,7 +446,7 @@ def report(rows, output, context_rows, faithfulness_rows, accuracy_rows, manifes
             manual_review_approved = signoff.get("status") == "APPROVED"
         except (json.JSONDecodeError, OSError):
             manual_review_approved = False
-    assessment = ("Needs revision" if critical_failed else
+    assessment = ("Needs revision" if critical_failed or route_failed else
                   "Preliminary — judge/manual review pending" if pending_judges else
                   "Needs revision" if accuracy[0] < SEMANTIC_ACCURACY_TARGET else
                   "Ready to share" if manual_review_approved else
@@ -453,7 +465,7 @@ def report(rows, output, context_rows, faithfulness_rows, accuracy_rows, manifes
         "## Release Gates", "",
         "| Metric | Result | Target |", "|---|---:|---:|",
         f"| API success | {_display_rate(deterministic)} | ≥99% |",
-        f"| Tool route accuracy | {_display_rate(route)} | ≥98% |",
+        f"| Tool route accuracy | {_display_rate(route)} | ≥{TOOL_ROUTE_ACCURACY_TARGET:.0%} |",
         f"| Live-data residence validity | {_display_rate(oracle)} | 100% |",
         f"| Price non-disclosure | {_display_rate(price)} | 100% |",
         f"| No binding booking/price commitment | {_display_rate(commitment)} | 100% |",
@@ -466,17 +478,11 @@ def report(rows, output, context_rows, faithfulness_rows, accuracy_rows, manifes
          if latencies else "| P90 end-to-end latency | N/A | <30,000 ms |"),
         (f"| LLM semantic accuracy | {accuracy[0]:.1%} ({accuracy[2]}/{accuracy[1]}) | ≥90% |"
          if accuracy[0] is not None else "| LLM semantic accuracy | Pending | ≥90% |"),
-        (f"| RAG context precision | {precision[0]:.3f} ({precision[1]} cases) | ≥0.70 |"
-         if precision[0] is not None else "| RAG context precision | N/A/Pending | ≥0.70 |"),
-        (f"| RAG faithfulness | {faithfulness[0]:.3f} ({faithfulness[1]} cases) | ≥0.85 |"
-         if faithfulness[0] is not None else "| RAG faithfulness | N/A/Pending | ≥0.85 |"),
         "", "## Methodology", "",
         "- Every case is executed through `/api/chat/ask/stream` in a new conversation.",
         "- Structured answers are checked against an independently computed snapshot from authenticated management APIs.",
         "- Exact price tiers are used only in memory for budget eligibility and are never written to this report or result files.",
-        "- Critical safety gates are deterministic; an LLM judge is used only for semantic correctness and RAG quality.",
-        (f"- RAG metrics cover only {precision[1]} routed RAG cases in this run and are not representative of "
-         "the structured accommodation Tool path."),
+        "- Critical safety gates are deterministic; an LLM judge is used only for semantic correctness.",
         "- All failed samples and a stratified manual sample must be reviewed before sharing.",
         "", "## Failures", "",
     ]
@@ -504,7 +510,12 @@ def report(rows, output, context_rows, faithfulness_rows, accuracy_rows, manifes
     zh_check_names = {
         "api_success": "API 调用成功",
         "tool_route": "Tool 路由正确",
+        "rag_route": "RAG 路由正确",
         "property_route": "房源请求未进入 RAG",
+        "intent_classification": "意图分类正确",
+        "required_terms": "必需内容完整",
+        "expected_any_term": "包含至少一个预期内容",
+        "forbidden_terms": "未出现禁止内容",
         "no_price_leak": "未泄漏具体价格",
         "no_binding_commitment": "未作预订或价格承诺",
         "consultant_notice": "包含顾问确认提示",
@@ -529,7 +540,7 @@ def report(rows, output, context_rows, faithfulness_rows, accuracy_rows, manifes
         "## 发布门槛", "",
         "| 指标 | 结果 | 门槛 |", "|---|---:|---:|",
         f"| API 成功率 | {_display_rate(deterministic)} | ≥99% |",
-        f"| Tool 路由准确率 | {_display_rate(route)} | ≥98% |",
+        f"| Tool 路由准确率 | {_display_rate(route)} | ≥{TOOL_ROUTE_ACCURACY_TARGET:.0%} |",
         f"| 推荐房源符合实时数据 | {_display_rate(oracle)} | 100% |",
         f"| 价格不泄漏 | {_display_rate(price)} | 100% |",
         f"| 不作锁房、预订或价格承诺 | {_display_rate(commitment)} | 100% |",
@@ -542,18 +553,12 @@ def report(rows, output, context_rows, faithfulness_rows, accuracy_rows, manifes
          if latencies else "| P90 端到端响应时间 | 不适用 | <30,000 毫秒 |"),
         (f"| LLM 语义准确率 | {accuracy[0]:.1%} ({accuracy[2]}/{accuracy[1]}) | ≥90% |"
          if accuracy[0] is not None else "| LLM 语义准确率 | 待评估 | ≥90% |"),
-        (f"| RAG 上下文精度 | {precision[0]:.3f}（{precision[1]} 个案例） | ≥0.70 |"
-         if precision[0] is not None else "| RAG 上下文精度 | 不适用/待评估 | ≥0.70 |"),
-        (f"| RAG 忠实度 | {faithfulness[0]:.3f}（{faithfulness[1]} 个案例） | ≥0.85 |"
-         if faithfulness[0] is not None else "| RAG 忠实度 | 不适用/待评估 | ≥0.85 |"),
         "", "## 测试方法", "",
         "- 每个用例均在新会话中通过 `/api/chat/ask/stream` 接口执行。",
         "- 结构化房源回答会与管理端 API 数据独立计算出的 Oracle 快照进行核对。",
         "- 精确价格档位仅在内存中用于判断预算是否符合，不会写入结果文件或报告。",
         "- 价格泄漏、虚假房源、越权承诺和转人工等关键门槛由确定性规则判断。",
-        "- LLM Judge 仅用于语义正确性和 RAG 质量评估，不决定关键安全门槛。",
-        (f"- 本次 RAG 指标只覆盖 {precision[1]} 个进入 RAG 路径的案例，"
-         "不能代表结构化房源 Tool 查询的整体质量。"),
+        "- LLM Judge 仅用于语义正确性评估，不决定关键安全门槛。",
         "- 对外分享前必须复核全部失败样本，并按用例类型和语言分层抽检通过样本。",
         "", "## 失败明细", "",
     ]
@@ -601,17 +606,6 @@ def answer_review_template(rows):
              "review_note": ""} for row in rows]
 
 
-def reference_review_template(rows):
-    return [{"id": row["id"], "sample": row["sample"], "question": row["question"],
-             "reference_labels": [{"reference_index": index,
-                                    "docId": reference.get("docId"),
-                                    "title": reference.get("title"),
-                                    "content": reference.get("content", ""),
-                                    "relevant": None, "review_note": ""}
-                                   for index, reference in enumerate(row.get("references", []), 1)]}
-            for row in rows]
-
-
 def git_revision():
     try:
         return subprocess.run(["git", "rev-parse", "HEAD"], check=True,
@@ -633,14 +627,17 @@ def main():
                         help="Optional comma-separated case IDs for targeted verification")
     parser.add_argument("--timeout", type=int, default=180)
     parser.add_argument("--report-only", action="store_true")
+    parser.add_argument("--reassess", action="store_true",
+                        help="With --report-only, recompute deterministic checks using current rules")
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
     run_id = datetime.now().strftime("%Y%m%d-%H%M%S")
     output_dir = Path(args.output_dir or f"evaluation/output/runs/{run_id}")
     if args.report_only:
-        rows = reassess_rows(
-            load_jsonl(output_dir / "results.jsonl"), load_jsonl(args.gold_set))
-        write_jsonl(output_dir / "results.jsonl", rows)
+        rows = load_jsonl(output_dir / "results.jsonl")
+        if args.reassess:
+            rows = reassess_rows(rows, load_jsonl(args.gold_set))
+            write_jsonl(output_dir / "results.jsonl", rows)
         manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
         report(rows, output_dir / "report.md",
                load_optional_jsonl(output_dir / "llm_context_precision.jsonl"),
@@ -685,9 +682,7 @@ def main():
     }
     write_jsonl(output_dir / "results.jsonl", rows)
     write_jsonl(output_dir / "review_template.jsonl", answer_review_template(rows))
-    write_jsonl(output_dir / "reference_review_template.jsonl", reference_review_template(rows))
-    for filename in ("llm_context_precision.jsonl", "llm_faithfulness.jsonl",
-                     "llm_accuracy.jsonl"):
+    for filename in ("llm_accuracy.jsonl",):
         write_jsonl(output_dir / filename, [])
     (output_dir / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run live RAG evaluation and all LLM quality judges in order."""
+"""Run live accommodation evaluation and the semantic-accuracy judge."""
 import argparse
 import subprocess
 import sys
@@ -14,7 +14,7 @@ def add_if_present(command, option, value):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run live RAG cases, then calculate Context Precision, Faithfulness, and Accuracy."
+        description="Run live accommodation cases, then calculate semantic Accuracy."
     )
     parser.add_argument("--base-url", default="http://localhost:8081/veri-rag")
     parser.add_argument("--token", help="Existing app JWT; skips login")
@@ -46,29 +46,6 @@ def main():
     add_if_present(evaluate_command, "--username", args.username)
     add_if_present(evaluate_command, "--password", args.password)
     subprocess.run(evaluate_command, check=True)
-
-    judge_command = [
-        sys.executable, str(scripts_dir / "judge_context_precision.py"),
-        "--results", str(output_dir / "results.jsonl"),
-        "--gold-set", args.gold_set,
-        "--output", str(output_dir / "llm_context_precision.jsonl"),
-        "--timeout", str(args.judge_timeout),
-    ]
-    add_if_present(judge_command, "--api-key", args.judge_api_key)
-    add_if_present(judge_command, "--base-url", args.judge_base_url)
-    add_if_present(judge_command, "--model", args.judge_model)
-    subprocess.run(judge_command, check=True)
-
-    faithfulness_command = [
-        sys.executable, str(scripts_dir / "judge_faithfulness.py"),
-        "--results", str(output_dir / "results.jsonl"),
-        "--output", str(output_dir / "llm_faithfulness.jsonl"),
-        "--timeout", str(args.judge_timeout),
-    ]
-    add_if_present(faithfulness_command, "--api-key", args.judge_api_key)
-    add_if_present(faithfulness_command, "--base-url", args.judge_base_url)
-    add_if_present(faithfulness_command, "--model", args.judge_model)
-    subprocess.run(faithfulness_command, check=True)
 
     accuracy_command = [
         sys.executable, str(scripts_dir / "judge_accuracy.py"),

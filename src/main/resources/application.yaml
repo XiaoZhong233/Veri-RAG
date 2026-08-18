@@ -12,8 +12,8 @@ spring:
 #        model: qwen3.7-plus
         model: ${LLM_CHAT_MODEL:qwen3.7-flash-2026-07-15}
 #        model: qwen-flash
-        # OpenAI Java SDK 默认整次请求仅允许 60 秒；推理模型即使已开始流式输出也可能被总超时取消。
-        timeout: ${LLM_TIMEOUT:5m}
+        # 模型单次 HTTP 请求总超时；超过30秒由 SDK 主动取消底层请求。
+        timeout: ${LLM_TIMEOUT:30s}
         # 限制单次输出，避免冗长回答拉高 LLM 完整生成 P90；可通过 LLM_MAX_TOKENS 覆盖。
         max-tokens: ${LLM_MAX_TOKENS:1000}
         # 企业知识库问答以稳定、简洁为主，降低随机性和重复输出概率。
@@ -130,6 +130,8 @@ rag:
     # 分类只需要输出一个标签，默认关闭百炼/Qwen 思考以减少首包等待和 token 消耗。
     thinking-enabled: ${RAG_INTENT_CLASSIFIER_THINKING_ENABLED:false}
   chat:
+    # 用户问答的模型生成上限；同步 Tool 循环超过该时间也会被取消。
+    response-timeout: ${RAG_CHAT_RESPONSE_TIMEOUT:30s}
     # 对仅接受 system/user 角色的兼容模型，将摘要和历史压成纯文本拼进当前 user message。
     # 设为 false 时恢复 Spring AI ChatMemory Advisor 的原生多角色记忆。
     manual-history-enabled: ${RAG_MANUAL_HISTORY_ENABLED:false}

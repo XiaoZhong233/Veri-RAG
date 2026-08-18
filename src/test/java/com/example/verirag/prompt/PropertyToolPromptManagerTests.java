@@ -20,7 +20,6 @@ class PropertyToolPromptManagerTests {
                 .contains("意图澄清、条件补充和受限请求不会提供 Tool")
                 .contains("必须使用用户当前消息的主要语言完整回答")
                 .contains("英文问题用英文")
-                .contains("Exact pricing and availability must be confirmed")
                 .contains("均来自提供的 Tool")
                 .contains("不得再从知识库")
                 .contains("历史报价、房情")
@@ -50,12 +49,13 @@ class PropertyToolPromptManagerTests {
                 .contains("| 公寓 | 位置参考 | 推荐房型 | 可入住时间 | 租期 | 库存 | 匹配说明 |")
                 .contains("表格一行代表一个不同公寓")
                 .contains("不得输出、推算或暗示具体周价、总价、价格档位、价格范围")
-                .contains("具体价格及可订状态须由 Londonist 顾问最终确认")
                 .contains("普通学校或地标找房时应留空")
                 .contains("不得声称精确公里数")
                 .contains("UCL Bloomsbury 主校区")
                 .contains("未经过地图实时计算")
                 .doesNotContain("最终回答应说“本次结构化查询返回”")
+                .doesNotContain("Exact pricing and availability must be confirmed")
+                .doesNotContain("具体价格及可订状态须由 Londonist 顾问最终确认")
                 .doesNotContain("Drapery Place Residence")
                 .doesNotContain("每周价格", "预计总价", "quote_room_offer");
     }

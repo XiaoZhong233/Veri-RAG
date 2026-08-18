@@ -7,6 +7,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ChatStreamEventTests {
 
     @Test
+    void intentDoneCarriesMachineReadableIntent() {
+        ChatStreamEvent event = ChatStreamEvent.intentDone("CLARIFY", "需要进一步确认");
+
+        assertThat(event.getType()).isEqualTo("intent_done");
+        assertThat(event.getIntent()).isEqualTo("CLARIFY");
+        assertThat(event.getContent()).isEqualTo("需要进一步确认");
+    }
+
+    @Test
     void createsSseErrorEventWithSessionAndMessage() {
         ChatStreamEvent event = ChatStreamEvent.error(42L, "模型响应超时");
 

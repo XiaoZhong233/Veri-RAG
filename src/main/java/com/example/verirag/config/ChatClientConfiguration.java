@@ -1,10 +1,9 @@
 package com.example.verirag.config;
 
-import com.example.verirag.advisor.LoggerAdvisor;
+import com.example.verirag.advisor.PropertyResponseAdvisor;
 import com.example.verirag.memory.MyBatisChatMemoryRepository;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
-import org.springframework.ai.chat.client.advisor.SimpleLoggerAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.ai.openai.OpenAiChatModel;
@@ -25,12 +24,13 @@ public class ChatClientConfiguration {
     }
 
     @Bean
-    public ChatClient chatClient(OpenAiChatModel model, ChatMemory chatMemory){
+    public ChatClient chatClient(OpenAiChatModel model, ChatMemory chatMemory,
+                                 PropertyResponseAdvisor propertyResponseAdvisor){
         return ChatClient
                 .builder(model)
                 .defaultAdvisors(
+                        propertyResponseAdvisor,
                         MessageChatMemoryAdvisor.builder(chatMemory).build()
-//                        new SimpleLoggerAdvisor()
                 )
                 .build();
     }
@@ -41,8 +41,11 @@ public class ChatClientConfiguration {
      * 供只接受 system/user 消息的兼容模型使用；会话历史由业务层压缩为纯文本后写入 user message。
      */
     @Bean("manualHistoryChatClient")
-    public ChatClient manualHistoryChatClient(OpenAiChatModel model) {
-        return ChatClient.builder(model).build();
+    public ChatClient manualHistoryChatClient(OpenAiChatModel model,
+                                              PropertyResponseAdvisor propertyResponseAdvisor) {
+        return ChatClient.builder(model)
+                .defaultAdvisors(propertyResponseAdvisor)
+                .build();
     }
 
     /**

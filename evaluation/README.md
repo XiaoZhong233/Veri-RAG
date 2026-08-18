@@ -1,15 +1,15 @@
 # Londonist AI accommodation evaluation
 
 This directory contains the release-gate evaluation for the Londonist accommodation assistant.
-It is adapted from the generic RAG evaluation on `main`, but uses a completely new Londonist
-Gold Set and validates structured Tool answers separately from RAG answers.
+It is adapted from the generic evaluation on `main`, but uses a completely new Londonist
+Gold Set focused on structured accommodation Tool answers, intent routing, and safety behaviour.
 
 ## Scope
 
-`gold_set.jsonl` contains 48 base cases covering recommendations, inventory, nearby schools,
+`gold_set.jsonl` contains 50 base cases covering recommendations, inventory, nearby schools,
 residence details, multi-turn changes, no-match behaviour, bilingual output, price
 non-disclosure, human handoff, and non-binding booking behaviour. The default run executes every
-case three times (144 fresh conversations).
+case three times (150 fresh conversations).
 
 Critical release gates are deterministic:
 
@@ -20,12 +20,15 @@ Critical release gates are deterministic:
 - no-result and restricted-price enquiries must offer human handoff;
 - at most four residences, two rooms per residence, and six room options may be displayed.
 
-LLM judges are used only for semantic accuracy and RAG quality. They do not decide the critical
-security gates.
+The LLM judge is used only for semantic accuracy. It does not decide the critical security gates.
 
 The semantic-accuracy release target is 90%. This softer quality threshold does not relax any
 deterministic safety gate: price non-disclosure, live-data validity, non-binding behaviour, and
 required consultant handoff remain independently enforced at their stated thresholds.
+
+Tool routing has a 95% release target and participates in the overall report assessment. This
+allows limited non-safety routing variance during the pilot while restricted-price safety handling,
+price non-disclosure, live-data validity, non-binding behaviour, and required handoff remain at 100%.
 
 ## Data oracle and price handling
 
@@ -38,10 +41,10 @@ by the assistant is detected first and then replaced with `[PRICE REDACTED]` bef
 Every run writes `inventoryAsOf`, `detailAsOf`, the Git revision, and sample count to
 `manifest.json`. Reports without those fields are not publishable.
 
-## Run all live samples and judges
+## Run all live samples and semantic judge
 
 Start the application against a non-production database snapshot. Use a dedicated ADMIN account;
-the run creates chat sessions. Disable the answer cache for a fresh RAG sample:
+the run creates chat sessions. Disable the answer cache for fresh samples:
 
 ```bash
 export RAG_ANSWER_CACHE_ENABLED=false
@@ -59,7 +62,7 @@ mistaken for the current run. Credentials, JWTs, and exact prices are never writ
 Every completed sample is checkpointed immediately. If a run is interrupted, rerun it with the
 same `--output-dir` plus `--resume`; completed `(case, sample)` pairs will be skipped.
 
-To run the live application calls without the three LLM judges:
+To run the live application calls without the semantic LLM judge:
 
 ```bash
 python3 evaluation/run_evaluation.py \
@@ -75,6 +78,8 @@ python3 evaluation/run_evaluation.py \
   --report-only
 ```
 
+Add `--reassess` only when deterministic rules changed and existing rows should be recalculated.
+
 To verify only remediated failures without replacing the full baseline:
 
 ```bash
@@ -89,10 +94,7 @@ python3 evaluation/run_evaluation.py \
 - `manifest.json`: code/data/sample provenance without credentials or prices
 - `results.jsonl`: redacted answers, routes, timings, oracle residence sets, and hard checks
 - `review_template.jsonl`: manual semantic and severity review
-- `reference_review_template.jsonl`: manual RAG chunk relevance review
 - `llm_accuracy.jsonl`: LLM semantic verdicts
-- `llm_context_precision.jsonl`: RAG-only chunk relevance labels
-- `llm_faithfulness.jsonl`: RAG-only claim support labels
 - `report.md`: English stakeholder report
 - `report-zh.md`: Chinese internal summary
 

@@ -27,7 +27,7 @@ import java.util.regex.Pattern;
 public class PropertyIntentClassifier {
 
     private static final Pattern INTENT_TOKEN = Pattern.compile(
-            "\\b(NONE|CLARIFY|GUIDANCE|RESTRICTED|RECOMMEND|QUOTE|DETAIL|LIST|SUMMARY)\\b",
+            "\\b(NONE|ACKNOWLEDGE|CLARIFY|GUIDANCE|RESTRICTED|RECOMMEND|QUOTE|DETAIL|LIST|SUMMARY)\\b",
             Pattern.CASE_INSENSITIVE);
     private static final int MAX_LOG_QUESTION_CHARS = 300;
     private static final int MAX_HISTORY_MESSAGES = 4;

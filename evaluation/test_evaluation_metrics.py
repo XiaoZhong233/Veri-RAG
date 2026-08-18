@@ -1,4 +1,6 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from judge_accuracy import build_expected_facts
 from run_evaluation import (
@@ -6,6 +8,7 @@ from run_evaluation import (
     COMMITMENT_PATTERN,
     NO_MATCH_PATTERN,
     context_precision_at_k,
+    deterministic_checks,
     extract_table_residences,
     english_response_matches,
     faithfulness_case_score,
@@ -13,7 +16,32 @@ from run_evaluation import (
     llm_context_precision,
     llm_faithfulness,
     redact_prices,
+    report,
 )
+
+
+class IntentRoutingTests(unittest.TestCase):
+
+    def test_expected_intent_checks_machine_readable_sse_field(self):
+        case = {"expected_route": "PROPERTY", "expected_intent": "CLARIFY"}
+        payload = {
+            "answer": "请告诉我具体是哪间公寓。",
+            "references": [],
+            "events": [{"type": "intent_done", "intent": "CLARIFY"}],
+        }
+        checks, _, _, _ = deterministic_checks(case, 200, None, payload, [])
+        self.assertTrue(checks["property_route"])
+        self.assertTrue(checks["intent_classification"])
+
+    def test_rag_route_requires_none_intent(self):
+        case = {"expected_route": "RAG"}
+        payload = {
+            "answer": "请参考合同流程。",
+            "references": [{"content": "合同流程"}],
+            "events": [{"type": "intent_done", "intent": "NONE"}],
+        }
+        checks, _, _, _ = deterministic_checks(case, 200, None, payload, [])
+        self.assertTrue(checks["rag_route"])
 
 
 class ContextPrecisionTests(unittest.TestCase):
@@ -97,6 +125,50 @@ class AccuracyTests(unittest.TestCase):
             facts[0].startswith("[PREVALIDATED ANY-OF: REQUIREMENT ALREADY SATISFIED]"))
 
 
+class ReleaseGateTests(unittest.TestCase):
+
+    def test_tool_route_at_95_percent_passes_release_gate(self):
+        rows = self._route_rows(passed=19, total=20)
+
+        english, chinese = self._render_reports(rows)
+
+        self.assertIn("Tool route accuracy | 95.0% (19/20) | ≥95%", english)
+        self.assertIn("Overall Assessment: Preliminary — manual review pending", english)
+        self.assertIn("Tool 路由准确率 | 95.0% (19/20) | ≥95%", chinese)
+
+    def test_tool_route_below_95_percent_requires_revision(self):
+        rows = self._route_rows(passed=18, total=20)
+
+        english, chinese = self._render_reports(rows)
+
+        self.assertIn("Overall Assessment: Needs revision", english)
+        self.assertIn("总体结论：需要修复", chinese)
+
+    @staticmethod
+    def _route_rows(passed, total):
+        return [
+            {
+                "id": f"ROUTE-{index}",
+                "sample": 1,
+                "status": 200,
+                "error": None,
+                "latency_ms": 1000,
+                "answer": "ok",
+                "checks": {"tool_route": index < passed},
+                "deterministic_pass": index < passed,
+            }
+            for index in range(total)
+        ]
+
+    @staticmethod
+    def _render_reports(rows):
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "report.md"
+            report(rows, output, [], [], [{"correct": True, "error": None}], {})
+            return (output.read_text(encoding="utf-8"),
+                    output.with_name("report-zh.md").read_text(encoding="utf-8"))
+
+
 class ResponseLanguageTests(unittest.TestCase):
 
     def test_english_answer_passes(self):
@@ -145,6 +217,8 @@ class SafetyContractTests(unittest.TestCase):
             "I haven't found any accommodations that match.",
             "There are currently no accommodations available near KCL.",
             "We don't currently have any listings that match.",
+            "Currently, there are no apartments that fully match all of these criteria.",
+            "There are no residences meeting all requested conditions.",
         ):
             with self.subTest(answer=answer):
                 self.assertIsNotNone(NO_MATCH_PATTERN.search(answer))

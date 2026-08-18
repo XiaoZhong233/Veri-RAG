@@ -272,6 +272,8 @@ export SPRING_DATA_REDIS_PASSWORD="veri_rag_dev"
 | `DASHSCOPE_API_KEY` | 无 | 模型服务密钥，必填 |
 | `LLM_TIMEOUT` | `30s` | 模型单次 HTTP 请求总超时，超时后取消底层请求 |
 | `LLM_MAX_TOKENS` | `1000` | 单次回答最大输出 Token |
+| `RAG_PROPERTY_MAX_TOKENS` | `600` | 房源 Tool 回答最大输出 Token，不影响普通知识库问答 |
+| `RAG_PROPERTY_THINKING_ENABLED` | `true` | 是否为房源 Tool 回答启用模型思考；当前模型关闭后可能跳过 Tool，默认开启以保证准确率 |
 | `RAG_INTENT_CLASSIFIER_ENABLED` | `true` | 是否启用房源意图分类 |
 | `RAG_INTENT_JAVA_RULES_ENABLED` | `false` | 是否先使用 Java 确定性规则 |
 | `RAG_INTENT_CLASSIFIER_TIMEOUT` | `15s` | 意图分类超时 |

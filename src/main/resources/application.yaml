@@ -132,6 +132,10 @@ rag:
   chat:
     # 用户问答的模型生成上限；同步 Tool 循环超过该时间也会被取消。
     response-timeout: ${RAG_CHAT_RESPONSE_TIMEOUT:30s}
+    # 房源 Tool 回答比普通知识库问答更适合短输出；不改变全局 LLM_MAX_TOKENS。
+    property-max-tokens: ${RAG_PROPERTY_MAX_TOKENS:600}
+    # 部分 Qwen 兼容模型关闭思考后会跳过 Tool 并直接生成答案，因此默认保持开启以保证调用可靠性。
+    property-thinking-enabled: ${RAG_PROPERTY_THINKING_ENABLED:true}
     # 对仅接受 system/user 角色的兼容模型，将摘要和历史压成纯文本拼进当前 user message。
     # 设为 false 时恢复 Spring AI ChatMemory Advisor 的原生多角色记忆。
     manual-history-enabled: ${RAG_MANUAL_HISTORY_ENABLED:false}

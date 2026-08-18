@@ -130,6 +130,12 @@ public class ChatServiceImpl implements ChatService {
     @Value("${rag.chat.response-timeout:30s}")
     private Duration llmResponseTimeout;
 
+    @Value("${rag.chat.property-max-tokens:600}")
+    private int propertyMaxTokens;
+
+    @Value("${rag.chat.property-thinking-enabled:true}")
+    private boolean propertyThinkingEnabled;
+
     @Override
     public ChatAskResult ask(Long userId, ChatAskRequest req) throws Exception {
         long requestStart = System.nanoTime();
@@ -193,7 +199,7 @@ public class ChatServiceImpl implements ChatService {
                                     req.getQuestion(), requestedSessionId, history)
                             : buildModelUserMessage(req.getQuestion(),
                                     requestedSessionId, history, ragContext));
-            prompt = withModelTimeout(prompt);
+            prompt = withModelOptions(prompt, propertyHandled);
             boolean protectPrice = priceRestricted(propertyIntent)
                     || propertyPriceGuard.shouldProtect(req.getQuestion());
             prompt = enablePropertyResponseGuard(prompt, protectPrice, req.getQuestion());
@@ -366,7 +372,7 @@ public class ChatServiceImpl implements ChatService {
                         req.getQuestion(), requestedSessionId, history)
                 : buildModelUserMessage(req.getQuestion(),
                         requestedSessionId, history, ragContext));
-        prompt = withModelTimeout(prompt);
+        prompt = withModelOptions(prompt, propertyHandled);
         boolean protectPrice = priceRestricted(propertyIntent)
                 || propertyPriceGuard.shouldProtect(req.getQuestion());
         if (propertyHandled || protectPrice) {
@@ -596,10 +602,17 @@ public class ChatServiceImpl implements ChatService {
                 .param(PropertyResponseAdvisor.QUESTION, Objects.toString(question, "")));
     }
 
-    private ChatClient.ChatClientRequestSpec withModelTimeout(
-            ChatClient.ChatClientRequestSpec prompt) {
-        return prompt.options(OpenAiChatOptions.builder()
-                .timeout(llmResponseTimeout));
+    private ChatClient.ChatClientRequestSpec withModelOptions(
+            ChatClient.ChatClientRequestSpec prompt, boolean propertyHandled) {
+        var options = OpenAiChatOptions.builder()
+                .timeout(llmResponseTimeout);
+        if (propertyHandled) {
+            options.maxTokens(Math.max(propertyMaxTokens, 1));
+            if (!propertyThinkingEnabled) {
+                options.extraBody(Map.of("enable_thinking", false));
+            }
+        }
+        return prompt.options(options);
     }
 
     /**

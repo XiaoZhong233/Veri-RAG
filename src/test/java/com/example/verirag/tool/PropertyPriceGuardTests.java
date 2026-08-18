@@ -73,6 +73,18 @@ class PropertyPriceGuardTests {
     }
 
     @Test
+    void removesPhrasesThatCanBeReadAsBookingCommitments() {
+        String protectedAnswer = guard.enforce(
+                "顾问可以为您优先预留房源，并完成人工锁房与预订确认。",
+                "帮我锁房");
+
+        assertThat(protectedAnswer)
+                .doesNotContain("优先预留", "人工锁房", "预订成功")
+                .contains("核验需求并说明后续流程")
+                .endsWith(PropertyPriceGuard.NOTICE_ZH);
+    }
+
+    @Test
     void aiFacingRecordsContainNoPriceFields() {
         assertThat(recordFields(PropertyQueryTools.RoomMatch.class))
                 .doesNotContain("priceTiers", "weeklyPrice", "estimatedTotalPrice", "note");

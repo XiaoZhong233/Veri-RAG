@@ -44,6 +44,10 @@ public class PropertyPriceGuard {
                     + "\\s+price on request|price on request budget");
     private static final Pattern CHINESE_REDACTED_BUDGET = Pattern.compile(
             "(?:每周)?预算(?:为|是|不超过|在)?\\s*价格请咨询顾问(?:以内|以下|左右)?");
+    private static final Pattern UNSAFE_COMMITMENT_WORDING = Pattern.compile(
+            "优先(?:为你|为您)?预留房源|安排锁房|人工锁房(?:与|和|及)?预订确认|预订成功确认|"
+                    + "lock\\s+in\\s+(?:an\\s+)?official\\s+rates?|arrange\\s+(?:a\\s+)?room\\s+hold",
+            Pattern.CASE_INSENSITIVE);
 
     public boolean shouldProtect(String question) {
         String value = Objects.toString(question, "");
@@ -68,6 +72,9 @@ public class PropertyPriceGuard {
                 .replace("每周价格请咨询顾问的预算", "您的预算条件")
                 .replace("a within your stated budget", "within your stated budget")
                 .replace("the within your stated budget", "your stated budget");
+        value = UNSAFE_COMMITMENT_WORDING.matcher(value)
+                .replaceAll(chinese ? "核验需求并说明后续流程" :
+                        "verify your request and explain the next steps");
         value = (chinese ? ENGLISH_NOTICE : CHINESE_NOTICE).matcher(value).replaceAll("").stripTrailing();
         String notice = chinese ? NOTICE_ZH : NOTICE_EN;
         if (!value.contains(notice)) {

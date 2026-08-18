@@ -26,6 +26,8 @@ class PropertyIntentPromptManagerTests {
         assertThat(manager.systemPrompt())
                 .contains("即使最近对话是房源咨询，也应输出 ACKNOWLEDGE")
                 .contains("`好吧` → ACKNOWLEDGE")
+                .contains("Paddington Citi View")
+                .contains("附近有哪些学校？” → DETAIL")
                 .contains("`好的，那再帮我看看KCL附近的房源` → RECOMMEND");
     }
 }

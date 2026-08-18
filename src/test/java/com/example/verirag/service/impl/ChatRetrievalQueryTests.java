@@ -95,6 +95,9 @@ class ChatRetrievalQueryTests {
 
         assertThat(ChatServiceImpl.friendlyStreamError(streamFailure))
                 .isEqualTo("模型响应超过30秒，已中断本次请求，请重试。");
+        assertThat(ChatServiceImpl.friendlyStreamError(streamFailure,
+                "Find accommodation near UCL"))
+                .isEqualTo("The model did not respond within 30 seconds, so this request was stopped. Please retry.");
         assertThat(ChatServiceImpl.isModelTimeout(
                 new RuntimeException(new java.util.concurrent.TimeoutException())))
                 .isTrue();

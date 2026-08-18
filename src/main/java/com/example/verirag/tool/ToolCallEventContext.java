@@ -34,15 +34,15 @@ public final class ToolCallEventContext {
     }
 
     static void started(String toolName) {
-        publish(new Event(Phase.STARTED, toolName));
+        publish(new Event(Phase.STARTED, toolName, null));
     }
 
-    static void completed(String toolName) {
-        publish(new Event(Phase.COMPLETED, toolName));
+    static void completed(String toolName, Object result) {
+        publish(new Event(Phase.COMPLETED, toolName, result));
     }
 
     static void failed(String toolName) {
-        publish(new Event(Phase.FAILED, toolName));
+        publish(new Event(Phase.FAILED, toolName, null));
     }
 
     private static void publish(Event event) {
@@ -58,6 +58,6 @@ public final class ToolCallEventContext {
         FAILED
     }
 
-    public record Event(Phase phase, String toolName) {
+    public record Event(Phase phase, String toolName, Object result) {
     }
 }

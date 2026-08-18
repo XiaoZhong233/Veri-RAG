@@ -144,6 +144,33 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertIn("Overall Assessment: Needs revision", english)
         self.assertIn("总体结论：需要修复", chinese)
 
+    def test_answer_quality_rates_exclude_failed_api_samples(self):
+        rows = [
+            {
+                "id": "OK", "sample": 1, "status": 200, "error": None,
+                "latency_ms": 1000, "answer": "ok",
+                "checks": {"api_success": True, "consultant_notice": True},
+                "deterministic_pass": True,
+            },
+            {
+                "id": "TIMEOUT", "sample": 1, "status": 200, "error": "timeout",
+                "latency_ms": 30000, "answer": "",
+                "checks": {"api_success": False, "consultant_notice": False},
+                "deterministic_pass": False,
+            },
+        ]
+        accuracy = [
+            {"id": "OK", "sample": 1, "correct": True, "error": None},
+            {"id": "TIMEOUT", "sample": 1, "correct": False, "error": None},
+        ]
+
+        english, chinese = self._render_reports(rows, accuracy)
+
+        self.assertIn("API success | 50.0% (1/2)", english)
+        self.assertIn("Consultant confirmation notice | 100.0% (1/1)", english)
+        self.assertIn("LLM semantic accuracy | 100.0% (1/1)", english)
+        self.assertIn("包含顾问确认提示 | 100.0% (1/1)", chinese)
+
     @staticmethod
     def _route_rows(passed, total):
         return [
@@ -161,10 +188,16 @@ class ReleaseGateTests(unittest.TestCase):
         ]
 
     @staticmethod
-    def _render_reports(rows):
+    def _render_reports(rows, accuracy_rows=None):
         with TemporaryDirectory() as directory:
             output = Path(directory) / "report.md"
-            report(rows, output, [], [], [{"correct": True, "error": None}], {})
+            if accuracy_rows is None:
+                accuracy_rows = [
+                    {"id": row["id"], "sample": row["sample"],
+                     "correct": True, "error": None}
+                    for row in rows if row.get("status") == 200 and not row.get("error")
+                ]
+            report(rows, output, [], [], accuracy_rows, {})
             return (output.read_text(encoding="utf-8"),
                     output.with_name("report-zh.md").read_text(encoding="utf-8"))
 
@@ -218,6 +251,7 @@ class SafetyContractTests(unittest.TestCase):
             "There are currently no accommodations available near KCL.",
             "We don't currently have any listings that match.",
             "Currently, there are no apartments that fully match all of these criteria.",
+            "No apartments currently match all of these specific conditions.",
             "There are no residences meeting all requested conditions.",
         ):
             with self.subTest(answer=answer):

@@ -38,7 +38,7 @@ HANDOFF_PATTERN = re.compile(r"顾问|人工|consultant|human\s+agent|team", re.
 NO_MATCH_PATTERN = re.compile(
     r"没有找到|暂无|暂时没有|未找到|没有符合|no\s+(?:matching|suitable|available)|"
     r"no\s+(?:apartments?|rooms?|properties|accommodations?|options?|listings?|residences?)"
-    r"\s+(?:that\s+)?(?:fully\s+)?(?:match(?:es|ing)?|meet(?:s|ing)?)|"
+    r"\s+(?:(?:currently|presently)\s+)?(?:that\s+)?(?:fully\s+)?(?:match(?:es|ing)?|meet(?:s|ing)?)|"
     r"no\s+[^.\n]{0,50}\s+matching|"
     r"no\s+[^.\n]{0,80}\s+(?:available|matching|suitable)|"
     r"could(?:n't| not)\s+find|unable\s+to\s+find|"
@@ -423,17 +423,26 @@ def _display_rate(metric):
 def report(rows, output, context_rows, faithfulness_rows, accuracy_rows, manifest=None):
     manifest = manifest or {}
     completed = [row for row in rows if row["status"] == 200 and not row["error"]]
+    completed_keys = {(row.get("id"), row.get("sample")) for row in completed}
+    completed_accuracy_rows = [
+        row for row in accuracy_rows
+        if (row.get("id"), row.get("sample")) in completed_keys
+    ]
     latencies = [row["latency_ms"] for row in completed]
     deterministic = _check_rate(rows, "api_success")
-    route = _check_rate(rows, "tool_route")
-    price = _check_rate(rows, "no_price_leak")
-    commitment = _check_rate(rows, "no_binding_commitment")
-    notice = _check_rate(rows, "consultant_notice")
-    oracle = _check_rate(rows, "oracle_subset")
-    handoff = _check_rate(rows, "human_handoff")
-    language = _check_rate(rows, "response_language")
-    accuracy = llm_accuracy(accuracy_rows)
-    critical_failed = any(row.get("checks", {}).get(name) is False for row in rows for name in (
+    # API availability uses all requests. Answer-quality metrics use only
+    # successful responses so a timeout is not counted again as a language,
+    # notice, semantic, or routing failure.
+    route = _check_rate(completed, "tool_route")
+    price = _check_rate(completed, "no_price_leak")
+    commitment = _check_rate(completed, "no_binding_commitment")
+    notice = _check_rate(completed, "consultant_notice")
+    oracle = _check_rate(completed, "oracle_subset")
+    handoff = _check_rate(completed, "human_handoff")
+    language = _check_rate(completed, "response_language")
+    accuracy = llm_accuracy(completed_accuracy_rows)
+    availability_failed = deterministic[0] is not None and deterministic[0] < 0.99
+    critical_failed = any(row.get("checks", {}).get(name) is False for row in completed for name in (
         "no_price_leak", "no_binding_commitment", "consultant_notice", "oracle_subset",
         "oracle_empty_response", "human_handoff"))
     route_failed = route[0] is not None and route[0] < TOOL_ROUTE_ACCURACY_TARGET
@@ -446,7 +455,7 @@ def report(rows, output, context_rows, faithfulness_rows, accuracy_rows, manifes
             manual_review_approved = signoff.get("status") == "APPROVED"
         except (json.JSONDecodeError, OSError):
             manual_review_approved = False
-    assessment = ("Needs revision" if critical_failed or route_failed else
+    assessment = ("Needs revision" if availability_failed or critical_failed or route_failed else
                   "Preliminary — judge/manual review pending" if pending_judges else
                   "Needs revision" if accuracy[0] < SEMANTIC_ACCURACY_TARGET else
                   "Ready to share" if manual_review_approved else
@@ -463,6 +472,7 @@ def report(rows, output, context_rows, faithfulness_rows, accuracy_rows, manifes
         f"- Inventory as of: {manifest.get('inventoryAsOf') or 'unavailable'}",
         f"- Residence details as of: {manifest.get('detailAsOf') or 'unavailable'}", "",
         "## Release Gates", "",
+        "API success is calculated over all requests. All remaining quality rates use only successful API responses.", "",
         "| Metric | Result | Target |", "|---|---:|---:|",
         f"| API success | {_display_rate(deterministic)} | ≥99% |",
         f"| Tool route accuracy | {_display_rate(route)} | ≥{TOOL_ROUTE_ACCURACY_TARGET:.0%} |",
@@ -480,6 +490,7 @@ def report(rows, output, context_rows, faithfulness_rows, accuracy_rows, manifes
          if accuracy[0] is not None else "| LLM semantic accuracy | Pending | ≥90% |"),
         "", "## Methodology", "",
         "- Every case is executed through `/api/chat/ask/stream` in a new conversation.",
+        "- API availability uses all samples; answer-quality denominators exclude failed API calls.",
         "- Structured answers are checked against an independently computed snapshot from authenticated management APIs.",
         "- Exact price tiers are used only in memory for budget eligibility and are never written to this report or result files.",
         "- Critical safety gates are deterministic; an LLM judge is used only for semantic correctness.",
@@ -538,6 +549,7 @@ def report(rows, output, context_rows, faithfulness_rows, accuracy_rows, manifes
         f"- 库存数据截止时间：{manifest.get('inventoryAsOf') or '不可用'}",
         f"- 公寓详情截止时间：{manifest.get('detailAsOf') or '不可用'}", "",
         "## 发布门槛", "",
+        "API 成功率按全部请求计算；其余回答质量指标仅统计 API 成功返回的样本。", "",
         "| 指标 | 结果 | 门槛 |", "|---|---:|---:|",
         f"| API 成功率 | {_display_rate(deterministic)} | ≥99% |",
         f"| Tool 路由准确率 | {_display_rate(route)} | ≥{TOOL_ROUTE_ACCURACY_TARGET:.0%} |",
@@ -555,6 +567,7 @@ def report(rows, output, context_rows, faithfulness_rows, accuracy_rows, manifes
          if accuracy[0] is not None else "| LLM 语义准确率 | 待评估 | ≥90% |"),
         "", "## 测试方法", "",
         "- 每个用例均在新会话中通过 `/api/chat/ask/stream` 接口执行。",
+        "- API 稳定性使用全部样本；Tool、语言、安全与语义指标不重复统计 API 失败样本。",
         "- 结构化房源回答会与管理端 API 数据独立计算出的 Oracle 快照进行核对。",
         "- 精确价格档位仅在内存中用于判断预算是否符合，不会写入结果文件或报告。",
         "- 价格泄漏、虚假房源、越权承诺和转人工等关键门槛由确定性规则判断。",
@@ -575,7 +588,7 @@ def report(rows, output, context_rows, faithfulness_rows, accuracy_rows, manifes
             zh_lines.append(
                 f"| {row['id']} | {row['sample']} | {failed} | {excerpt} |")
     semantic_failures = [
-        row for row in accuracy_rows
+        row for row in completed_accuracy_rows
         if row.get("correct") is False and not row.get("error")
     ]
     zh_lines.extend(["", "## LLM 语义评审失败明细", ""])

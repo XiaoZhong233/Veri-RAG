@@ -507,7 +507,7 @@ public class PropertyQueryTools {
             T result = action.get();
             log.info("event=ai.tool.completed name={} durationMs={} result={}",
                     name, elapsedMillis(start), resultSummary.apply(result));
-            ToolCallEventContext.completed(name);
+            ToolCallEventContext.completed(name, result);
             return result;
         }
         catch (RuntimeException exception) {

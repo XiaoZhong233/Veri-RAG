@@ -21,7 +21,7 @@ class ToolCallEventContextTests {
                     ToolCallEventContext.withListener(
                             event -> inner.add(event.phase() + ":" + event.toolName()),
                             () -> {
-                                ToolCallEventContext.completed("inner");
+                                ToolCallEventContext.completed("inner", "result");
                                 return null;
                             });
                     ToolCallEventContext.failed("outer_two");
@@ -32,5 +32,19 @@ class ToolCallEventContextTests {
         assertThat(outer).containsExactly(
                 "STARTED:outer_one", "FAILED:outer_two");
         assertThat(inner).containsExactly("COMPLETED:inner");
+    }
+
+    @Test
+    void includesCompletedToolResultForTimeoutFallback() {
+        List<Object> results = new ArrayList<>();
+
+        ToolCallEventContext.withListener(
+                event -> results.add(event.result()),
+                () -> {
+                    ToolCallEventContext.completed("search_room_offers", "safe-result");
+                    return null;
+                });
+
+        assertThat(results).containsExactly("safe-result");
     }
 }

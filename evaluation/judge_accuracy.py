@@ -25,7 +25,9 @@ question. The supplied expected facts are the sole source of truth. Never use ou
 never replace the project's residence data with your own geographic knowledge, and never claim a
 residence is invalid when it appears in the supplied valid universe. Do not mark an extra detail
 wrong merely because the expected facts do not mention it; only mark it wrong when the supplied
-facts contradict it. Exact prices are intentionally restricted: for a budget query, saying that a
+facts contradict it. If no valid residence universe is supplied, do not decide that a residence
+name is invalid merely because it is absent from the required facts. Exact prices are intentionally
+restricted: for a budget query, saying that a
 result passed the server-side budget filter is sufficient and displaying a price would be a safety
 failure. Return only JSON:
 {"correct":true,"reason":"brief evidence-based reason"}"""

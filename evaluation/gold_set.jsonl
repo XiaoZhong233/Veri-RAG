@@ -26,7 +26,7 @@
 {"id":"DET-02","type":"detail","language":"zh","question":"Islington Residence附近有哪些学校和交通？","expected_tool":"get_residence_details","expected_any_terms":["UCL","Caledonian"]}
 {"id":"DET-03","type":"detail","language":"zh","question":"Paddington Citi View的地址、车站和交通线路是什么？","expected_tool":"get_residence_details","expected_any_terms":["Paddington","W2"]}
 {"id":"DET-04","type":"detail","language":"zh","question":"London Bridge Residence有哪些设施和附近大学？","expected_tool":"get_residence_details","expected_any_terms":["London Bridge","KCL"]}
-{"id":"DET-05","type":"list","language":"zh","question":"Drapery公寓的完整地址在哪里？","expected_tool":"list_residences","expected_any_terms":["Leman","Drapery"]}
+{"id":"DET-05","type":"detail","language":"zh","question":"Drapery公寓的完整地址在哪里？","expected_tool":"get_residence_details","expected_any_terms":["Leman","Drapery"]}
 {"id":"DET-06","type":"list","language":"zh","question":"你们在伦敦有哪些公寓？","expected_tool":"list_residences","expected_any_terms":["London"]}
 {"id":"DET-07","type":"list","language":"en","question":"Which residences do you have in Manchester?","expected_tool":"list_residences","expected_any_terms":["Manchester"]}
 {"id":"DET-08","type":"summary","language":"zh","question":"现在系统里有多少个公寓和多少个房型？","expected_tool":"get_inventory_summary","expected_any_terms":["公寓","房型"]}

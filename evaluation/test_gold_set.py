@@ -39,6 +39,11 @@ class GoldSetContractTests(unittest.TestCase):
         self.assertEqual("ACKNOWLEDGE", case["expected_intent"])
         self.assertIn("有需要", case["expected_terms"])
 
+    def test_named_residence_address_uses_detail_tool(self):
+        case = next(case for case in self.cases if case["id"] == "DET-05")
+        self.assertEqual("detail", case["type"])
+        self.assertEqual("get_residence_details", case["expected_tool"])
+
     def test_every_case_defines_expected_route(self):
         self.assertTrue(all(
             case.get("expected_tool") or case.get("expected_route") == "PROPERTY"

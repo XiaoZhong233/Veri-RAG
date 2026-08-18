@@ -22,6 +22,7 @@ import com.example.verirag.tool.PropertyIntentClassifier;
 import com.example.verirag.tool.PropertyPriceGuard;
 import com.example.verirag.tool.PropertyToolSelector;
 import com.example.verirag.tool.ToolCallEventContext;
+import com.example.verirag.tool.PropertyToolFallbackFormatter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -58,6 +59,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -183,6 +185,8 @@ public class ChatServiceImpl implements ChatService {
         long llmStart = System.nanoTime();
         String ragContext = buildRagContext(cited);
         String rawAnswer;
+        boolean fallbackUsed = false;
+        AtomicReference<ToolCallEventContext.Event> completedTool = new AtomicReference<>();
         try {
             ChatClient.ChatClientRequestSpec prompt = newChatPrompt(requestedSessionId);
             if (structuredPropertyQuery) {
@@ -204,18 +208,36 @@ public class ChatServiceImpl implements ChatService {
                     || propertyPriceGuard.shouldProtect(req.getQuestion());
             prompt = enablePropertyResponseGuard(prompt, protectPrice, req.getQuestion());
             ChatClient.ChatClientRequestSpec finalPrompt = prompt;
-            rawAnswer = callModelWithTimeout(() -> finalPrompt.call().content());
+            rawAnswer = callModelWithTimeout(() -> structuredPropertyQuery
+                    ? ToolCallEventContext.withListener(event -> {
+                        if (event.phase() == ToolCallEventContext.Phase.COMPLETED) {
+                            completedTool.set(event);
+                        }
+                    }, () -> finalPrompt.call().content())
+                    : finalPrompt.call().content());
         }
         catch (RuntimeException ex) {
-            ragMetrics.recordLlm(java.time.Duration.ofNanos(System.nanoTime() - llmStart), "sync", "error");
-            if (isModelTimeout(ex)) {
-                throw new BusinessException(504, "模型响应超过30秒，已中断本次请求，请重试。");
+            if (isModelTimeout(ex) && completedTool.get() != null) {
+                rawAnswer = PropertyToolFallbackFormatter.format(
+                        req.getQuestion(), completedTool.get());
+                fallbackUsed = true;
+                log.warn("LLM timed out after Tool completion; using deterministic fallback: "
+                                + "sessionId={}, tool={}", requestedSessionId,
+                        completedTool.get().toolName());
             }
-            throw ex;
+            else {
+                ragMetrics.recordLlm(java.time.Duration.ofNanos(System.nanoTime() - llmStart),
+                        "sync", "error");
+                if (isModelTimeout(ex)) {
+                    throw new BusinessException(504, modelTimeoutMessage(req.getQuestion()));
+                }
+                throw ex;
+            }
         }
         String answer = rawAnswer;
         long llmMs = (System.nanoTime() - llmStart) / 1_000_000L;
-        ragMetrics.recordLlm(java.time.Duration.ofMillis(llmMs), "sync", "success");
+        ragMetrics.recordLlm(java.time.Duration.ofMillis(llmMs),
+                fallbackUsed ? "sync_tool_fallback" : "sync", "success");
         log.info("LLM completed: sessionId={}, duration={}ms", requestedSessionId, llmMs);
         List<Map<String, Object>> refs = toRefs(req.getQuestion(), cited);
         String refsJson = objectMapper.writeValueAsString(refs);
@@ -263,7 +285,7 @@ public class ChatServiceImpl implements ChatService {
                         sessionId, requestStart));
         return progress.concatWith(classified)
                 .onErrorResume(error -> {
-                    String message = friendlyStreamError(error);
+                    String message = friendlyStreamError(error, req.getQuestion());
                     log.warn("Streaming request preparation failed: sessionId={}, error={}",
                             sessionId, error.toString());
                     return Flux.just(ChatStreamEvent.error(sessionId, message));
@@ -378,7 +400,7 @@ public class ChatServiceImpl implements ChatService {
         if (propertyHandled || protectPrice) {
             prompt = enablePropertyResponseGuard(prompt, protectPrice, req.getQuestion());
             return streamBufferedAnswer(prompt, sessionId,
-                    references, referencesJson, llmStart, requestStart);
+                    references, referencesJson, req.getQuestion(), llmStart, requestStart);
         }
         return prompt
                 .stream().content()
@@ -410,7 +432,7 @@ public class ChatServiceImpl implements ChatService {
                 }))
                 .onErrorResume(error -> {
                     streamFailed.set(true);
-                    String message = friendlyStreamError(error);
+                    String message = friendlyStreamError(error, req.getQuestion());
                     log.warn("LLM streaming interrupted: sessionId={}, partialChars={}, error={}",
                             sessionId, fullAnswer.length(), error.toString());
                     return Mono.fromCallable(() -> {
@@ -464,15 +486,20 @@ public class ChatServiceImpl implements ChatService {
             Long sessionId,
             List<Map<String, Object>> references,
             String referencesJson,
+            String question,
             long llmStart,
             long requestStart) {
         AtomicBoolean failed = new AtomicBoolean(false);
+        AtomicReference<ToolCallEventContext.Event> completedTool = new AtomicReference<>();
         return Flux.deferContextual(contextView -> Flux.<ChatStreamEvent>create(sink -> {
             var task = Mono.fromRunnable(() -> {
                 try {
                     String answer = callModelWithTimeout(() ->
                             ToolCallEventContext.withListener(
                                     event -> {
+                                        if (event.phase() == ToolCallEventContext.Phase.COMPLETED) {
+                                            completedTool.set(event);
+                                        }
                                         if (!sink.isCancelled()) {
                                             sink.next(toToolProgressEvent(event));
                                         }
@@ -495,11 +522,31 @@ public class ChatServiceImpl implements ChatService {
                     sink.complete();
                 }
                 catch (RuntimeException error) {
+                    if (isModelTimeout(error) && completedTool.get() != null) {
+                        String answer = PropertyToolFallbackFormatter.format(
+                                question, completedTool.get());
+                        long llmMillis = (System.nanoTime() - llmStart) / 1_000_000L;
+                        ragMetrics.recordLlm(java.time.Duration.ofMillis(llmMillis),
+                                "sync_tool_fallback", "success");
+                        log.warn("LLM timed out after Tool completion; using deterministic "
+                                        + "fallback: sessionId={}, tool={}",
+                                sessionId, completedTool.get().toolName());
+                        if (sink.isCancelled()) {
+                            return;
+                        }
+                        sink.next(ChatStreamEvent.chunk(answer));
+                        transactionTemplate.executeWithoutResult(status ->
+                                persistAssistantMessage(sessionId, answer, referencesJson));
+                        conversationSummaryService.maybeSummarize(sessionId);
+                        sink.next(ChatStreamEvent.done(sessionId, references));
+                        sink.complete();
+                        return;
+                    }
                     failed.set(true);
                     ragMetrics.recordLlm(
                             java.time.Duration.ofNanos(System.nanoTime() - llmStart),
                             "sync_tool", "error");
-                    String message = friendlyStreamError(error);
+                    String message = friendlyStreamError(error, question);
                     log.warn("LLM tool response interrupted: sessionId={}, error={}",
                             sessionId, error.toString());
                     if (sink.isCancelled()) {
@@ -630,6 +677,26 @@ public class ChatServiceImpl implements ChatService {
             return "模型响应超过30秒，已中断本次请求，请重试。";
         }
         return "模型响应中断，已保留当前生成内容，请重试。";
+    }
+
+    static String friendlyStreamError(Throwable error, String question) {
+        if (isModelTimeout(error)) {
+            return modelTimeoutMessage(question);
+        }
+        return containsHan(question)
+                ? "模型响应中断，已保留当前生成内容，请重试。"
+                : "The model response was interrupted. Any generated content has been preserved; please retry.";
+    }
+
+    private static String modelTimeoutMessage(String question) {
+        return containsHan(question)
+                ? "模型响应超过30秒，已中断本次请求，请重试。"
+                : "The model did not respond within 30 seconds, so this request was stopped. Please retry.";
+    }
+
+    private static boolean containsHan(String value) {
+        return Objects.toString(value, "").codePoints().anyMatch(codePoint ->
+                Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HAN);
     }
 
     static boolean isModelTimeout(Throwable error) {

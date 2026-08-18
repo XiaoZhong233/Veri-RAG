@@ -28,5 +28,7 @@
 - `按roomOfferId 11给我精确报价和总价` → RESTRICTED
 - `好吧` → ACKNOWLEDGE
 - `好的，那再帮我看看KCL附近的房源` → RECOMMEND
+- 最近对话已明确是 `Paddington Citi View`，当前问“附近有哪些学校？” → DETAIL
+- 最近对话已明确某个公寓，当前追问“附近呢？”“交通怎么样？”“有什么设施？” → DETAIL
 
 结合最近对话理解省略表达，但以当前消息的新要求为准。只输出标签。

@@ -49,6 +49,8 @@ class PropertyToolPromptManagerTests {
                 .contains("| 公寓 | 位置参考 | 推荐房型 | 可入住时间 | 租期 | 库存 | 匹配说明 |")
                 .contains("表格一行代表一个不同公寓")
                 .contains("不得输出、推算或暗示具体周价、总价、价格档位、价格范围")
+                .contains("绝不能声称已经锁房、保留房间、确认预订或保证价格")
+                .contains("顾问将核验需求并说明后续流程")
                 .contains("普通学校或地标找房时应留空")
                 .contains("不得声称精确公里数")
                 .contains("UCL Bloomsbury 主校区")

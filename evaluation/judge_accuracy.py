@@ -30,11 +30,61 @@ result passed the server-side budget filter is sufficient and displaying a price
 failure. Return only JSON:
 {"correct":true,"reason":"brief evidence-based reason"}"""
 
+ANY_OF_PREFIX = "[ANY-OF: ONE MATCH IS SUFFICIENT] "
+ANY_OF_SATISFIED_PREFIX = "[PREVALIDATED ANY-OF: REQUIREMENT ALREADY SATISFIED] "
+
+
+def build_expected_facts(case, result):
+    expected_facts = list(case.get("reference_terms") or case.get("expected_terms") or [])
+    alternatives = case.get("expected_any_terms") or []
+    answer = (result.get("answer") or "").casefold()
+    matched_alternatives = [term for term in alternatives if term.casefold() in answer]
+    if alternatives:
+        if matched_alternatives:
+            expected_facts.append(ANY_OF_SATISFIED_PREFIX + " | ".join(matched_alternatives))
+        else:
+            expected_facts.append(ANY_OF_PREFIX + " | ".join(alternatives))
+    if case.get("query") is not None:
+        eligible = result.get("oracle_eligible_residences") or []
+        if eligible:
+            expected_facts.append(
+                "Valid residence universe from the independent live-data oracle: "
+                + ", ".join(eligible)
+                + ". Any residence shown must belong to this set. The answer is NOT required "
+                  "to mention every eligible residence and may show at most four.")
+        else:
+            expected_facts.append(
+                "The independent live-data oracle found NO eligible residence. The answer "
+                "must not present a residence as matching all requested conditions.")
+    return expected_facts
+
 
 def judge(api_base, api_key, model, question, answer, expected_facts, rubric, timeout, max_attempts):
+    required_facts = [
+        fact for fact in expected_facts
+        if not fact.startswith(ANY_OF_PREFIX)
+        and not fact.startswith(ANY_OF_SATISFIED_PREFIX)
+    ]
+    any_of_groups = [
+        fact[len(ANY_OF_PREFIX):].split(" | ")
+        for fact in expected_facts if fact.startswith(ANY_OF_PREFIX)
+    ]
+    prevalidated_groups = [
+        fact[len(ANY_OF_SATISFIED_PREFIX):].split(" | ")
+        for fact in expected_facts if fact.startswith(ANY_OF_SATISFIED_PREFIX)
+    ]
     user_prompt = (
-        f"Question:\n{question}\n\nExpected facts:\n"
-        f"{json.dumps(expected_facts, ensure_ascii=False)}"
+        f"Question:\n{question}\n\nRequired facts (every item in this list is required):\n"
+        f"{json.dumps(required_facts, ensure_ascii=False)}"
+        "\n\nAlternative groups (logical OR): for EACH inner list, the answer only needs "
+        "to represent ONE item or an equivalent expression. Never require all items in an "
+        "inner list. An empty outer list adds no requirement:\n"
+        f"{json.dumps(any_of_groups, ensure_ascii=False)}"
+        "\n\nPrevalidated alternative groups: a deterministic check has already confirmed "
+        "that the candidate answer represents at least one item in every inner list. Treat "
+        "these requirements as satisfied; do not reject the answer merely because the listed "
+        "project-data details are not repeated in Required facts:\n"
+        f"{json.dumps(prevalidated_groups, ensure_ascii=False)}"
         f"\n\nCase-specific rubric:\n{rubric}"
         f"\n\nCandidate answer:\n{answer}"
     )
@@ -133,22 +183,7 @@ def main():
                 "attempts": 0, "skipped": f"type={case.get('type')}", "error": None,
             }, index)
             continue
-        expected_facts = list(
-            case.get("reference_terms")
-            or case.get("expected_terms")
-            or case.get("expected_any_terms", []))
-        if case.get("query") is not None:
-            eligible = result.get("oracle_eligible_residences") or []
-            if eligible:
-                expected_facts.append(
-                    "Valid residence universe from the independent live-data oracle: "
-                    + ", ".join(eligible)
-                    + ". Any residence shown must belong to this set. The answer is NOT required "
-                      "to mention every eligible residence and may show at most four.")
-            else:
-                expected_facts.append(
-                    "The independent live-data oracle found NO eligible residence. The answer "
-                    "must not present a residence as matching all requested conditions.")
+        expected_facts = build_expected_facts(case, result)
         rubric = case.get(
             "accuracy_rubric",
             "All material expected facts required by the question must be present and correct. "

@@ -1,5 +1,6 @@
 import unittest
 
+from judge_accuracy import build_expected_facts
 from run_evaluation import (
     PRICE_PATTERN,
     COMMITMENT_PATTERN,
@@ -79,6 +80,22 @@ class AccuracyTests(unittest.TestCase):
         self.assertEqual(1, correct_count)
         self.assertEqual(1, error_count)
 
+    def test_expected_any_terms_are_presented_as_alternatives(self):
+        facts = build_expected_facts(
+            {"expected_any_terms": ["Aldgate", "Leman", "landmark"]}, {})
+        self.assertEqual(1, len(facts))
+        self.assertTrue(facts[0].startswith("[ANY-OF: ONE MATCH IS SUFFICIENT]"))
+        self.assertIn("Aldgate | Leman | landmark", facts[0])
+
+    def test_expected_any_terms_are_not_sent_to_judge_when_already_satisfied(self):
+        facts = build_expected_facts(
+            {"expected_any_terms": ["Aldgate", "Leman", "landmark"]},
+            {"answer": "Nearby landmarks include Spitalfields Market."},
+        )
+        self.assertEqual(1, len(facts))
+        self.assertTrue(
+            facts[0].startswith("[PREVALIDATED ANY-OF: REQUIREMENT ALREADY SATISFIED]"))
+
 
 class ResponseLanguageTests(unittest.TestCase):
 
@@ -127,6 +144,7 @@ class SafetyContractTests(unittest.TestCase):
             "I wasn't able to find any available rooms.",
             "I haven't found any accommodations that match.",
             "There are currently no accommodations available near KCL.",
+            "We don't currently have any listings that match.",
         ):
             with self.subTest(answer=answer):
                 self.assertIsNotNone(NO_MATCH_PATTERN.search(answer))

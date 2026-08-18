@@ -27,7 +27,7 @@ import java.util.regex.Pattern;
 public class PropertyIntentClassifier {
 
     private static final Pattern INTENT_TOKEN = Pattern.compile(
-            "\\b(NONE|RECOMMEND|QUOTE|DETAIL|LIST|SUMMARY)\\b",
+            "\\b(NONE|CLARIFY|GUIDANCE|RESTRICTED|RECOMMEND|QUOTE|DETAIL|LIST|SUMMARY)\\b",
             Pattern.CASE_INSENSITIVE);
     private static final int MAX_LOG_QUESTION_CHARS = 300;
     private static final int MAX_HISTORY_MESSAGES = 4;
@@ -104,7 +104,7 @@ public class PropertyIntentClassifier {
             PropertyQueryIntent classified = parseIntent(content);
             long durationMs = (System.nanoTime() - started) / 1_000_000L;
             logResolution(question, "MODEL_CLASSIFIER", classified,
-                    classified.structured() ? "durationMs=" + durationMs
+                    classified.propertyHandled() ? "durationMs=" + durationMs
                             : "model_returned_none,durationMs=" + durationMs);
             return classified;
         }
@@ -119,7 +119,8 @@ public class PropertyIntentClassifier {
 
     private static void logResolution(String question, String source,
                                       PropertyQueryIntent intent, String reason) {
-        String route = intent.structured() ? "TOOL" : "RAG";
+        String route = intent.structured() ? "TOOL"
+                : intent.propertyHandled() ? "PROPERTY" : "RAG";
         String tool = intent.structured() ? intent.toolName() : "-";
         if (reason == null || reason.isBlank()) {
             log.info("event=property.intent.resolved question=\"{}\" source={} intent={} "

@@ -132,10 +132,11 @@ public class ChatServiceImpl implements ChatService {
         PropertyQueryIntent propertyIntent = propertyIntentClassifier
                 .resolve(req.getQuestion(), history);
         boolean structuredPropertyQuery = propertyIntent.structured();
+        boolean propertyHandled = propertyIntent.propertyHandled();
 
         // 追问的答案依赖前文，不参与跨会话回答缓存，避免上下文错配。
         // 房情随导入变化，结构化查询也不使用跨会话缓存。
-        var cached = requestedSessionId == null && !structuredPropertyQuery
+        var cached = requestedSessionId == null && !propertyHandled
                 ? ragAnswerCache.find(req.getQuestion(), req.getCategoryIds())
                 : Optional.<RagAnswerCache.Hit>empty();
         ragMetrics.recordCache(cached.isPresent());
@@ -172,10 +173,10 @@ public class ChatServiceImpl implements ChatService {
                         propertyIntent, propertyIntent.toolName());
             }
             rawAnswer = prompt
-                    .system(structuredPropertyQuery
+                    .system(propertyHandled
                             ? buildPropertyToolSystemPrompt(propertyIntent, req.getQuestion())
                             : buildModelSystemPrompt(ragContext))
-                    .user(structuredPropertyQuery
+                    .user(propertyHandled
                             ? buildPropertyToolUserMessage(
                                     req.getQuestion(), requestedSessionId, history)
                             : buildModelUserMessage(req.getQuestion(),
@@ -196,7 +197,7 @@ public class ChatServiceImpl implements ChatService {
         log.info("LLM completed: sessionId={}, duration={}ms", requestedSessionId, llmMs);
         List<Map<String, Object>> refs = toRefs(req.getQuestion(), cited);
         String refsJson = objectMapper.writeValueAsString(refs);
-        if (requestedSessionId == null && !structuredPropertyQuery) {
+        if (requestedSessionId == null && !propertyHandled) {
             ragAnswerCache.put(req.getQuestion(), req.getCategoryIds(), answer, refs);
         }
 
@@ -255,14 +256,17 @@ public class ChatServiceImpl implements ChatService {
             Long sessionId,
             long requestStart) {
         boolean structuredPropertyQuery = propertyIntent.structured();
+        boolean propertyHandled = propertyIntent.propertyHandled();
         ChatStreamEvent intentDone = ChatStreamEvent.progress(
                 "intent_done", intentProgressMessage(propertyIntent));
         ChatStreamEvent routeStart = ChatStreamEvent.progress(
                 "route_start", structuredPropertyQuery
                         ? "正在准备调用" + propertyIntentLabel(propertyIntent) + "工具…"
+                        : propertyHandled
+                        ? "正在整理" + propertyIntentLabel(propertyIntent) + "答复…"
                         : "正在检索知识库资料…");
 
-        var cached = requestedSessionId == null && !structuredPropertyQuery
+        var cached = requestedSessionId == null && !propertyHandled
                 ? ragAnswerCache.find(req.getQuestion(), req.getCategoryIds())
                 : Optional.<RagAnswerCache.Hit>empty();
         ragMetrics.recordCache(cached.isPresent());
@@ -307,6 +311,7 @@ public class ChatServiceImpl implements ChatService {
             Long sessionId,
             long requestStart) {
         boolean structuredPropertyQuery = propertyIntent.structured();
+        boolean propertyHandled = propertyIntent.propertyHandled();
         List<Document> cited = retrievalTimingAdvisor.advise(requestedSessionId,
                 () -> retrieveKnowledge(
                         req.getQuestion(), history, req.getCategoryIds(),
@@ -333,17 +338,17 @@ public class ChatServiceImpl implements ChatService {
             log.info("Property Tool selected: intent={}, tool={}",
                     propertyIntent, propertyIntent.toolName());
         }
-        prompt = prompt.system(structuredPropertyQuery
+        prompt = prompt.system(propertyHandled
                 ? buildPropertyToolSystemPrompt(propertyIntent, req.getQuestion())
                 : buildModelSystemPrompt(ragContext))
-                .user(structuredPropertyQuery
+                .user(propertyHandled
                 ? buildPropertyToolUserMessage(
                         req.getQuestion(), requestedSessionId, history)
                 : buildModelUserMessage(req.getQuestion(),
                         requestedSessionId, history, ragContext));
         boolean protectPrice = priceRestricted(propertyIntent)
                 || propertyPriceGuard.shouldProtect(req.getQuestion());
-        if (structuredPropertyQuery || protectPrice) {
+        if (propertyHandled || protectPrice) {
             return streamBufferedAnswer(prompt, protectPrice, req.getQuestion(), sessionId,
                     references, referencesJson, llmStart, requestStart);
         }
@@ -367,7 +372,7 @@ public class ChatServiceImpl implements ChatService {
                     transactionTemplate.executeWithoutResult(status ->
                             persistAssistantMessage(finalSessionId, fullAnswer.toString(), referencesJson));
                     conversationSummaryService.maybeSummarize(finalSessionId);
-                    if (requestedSessionId == null && !structuredPropertyQuery) {
+                    if (requestedSessionId == null && !propertyHandled) {
                         ragAnswerCache.put(req.getQuestion(), req.getCategoryIds(), fullAnswer.toString(), references);
                     }
                     long llmMillis = (System.nanoTime() - llmStart) / 1_000_000;
@@ -397,13 +402,16 @@ public class ChatServiceImpl implements ChatService {
     }
 
     private static String intentProgressMessage(PropertyQueryIntent intent) {
-        return intent.structured()
+        return intent.propertyHandled()
                 ? "已识别为" + propertyIntentLabel(intent) + "需求。"
                 : "已识别为知识库问答。";
     }
 
     private static String propertyIntentLabel(PropertyQueryIntent intent) {
         return switch (intent) {
+            case CLARIFY -> "房源咨询意图澄清";
+            case GUIDANCE -> "房源咨询补充条件";
+            case RESTRICTED -> "受限房源咨询";
             case RECOMMEND -> "房源推荐";
             case QUOTE -> "指定房型可订性核验";
             case DETAIL -> "公寓详情";
@@ -505,8 +513,7 @@ public class ChatServiceImpl implements ChatService {
     }
 
     private static boolean priceRestricted(PropertyQueryIntent intent) {
-        return intent == PropertyQueryIntent.RECOMMEND
-                || intent == PropertyQueryIntent.QUOTE;
+        return intent != null && intent.propertyHandled();
     }
 
     static String friendlyStreamError(Throwable error) {
@@ -599,8 +606,8 @@ public class ChatServiceImpl implements ChatService {
     private List<Document> retrieveKnowledge(String question, List<ChatMessage> history,
                                              List<Long> categoryIds,
                                              PropertyQueryIntent propertyIntent) {
-        if (propertyIntent != null && propertyIntent.structured()) {
-            log.info("Structured property query uses database Tool without vector retrieval: intent={}",
+        if (propertyIntent != null && propertyIntent.propertyHandled()) {
+            log.info("Property query bypasses vector retrieval: intent={}",
                     propertyIntent);
             return List.of();
         }
@@ -787,6 +794,31 @@ public class ChatServiceImpl implements ChatService {
     private String buildPropertyToolSystemPrompt(PropertyQueryIntent propertyIntent,
                                                  String question) {
         StringBuilder prompt = new StringBuilder(propertyToolPromptManager.systemPrompt());
+        if (propertyIntent == PropertyQueryIntent.CLARIFY) {
+            prompt.append("""
+
+                    本次疑似房源咨询，但用户要查询的对象、目标或动作不够明确，因此没有提供 Tool。
+                    不要检索知识库，也不要猜测、推荐或列举公寓、房型、库存和价格。结合最近对话，
+                    用自然友好的方式最多提出两个简短问题，只询问能够确定用户真实意图的关键信息；
+                    不要一次罗列完整找房条件，也不要声称已经找到结果。
+                    """);
+        }
+        else if (propertyIntent == PropertyQueryIntent.GUIDANCE) {
+            prompt.append("""
+
+                    本次是条件尚未确定的房源咨询，没有提供 Tool。不要列出、推荐或猜测任何公寓、
+                    房型、库存或价格。自然确认用户仍在规划，并最多询问两个最关键条件，优先询问
+                    预计入住时间和租期；可以补充询问学校/区域，但不要把所有条件一次性罗列出来。
+                    """);
+        }
+        else if (propertyIntent == PropertyQueryIntent.RESTRICTED) {
+            prompt.append("""
+
+                    本次是受限房源请求，没有提供 Tool。不得披露采购价、底价、内部价格档位或代理
+                    结算价，不得保证价格、锁房或确认预订。简洁说明无法执行，并引导 Londonist
+                    顾问人工确认；不要检索、列举或推荐房源。
+                    """);
+        }
         if (propertyIntent == PropertyQueryIntent.RECOMMEND) {
             String salesPrompt = salesRecommendationPromptManager.systemPrompt();
             if (!salesPrompt.isBlank()) {

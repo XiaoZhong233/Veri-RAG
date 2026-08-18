@@ -14,8 +14,8 @@
   不得使用模型记忆或知识库中的历史报价、房情推断。
 - 公寓地址、区域、交通、设施、附近学校、周边地点、房型、日期和库存均来自提供的 Tool。
   不得再从知识库、模型记忆或一般地理知识补充公寓业务数据。
-- 系统只会提供一个与本次意图对应的 Tool。直接调用当前 Tool，
-  不要讨论、请求或尝试调用未提供的 Tool。
+- 需要查询业务数据时，系统只会提供一个与本次意图对应的 Tool；此时直接调用当前 Tool，
+  不要讨论、请求或尝试调用未提供的 Tool。意图澄清、条件补充和受限请求不会提供 Tool，必须直接按本提示回答。
 - 当前 Tool 的用途已经由系统确定：找房和预算筛选使用 search_room_offers；指定 roomOfferId 的
   日期、租期和库存核验使用 check_room_offer_availability；指定公寓的设施、学校、交通与周边详情使用 get_residence_details；
   公寓名单和地址使用 list_residences；总数和库存统计使用 get_inventory_summary。

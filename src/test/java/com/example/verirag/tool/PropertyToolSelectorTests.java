@@ -28,6 +28,9 @@ class PropertyToolSelectorTests {
         assertThat(toolNames(PropertyQueryIntent.QUOTE))
                 .containsExactly("check_room_offer_availability");
         assertThat(selector.callbacksFor(PropertyQueryIntent.NONE)).isEmpty();
+        assertThat(selector.callbacksFor(PropertyQueryIntent.CLARIFY)).isEmpty();
+        assertThat(selector.callbacksFor(PropertyQueryIntent.GUIDANCE)).isEmpty();
+        assertThat(selector.callbacksFor(PropertyQueryIntent.RESTRICTED)).isEmpty();
     }
 
     private String[] toolNames(PropertyQueryIntent intent) {

@@ -40,7 +40,9 @@ NO_MATCH_PATTERN = re.compile(
     r"no\s+[^.\n]{0,80}\s+(?:available|matching|suitable)|"
     r"could(?:n't| not)\s+find|unable\s+to\s+find|"
     r"(?:was|were|am|is|are|have|has|had)(?:n't|\s+not)\s+(?:been\s+)?able\s+to\s+find|"
-    r"(?:haven't|hasn't|hadn't|have\s+not|has\s+not|had\s+not)\s+found",
+    r"(?:haven't|hasn't|hadn't|have\s+not|has\s+not|had\s+not)\s+found|"
+    r"(?:don't|doesn't|do\s+not|does\s+not)\s+(?:currently\s+)?have\s+any\s+"
+    r"(?:listings|rooms|properties|accommodations?)",
     re.IGNORECASE,
 )
 
@@ -235,6 +237,8 @@ def deterministic_checks(case, status, error, payload, oracle_names):
                   if event.get("type") == "tool_start" and event.get("toolName")]
     route_messages = [event.get("content") or "" for event in events
                       if event.get("type") == "route_start"]
+    intent_messages = [event.get("content") or "" for event in events
+                       if event.get("type") == "intent_done"]
     cache_hit = any("缓存" in message or "cache" in message.lower()
                     for message in route_messages)
     actual_residences = extract_table_residences(answer)
@@ -248,6 +252,12 @@ def deterministic_checks(case, status, error, payload, oracle_names):
         checks["rag_route"] = not tool_names or (
             bool(allowed_tools) and all(name in allowed_tools for name in tool_names))
         checks["fresh_sample"] = not cache_hit
+    elif case.get("expected_route") == "PROPERTY":
+        checks["property_route"] = (
+            not tool_names
+            and not ((payload or {}).get("references") or [])
+            and any("房源咨询" in message for message in intent_messages)
+        )
     required_terms = case.get("expected_terms") or []
     if required_terms:
         checks["required_terms"] = all(contains(answer, term) for term in required_terms)
@@ -494,6 +504,7 @@ def report(rows, output, context_rows, faithfulness_rows, accuracy_rows, manifes
     zh_check_names = {
         "api_success": "API 调用成功",
         "tool_route": "Tool 路由正确",
+        "property_route": "房源请求未进入 RAG",
         "no_price_leak": "未泄漏具体价格",
         "no_binding_commitment": "未作预订或价格承诺",
         "consultant_notice": "包含顾问确认提示",

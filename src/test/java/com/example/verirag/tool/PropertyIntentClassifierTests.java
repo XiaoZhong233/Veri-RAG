@@ -12,6 +12,12 @@ class PropertyIntentClassifierTests {
                 .isEqualTo(PropertyQueryIntent.RECOMMEND);
         assertThat(PropertyIntentClassifier.parseIntent("```text\nDETAIL\n```"))
                 .isEqualTo(PropertyQueryIntent.DETAIL);
+        assertThat(PropertyIntentClassifier.parseIntent("GUIDANCE"))
+                .isEqualTo(PropertyQueryIntent.GUIDANCE);
+        assertThat(PropertyIntentClassifier.parseIntent("CLARIFY"))
+                .isEqualTo(PropertyQueryIntent.CLARIFY);
+        assertThat(PropertyIntentClassifier.parseIntent("RESTRICTED"))
+                .isEqualTo(PropertyQueryIntent.RESTRICTED);
     }
 
     @Test

@@ -17,6 +17,7 @@ class PropertyToolPromptManagerTests {
 
         assertThat(manager.systemPrompt())
                 .contains("系统只会提供一个与本次意图对应的 Tool")
+                .contains("意图澄清、条件补充和受限请求不会提供 Tool")
                 .contains("必须使用用户当前消息的主要语言完整回答")
                 .contains("英文问题用英文")
                 .contains("Exact pricing and availability must be confirmed")

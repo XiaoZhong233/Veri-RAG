@@ -5,16 +5,16 @@
 <mapper namespace="com.example.verirag.mapper.WeComKfStateMapper">
 
     <select id="selectCursor" resultType="java.lang.String">
-        SELECT cursor
+        SELECT sync_cursor
         FROM t_wecom_kf_cursor
         WHERE open_kf_id = #{openKfId}
     </select>
 
     <insert id="upsertCursor">
-        INSERT INTO t_wecom_kf_cursor (open_kf_id, cursor)
+        INSERT INTO t_wecom_kf_cursor (open_kf_id, sync_cursor)
         VALUES (#{openKfId}, #{cursor})
         ON DUPLICATE KEY UPDATE
-            cursor = VALUES(cursor),
+            sync_cursor = VALUES(sync_cursor),
             update_time = CURRENT_TIMESTAMP
     </insert>
 

@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS t_wecom_conversation (
 
 CREATE TABLE IF NOT EXISTS t_wecom_kf_cursor (
     open_kf_id  VARCHAR(128) NOT NULL COMMENT '微信客服账号ID',
-    cursor      VARCHAR(255) NOT NULL COMMENT 'sync_msg下一页/增量游标',
+    sync_cursor VARCHAR(255) NOT NULL COMMENT 'sync_msg下一页/增量游标',
     create_time DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     update_time DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (open_kf_id)

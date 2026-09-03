@@ -63,7 +63,7 @@ public class WeComKfApiClient {
         body.put("msgid", requireText(messageId, "msgid"));
         body.put("msgtype", "text");
         body.putObject("text").put("content", requireText(content, "message content"));
-        postWithAccessToken("/cgi-bin/kf/send_msg", body, true);
+        postWithAccessToken("/cgi-bin/kf/send_msg", body, true, true);
     }
 
     public int getServiceState(String openKfId, String externalUserId) {
@@ -84,6 +84,12 @@ public class WeComKfApiClient {
     }
 
     private JsonNode postWithAccessToken(String path, JsonNode body, boolean retryInvalidToken) {
+        return postWithAccessToken(path, body, retryInvalidToken, false);
+    }
+
+    private JsonNode postWithAccessToken(
+            String path, JsonNode body, boolean retryInvalidToken,
+            boolean acceptRepeatedMessageId) {
         JsonNode response = post(path + "?access_token=" + encode(getAccessToken()), body);
         int errorCode = response.path("errcode").asInt(-1);
         if (retryInvalidToken && (errorCode == 40014 || errorCode == 42001)) {
@@ -91,7 +97,8 @@ public class WeComKfApiClient {
             response = post(path + "?access_token=" + encode(getAccessToken()), body);
             errorCode = response.path("errcode").asInt(-1);
         }
-        if (errorCode != 0) {
+        // msgid 是客户端幂等键。95033 表示此前请求已被企业微信接受，按成功处理即可。
+        if (errorCode != 0 && !(acceptRepeatedMessageId && errorCode == 95033)) {
             throw apiError(path, response);
         }
         return response;

@@ -132,20 +132,24 @@ public class WeComKfMessageService {
         String channelId = "kf:" + openKfId;
         ChatAskRequest request = new ChatAskRequest();
         request.setQuestion(question);
-        request.setSessionId(conversationMapper.selectSessionId(channelId, externalUserId));
+        request.setSessionId(conversationMapper.selectSessionId(
+                channelId, externalUserId, properties.getUserId()));
+        ChatAskResult result;
         try {
-            ChatAskResult result = chatService.ask(properties.getUserId(), request);
+            result = chatService.ask(properties.getUserId(), request);
             conversationMapper.upsertSessionId(
                     channelId, externalUserId, properties.getUserId(), result.getSessionId());
-            sendSystemText(openKfId, externalUserId, messageId, result.getAnswer());
-            log.info("event=wecom.kf.answer_sent openKfId={} externalUserId={} sessionId={}",
-                    openKfId, externalUserId, result.getSessionId());
         } catch (Exception ex) {
             log.warn("event=wecom.kf.answer_failed openKfId={} externalUserId={} error={}",
                     openKfId, externalUserId, rootMessage(ex));
             sendSystemText(openKfId, externalUserId, messageId,
                     properties.getErrorMessage());
+            return;
         }
+        // 发送异常交给外层同步流程重试，不能再用同一个 msgid 发送错误文案。
+        sendSystemText(openKfId, externalUserId, messageId, result.getAnswer());
+        log.info("event=wecom.kf.answer_sent openKfId={} externalUserId={} sessionId={}",
+                openKfId, externalUserId, result.getSessionId());
     }
 
     private void sendSystemText(

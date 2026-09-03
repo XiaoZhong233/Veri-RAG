@@ -353,7 +353,7 @@ public class WeComBotClient implements SmartLifecycle {
         ChatAskRequest request = new ChatAskRequest();
         request.setQuestion(question);
         request.setSessionId(conversationMapper.selectSessionId(
-                properties.getBotId(), conversationKey));
+                properties.getBotId(), conversationKey, properties.getUserId()));
 
         log.info("event=wecom.bot.question conversation={} sessionId={} chars={}",
                 conversationKey, request.getSessionId(), question.length());

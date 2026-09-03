@@ -5,10 +5,13 @@
 <mapper namespace="com.example.verirag.mapper.WeComConversationMapper">
 
     <select id="selectSessionId" resultType="java.lang.Long">
-        SELECT session_id
-        FROM t_wecom_conversation
-        WHERE bot_id = #{botId}
-          AND conversation_key = #{conversationKey}
+        SELECT wc.session_id
+        FROM t_wecom_conversation wc
+        INNER JOIN t_chat_session cs
+                ON cs.id = wc.session_id
+               AND cs.user_id = #{userId}
+        WHERE wc.bot_id = #{botId}
+          AND wc.conversation_key = #{conversationKey}
     </select>
 
     <insert id="upsertSessionId">

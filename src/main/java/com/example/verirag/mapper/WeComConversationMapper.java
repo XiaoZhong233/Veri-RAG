@@ -14,7 +14,8 @@ public interface WeComConversationMapper {
      * 首次对话返回 null，由 ChatService 创建新的 session。
      */
     Long selectSessionId(@Param("botId") String botId,
-                         @Param("conversationKey") String conversationKey);
+                         @Param("conversationKey") String conversationKey,
+                         @Param("userId") Long userId);
 
     /**
      * 保存或更新会话映射。ChatService 发出 meta 事件后即可获得新 sessionId。

@@ -61,6 +61,7 @@ public class WeComKfCallbackController {
                 if (!StringUtils.hasText(callbackToken) || !StringUtils.hasText(openKfId)) {
                     throw new IllegalArgumentException("Incomplete kf_msg_or_event callback");
                 }
+                log.info("event=wecom.kf.callback_received openKfId={}", openKfId);
                 messageService.handleNotification(callbackToken, openKfId);
             } else {
                 log.info("event=wecom.kf.callback_ignored type={}", event);

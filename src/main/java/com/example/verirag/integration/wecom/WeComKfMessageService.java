@@ -79,6 +79,16 @@ public class WeComKfMessageService {
         String messageType = message.path("msgtype").asText("");
         int origin = message.path("origin").asInt(0);
 
+        if (origin == 3) {
+            String customerContent = "text".equals(messageType)
+                    ? message.path("text").path("content").asText("")
+                    : "[非文字消息:" + messageType + "]";
+            log.info("event=wecom.kf.customer_message_received msgId={} openKfId={} "
+                            + "externalUserId={} type={} content={}",
+                    messageId, openKfId, externalUserId, messageType,
+                    escapeLogText(customerContent));
+        }
+
         // 只回答微信客户发来的消息；系统事件和接待人员消息仅记为已消费。
         if (origin != 3 || !StringUtils.hasText(openKfId)
                 || !StringUtils.hasText(externalUserId)) {
@@ -102,8 +112,8 @@ public class WeComKfMessageService {
         }
 
         if (!"text".equals(messageType)) {
-            apiClient.sendText(openKfId, externalUserId, replyMessageId(messageId),
-                    truncateUtf8(properties.getUnsupportedMessage(), MAX_TEXT_BYTES));
+            sendSystemText(openKfId, externalUserId, messageId,
+                    properties.getUnsupportedMessage());
             markProcessed(messageId, openKfId, externalUserId, messageType);
             return;
         }
@@ -127,16 +137,26 @@ public class WeComKfMessageService {
             ChatAskResult result = chatService.ask(properties.getUserId(), request);
             conversationMapper.upsertSessionId(
                     channelId, externalUserId, properties.getUserId(), result.getSessionId());
-            apiClient.sendText(openKfId, externalUserId, replyMessageId(messageId),
-                    truncateUtf8(result.getAnswer(), MAX_TEXT_BYTES));
+            sendSystemText(openKfId, externalUserId, messageId, result.getAnswer());
             log.info("event=wecom.kf.answer_sent openKfId={} externalUserId={} sessionId={}",
                     openKfId, externalUserId, result.getSessionId());
         } catch (Exception ex) {
             log.warn("event=wecom.kf.answer_failed openKfId={} externalUserId={} error={}",
                     openKfId, externalUserId, rootMessage(ex));
-            apiClient.sendText(openKfId, externalUserId, replyMessageId(messageId),
-                    truncateUtf8(properties.getErrorMessage(), MAX_TEXT_BYTES));
+            sendSystemText(openKfId, externalUserId, messageId,
+                    properties.getErrorMessage());
         }
+    }
+
+    private void sendSystemText(
+            String openKfId, String externalUserId, String inboundMessageId, String content) {
+        String outgoingMessageId = replyMessageId(inboundMessageId);
+        String outgoingContent = truncateUtf8(content, MAX_TEXT_BYTES);
+        apiClient.sendText(openKfId, externalUserId, outgoingMessageId, outgoingContent);
+        log.info("event=wecom.kf.system_message_sent msgId={} replyTo={} openKfId={} "
+                        + "externalUserId={} content={}",
+                outgoingMessageId, inboundMessageId, openKfId, externalUserId,
+                escapeLogText(outgoingContent));
     }
 
     private void markProcessed(
@@ -180,6 +200,19 @@ public class WeComKfMessageService {
 
     private static String blankToNull(String value) {
         return StringUtils.hasText(value) ? value : null;
+    }
+
+    private static String escapeLogText(String value) {
+        if (value == null) {
+            return "";
+        }
+        String truncated = value.codePointCount(0, value.length()) <= 100
+                ? value
+                : value.substring(0, value.offsetByCodePoints(0, 100));
+        return truncated.replace("\\", "\\\\")
+                .replace("\r", "\\r")
+                .replace("\n", "\\n")
+                .replace("\t", "\\t");
     }
 
     private static String rootMessage(Throwable error) {

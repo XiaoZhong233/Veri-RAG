@@ -136,7 +136,7 @@ public class ChatServiceImpl implements ChatService {
     private boolean manualHistoryEnabled;
 
     /** 主回答生成上限；独立于15秒的轻量意图分类超时。 */
-    @Value("${rag.chat.response-timeout:30s}")
+    @Value("${rag.chat.response-timeout:3m}")
     private Duration llmResponseTimeout;
 
     @Value("${rag.chat.property-max-tokens:600}")
@@ -683,7 +683,7 @@ public class ChatServiceImpl implements ChatService {
 
     static String friendlyStreamError(Throwable error) {
         if (isModelTimeout(error)) {
-            return "模型响应超过30秒，已中断本次请求，请重试。";
+            return "模型响应超时，已中断本次请求，请重试。";
         }
         return "模型响应中断，已保留当前生成内容，请重试。";
     }
@@ -699,8 +699,8 @@ public class ChatServiceImpl implements ChatService {
 
     private static String modelTimeoutMessage(String question) {
         return containsHan(question)
-                ? "模型响应超过30秒，已中断本次请求，请重试。"
-                : "The model did not respond within 30 seconds, so this request was stopped. Please retry.";
+                ? "模型响应超时，已中断本次请求，请重试。"
+                : "The model response timed out, so this request was stopped. Please retry.";
     }
 
     private static boolean containsHan(String value) {

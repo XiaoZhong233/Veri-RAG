@@ -92,7 +92,7 @@ public class PropertyQueryTools {
             @ToolParam(description = "附近学校或地标名称，例如 UCL、LSE、King's College London；没有地点条件时留空",
                     required = false)
             String nearbyPlaceKeyword,
-            @ToolParam(description = "允许的最长通勤分钟；查询“附近”时通常传25，仅使用数据库中明确的通勤时间",
+            @ToolParam(description = "允许的最长通勤分钟；查询“附近”时通常传25；未指定必须留空，不能传0",
                     required = false)
             Integer maxTravelMinutes,
             @ToolParam(description = "用户明确指定的交通方式偏好，按优先顺序用逗号分隔：WALK, BIKE, TUBE, BUS, TRAIN, DLR, PUBLIC_TRANSPORT；未明确指定时留空",
@@ -103,37 +103,41 @@ public class PropertyQueryTools {
             @ToolParam(description = "可接受的最晚起租日，YYYY-MM-DD；只给一个日期时可留空",
                     required = false)
             String startDateTo,
-            @ToolParam(description = "租住周数，例如六个月通常传26", required = false)
+            @ToolParam(description = "租住周数，例如六个月通常传26；未指定必须留空，不能传0", required = false)
             Integer stayWeeks,
             @ToolParam(description = "房型大类，可用逗号分隔：Studio, Ensuite, Non-Ensuite, Twin Studio, Apartment",
                     required = false)
             String rootTypes,
-            @ToolParam(description = "最高每周预算；币种为GBP", required = false)
+            @ToolParam(description = "最高每周预算；币种为GBP；未指定必须留空，不能传0", required = false)
             BigDecimal maxWeeklyPrice,
             @ToolParam(description = "是否包含候选公寓中的售罄房型；默认false",
                     required = false)
             Boolean includeSoldOut,
-            @ToolParam(description = "最多返回多少个不同公寓，默认4，最大4", required = false)
+            @ToolParam(description = "最多返回多少个不同公寓，默认4，最大4；未指定必须留空，不能传0", required = false)
             Integer limitResidences) {
+        Integer normalizedMaxTravelMinutes = nullIfZero(maxTravelMinutes);
+        Integer normalizedStayWeeks = nullIfZero(stayWeeks);
+        BigDecimal normalizedMaxWeeklyPrice = nullIfZero(maxWeeklyPrice);
+        Integer normalizedLimitResidences = nullIfZero(limitResidences);
         return executeTool("search_room_offers",
                 toolArguments(
                         "city", city,
                         "residenceKeyword", residenceKeyword,
                         "residenceNames", residenceNames,
                         "nearbyPlaceKeyword", nearbyPlaceKeyword,
-                        "maxTravelMinutes", maxTravelMinutes,
+                        "maxTravelMinutes", normalizedMaxTravelMinutes,
                         "preferredTravelModes", preferredTravelModes,
                         "startDateFrom", startDateFrom,
                         "startDateTo", startDateTo,
-                        "stayWeeks", stayWeeks,
+                        "stayWeeks", normalizedStayWeeks,
                         "rootTypes", rootTypes,
-                        "maxWeeklyPrice", maxWeeklyPrice,
+                        "maxWeeklyPrice", normalizedMaxWeeklyPrice,
                         "includeSoldOut", includeSoldOut,
-                        "limitResidences", limitResidences),
+                        "limitResidences", normalizedLimitResidences),
                 () -> searchRoomOffersInternal(city, residenceKeyword, residenceNames,
-                        nearbyPlaceKeyword, maxTravelMinutes, preferredTravelModes, startDateFrom,
-                        startDateTo, stayWeeks, rootTypes, maxWeeklyPrice,
-                        includeSoldOut, limitResidences),
+                        nearbyPlaceKeyword, normalizedMaxTravelMinutes, preferredTravelModes,
+                        startDateFrom, startDateTo, normalizedStayWeeks, rootTypes,
+                        normalizedMaxWeeklyPrice, includeSoldOut, normalizedLimitResidences),
                 result -> toolArguments(
                         "matchedResidenceCount", result.matchedResidenceCount(),
                         "availableResidenceCount", result.availableResidenceCount(),
@@ -281,11 +285,12 @@ public class PropertyQueryTools {
     public ResidenceDetailResult getResidenceDetails(
             @ToolParam(description = "公寓名称、编码、地址或车站关键词")
             String keyword,
-            @ToolParam(description = "最多返回多少个公寓，默认5，最大10", required = false)
+            @ToolParam(description = "最多返回多少个公寓，默认5，最大10；未指定必须留空，不能传0", required = false)
             Integer limit) {
+        Integer normalizedLimit = nullIfZero(limit);
         return executeTool("get_residence_details",
-                toolArguments("keyword", keyword, "limit", limit),
-                () -> getResidenceDetailsInternal(keyword, limit),
+                toolArguments("keyword", keyword, "limit", normalizedLimit),
+                () -> getResidenceDetailsInternal(keyword, normalizedLimit),
                 result -> toolArguments("residenceCount", result.count()));
     }
 
@@ -331,17 +336,18 @@ public class PropertyQueryTools {
             String startDate,
             @ToolParam(description = "退房日 YYYY-MM-DD；与入住日成对提供", required = false)
             String endDate,
-            @ToolParam(description = "租住周数；与日期同时提供时以日期计算结果为准",
+            @ToolParam(description = "租住周数；与日期同时提供时以日期计算结果为准；未指定必须留空，不能传0",
                     required = false)
             Integer stayWeeks) {
+        Integer normalizedStayWeeks = nullIfZero(stayWeeks);
         return executeTool("check_room_offer_availability",
                 toolArguments(
                         "roomOfferId", roomOfferId,
                         "startDate", startDate,
                         "endDate", endDate,
-                        "stayWeeks", stayWeeks),
+                        "stayWeeks", normalizedStayWeeks),
                 () -> checkRoomOfferAvailabilityInternal(
-                        roomOfferId, startDate, endDate, stayWeeks),
+                        roomOfferId, startDate, endDate, normalizedStayWeeks),
                 result -> toolArguments(
                         "roomOfferId", result.roomOfferId(),
                         "residenceName", result.residenceName(),
@@ -429,11 +435,12 @@ public class PropertyQueryTools {
             String city,
             @ToolParam(description = "公寓名称、编码、地址或车站关键词", required = false)
             String keyword,
-            @ToolParam(description = "最多返回数量，默认20，最大100", required = false)
+            @ToolParam(description = "最多返回数量，默认20，最大100；未指定必须留空，不能传0", required = false)
             Integer limit) {
+        Integer normalizedLimit = nullIfZero(limit);
         return executeTool("list_residences",
-                toolArguments("city", city, "keyword", keyword, "limit", limit),
-                () -> listResidencesInternal(city, keyword, limit),
+                toolArguments("city", city, "keyword", keyword, "limit", normalizedLimit),
+                () -> listResidencesInternal(city, keyword, normalizedLimit),
                 result -> toolArguments("residenceCount", result.count()));
     }
 
@@ -918,6 +925,14 @@ public class PropertyQueryTools {
         if (weeks != null && (weeks < 1 || weeks > 104)) {
             throw new IllegalArgumentException("stayWeeks 必须在 1 到 104 之间");
         }
+    }
+
+    private static Integer nullIfZero(Integer value) {
+        return value != null && value == 0 ? null : value;
+    }
+
+    private static BigDecimal nullIfZero(BigDecimal value) {
+        return value != null && value.signum() == 0 ? null : value;
     }
 
     private static Set<String> splitRootTypes(String value) {

@@ -189,6 +189,8 @@ https://your-domain.example/veri-rag/api/wecom/kf/callback
 
 URL 校验通过并取得微信客服 Secret 后，再设置 `WECOM_KF_SECRET` 并重建应用容器。还需在“微信客服 → 可调用接口的应用”中授权自建应用和相应客服账号，并将服务器公网 IP 加入可信 IP。真实凭据只保存在生产 `.env`，不要提交到 Git。
 
+微信客服回答超过 `WECOM_KF_PROGRESS_DELAY` 时，会先发送一条独立的检索提示。最终回答使用纯文本渠道提示词，并在发送前将模型偶尔返回的 Markdown 表格、标题、链接等转换为微信中易读的编号列表；网页版仍保留 Markdown 和流式展示。
+
 ### 2. 构建并启动
 
 ```bash
@@ -319,6 +321,8 @@ export SPRING_DATA_REDIS_PASSWORD="veri_rag_dev"
 | `WECOM_KF_USER_ID` | `2` | 微信客服会话归属的本地用户 ID |
 | `WECOM_KF_API_BASE_URL` | `https://qyapi.weixin.qq.com` | 企业微信 API 地址，测试时可覆盖 |
 | `WECOM_KF_SYNC_LIMIT` | `1000` | 单次 `sync_msg` 拉取上限 |
+| `WECOM_KF_PROGRESS_DELAY` | `1500ms` | 回答超过该时长后发送“正在检索”提示 |
+| `WECOM_KF_PROGRESS_MESSAGE` | `正在检索资料，请稍候…` | 微信客服等待提示；留空可关闭 |
 
 Embedding 服务单次最多接受 20 条文本，因此 `RAG_EMBEDDING_BATCH_SIZE` 不应配置为大于 20。房源、报价和库存查询已经由数据库 Tool 处理，不需要通过提高 RAG `top-k` 解决召回问题。
 

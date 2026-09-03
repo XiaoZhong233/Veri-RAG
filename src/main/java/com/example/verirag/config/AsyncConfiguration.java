@@ -5,6 +5,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 
 /** 后台摘要不占用 HTTP/SSE 请求线程。 */
 @Configuration
@@ -32,5 +33,16 @@ public class AsyncConfiguration {
         executor.setThreadNamePrefix("wecom-kf-");
         executor.initialize();
         return executor;
+    }
+
+    /** 延迟发送微信客服“正在检索”提示，不占用消息同步线程。 */
+    @Bean("wecomKfProgressScheduler")
+    public ThreadPoolTaskScheduler wecomKfProgressScheduler() {
+        ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
+        scheduler.setPoolSize(1);
+        scheduler.setThreadNamePrefix("wecom-kf-progress-");
+        scheduler.setRemoveOnCancelPolicy(true);
+        scheduler.initialize();
+        return scheduler;
     }
 }

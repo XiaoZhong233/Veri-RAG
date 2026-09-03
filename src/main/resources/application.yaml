@@ -10,7 +10,7 @@ spring:
       base-url: ${DASHSCOPE_BASE_URL:https://llm-1yauwtsqkmv66e2w.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}
       chat:
 #        model: qwen3.7-plus
-        model: ${LLM_CHAT_MODEL:qwen3.7-flash-2026-07-15}
+        model: ${LLM_CHAT_MODEL:qwen3.8-flash}
 #        model: qwen-flash
         # 模型单次 HTTP 请求总超时；超过30秒由 SDK 主动取消底层请求。
         timeout: ${LLM_TIMEOUT:30s}
@@ -72,6 +72,8 @@ wecom:
     user-id: ${WECOM_KF_USER_ID:2}
     api-base-url: ${WECOM_KF_API_BASE_URL:https://qyapi.weixin.qq.com}
     sync-limit: ${WECOM_KF_SYNC_LIMIT:1000}
+    progress-delay: ${WECOM_KF_PROGRESS_DELAY:1500ms}
+    progress-message: ${WECOM_KF_PROGRESS_MESSAGE:正在检索资料，请稍候…}
     unsupported-message: ${WECOM_KF_UNSUPPORTED_MESSAGE:您好，目前智能客服仅支持文字消息，请用文字描述您的问题。}
     error-message: ${WECOM_KF_ERROR_MESSAGE:抱歉，智能客服暂时无法处理您的问题，请稍后再试或联系人工客服。}
 

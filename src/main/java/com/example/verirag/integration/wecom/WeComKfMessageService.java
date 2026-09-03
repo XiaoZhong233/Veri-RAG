@@ -7,23 +7,26 @@ import com.example.verirag.mapper.WeComConversationMapper;
 import com.example.verirag.mapper.WeComKfStateMapper;
 import com.example.verirag.service.ChatService;
 import com.fasterxml.jackson.databind.JsonNode;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Async;
+import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.HexFormat;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledFuture;
 
 /**
  * 消费微信客服回调通知，通过 sync_msg 拉取消息并调用 Veri-RAG 回复。
  */
 @Service
-@RequiredArgsConstructor
 @Slf4j
 @ConditionalOnProperty(prefix = "wecom.kf", name = "enabled", havingValue = "true")
 public class WeComKfMessageService {
@@ -34,7 +37,23 @@ public class WeComKfMessageService {
     private final WeComKfStateMapper stateMapper;
     private final WeComConversationMapper conversationMapper;
     private final ChatService chatService;
+    private final TaskScheduler progressScheduler;
     private final ConcurrentHashMap<String, Object> accountLocks = new ConcurrentHashMap<>();
+
+    public WeComKfMessageService(
+            WeComKfProperties properties,
+            WeComKfApiClient apiClient,
+            WeComKfStateMapper stateMapper,
+            WeComConversationMapper conversationMapper,
+            ChatService chatService,
+            @Qualifier("wecomKfProgressScheduler") TaskScheduler progressScheduler) {
+        this.properties = properties;
+        this.apiClient = apiClient;
+        this.stateMapper = stateMapper;
+        this.conversationMapper = conversationMapper;
+        this.chatService = chatService;
+        this.progressScheduler = progressScheduler;
+    }
 
     /** HTTP 回调必须快速返回，具体同步与模型调用放入独立线程池。 */
     @Async("wecomKfExecutor")
@@ -112,7 +131,7 @@ public class WeComKfMessageService {
         }
 
         if (!"text".equals(messageType)) {
-            sendSystemText(openKfId, externalUserId, messageId,
+            sendSystemText(openKfId, externalUserId, messageId, "final",
                     properties.getUnsupportedMessage());
             markProcessed(messageId, openKfId, externalUserId, messageType);
             return;
@@ -132,8 +151,12 @@ public class WeComKfMessageService {
         String channelId = "kf:" + openKfId;
         ChatAskRequest request = new ChatAskRequest();
         request.setQuestion(question);
+        request.setPlainText(true);
         request.setSessionId(conversationMapper.selectSessionId(
                 channelId, externalUserId, properties.getUserId()));
+        ProgressNotice progressNotice = new ProgressNotice(
+                openKfId, externalUserId, messageId);
+        progressNotice.start();
         ChatAskResult result;
         try {
             result = chatService.ask(properties.getUserId(), request);
@@ -142,19 +165,23 @@ public class WeComKfMessageService {
         } catch (Exception ex) {
             log.warn("event=wecom.kf.answer_failed openKfId={} externalUserId={} error={}",
                     openKfId, externalUserId, rootMessage(ex));
-            sendSystemText(openKfId, externalUserId, messageId,
+            progressNotice.finish();
+            sendSystemText(openKfId, externalUserId, messageId, "final",
                     properties.getErrorMessage());
             return;
         }
         // 发送异常交给外层同步流程重试，不能再用同一个 msgid 发送错误文案。
-        sendSystemText(openKfId, externalUserId, messageId, result.getAnswer());
+        progressNotice.finish();
+        sendSystemText(openKfId, externalUserId, messageId, "final",
+                WeComPlainTextFormatter.format(result.getAnswer()));
         log.info("event=wecom.kf.answer_sent openKfId={} externalUserId={} sessionId={}",
                 openKfId, externalUserId, result.getSessionId());
     }
 
     private void sendSystemText(
-            String openKfId, String externalUserId, String inboundMessageId, String content) {
-        String outgoingMessageId = replyMessageId(inboundMessageId);
+            String openKfId, String externalUserId, String inboundMessageId,
+            String messageKind, String content) {
+        String outgoingMessageId = replyMessageId(inboundMessageId, messageKind);
         String outgoingContent = truncateUtf8(content, MAX_TEXT_BYTES);
         apiClient.sendText(openKfId, externalUserId, outgoingMessageId, outgoingContent);
         log.info("event=wecom.kf.system_message_sent msgId={} replyTo={} openKfId={} "
@@ -163,16 +190,68 @@ public class WeComKfMessageService {
                 escapeLogText(outgoingContent));
     }
 
+    private final class ProgressNotice {
+        private final Object monitor = new Object();
+        private final String openKfId;
+        private final String externalUserId;
+        private final String inboundMessageId;
+        private boolean finished;
+        private ScheduledFuture<?> future;
+
+        private ProgressNotice(
+                String openKfId, String externalUserId, String inboundMessageId) {
+            this.openKfId = openKfId;
+            this.externalUserId = externalUserId;
+            this.inboundMessageId = inboundMessageId;
+        }
+
+        private void start() {
+            if (!StringUtils.hasText(properties.getProgressMessage())) {
+                return;
+            }
+            Duration delay = properties.getProgressDelay();
+            if (delay == null || delay.isNegative()) {
+                delay = Duration.ZERO;
+            }
+            future = progressScheduler.schedule(() -> {
+                synchronized (monitor) {
+                    if (finished) {
+                        return;
+                    }
+                    try {
+                        sendSystemText(openKfId, externalUserId, inboundMessageId,
+                                "progress", properties.getProgressMessage());
+                    } catch (Exception ex) {
+                        log.warn("event=wecom.kf.progress_failed openKfId={} "
+                                        + "externalUserId={} error={}",
+                                openKfId, externalUserId, rootMessage(ex));
+                    }
+                }
+            }, Instant.now().plus(delay));
+        }
+
+        private void finish() {
+            synchronized (monitor) {
+                finished = true;
+                if (future != null) {
+                    future.cancel(false);
+                }
+            }
+        }
+    }
+
     private void markProcessed(
             String messageId, String openKfId, String externalUserId, String messageType) {
         stateMapper.insertProcessed(messageId, blankToNull(openKfId),
                 blankToNull(externalUserId), blankToNull(messageType));
     }
 
-    private static String replyMessageId(String inboundMessageId) {
+    private static String replyMessageId(String inboundMessageId, String messageKind) {
         try {
+            String idempotencyKey = "final".equals(messageKind)
+                    ? inboundMessageId : inboundMessageId + ":" + messageKind;
             byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest(inboundMessageId.getBytes(StandardCharsets.UTF_8));
+                    .digest(idempotencyKey.getBytes(StandardCharsets.UTF_8));
             return "vr_" + HexFormat.of().formatHex(digest, 0, 14);
         } catch (Exception ex) {
             throw new IllegalStateException("SHA-256 is unavailable", ex);

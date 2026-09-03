@@ -16,4 +16,6 @@ public class ChatAskRequest {
     private Long sessionId;
     /** 限定检索分类，空表示全库 */
     private List<Long> categoryIds;
+    /** 是否要求模型输出适合纯文本聊天渠道的内容；网页版默认保留 Markdown。 */
+    private boolean plainText;
 }

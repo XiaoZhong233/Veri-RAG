@@ -79,6 +79,13 @@ public class ChatServiceImpl implements ChatService {
     private static final double DEFAULT_SIMILARITY_THRESHOLD = 0.75;
     private static final int DEFAULT_HISTORY_MAX_MESSAGES = 6;
     private static final ZoneId LONDON_TIME_ZONE = ZoneId.of("Europe/London");
+    private static final String PLAIN_TEXT_OUTPUT_INSTRUCTION = """
+
+            当前回答将发送到不支持 Markdown 的纯文本聊天窗口。最终回答必须使用易读的纯文本：
+            不要输出 Markdown 标题、表格、加粗、链接语法、代码围栏或引用符号；
+            即使前文要求使用 Markdown 表格，也以本条为准，改为数字序号和换行；
+            每个房源单独编号，各字段采用“字段：内容”的形式，链接直接输出完整 URL。
+            """;
     private final ChatClient chatClient;
 
     @Qualifier("manualHistoryChatClient")
@@ -157,7 +164,7 @@ public class ChatServiceImpl implements ChatService {
 
         // 追问的答案依赖前文，不参与跨会话回答缓存，避免上下文错配。
         // 房情随导入变化，结构化查询也不使用跨会话缓存。
-        var cached = requestedSessionId == null && !propertyHandled
+        var cached = requestedSessionId == null && !propertyHandled && !req.isPlainText()
                 ? ragAnswerCache.find(req.getQuestion(), req.getCategoryIds())
                 : Optional.<RagAnswerCache.Hit>empty();
         ragMetrics.recordCache(cached.isPresent());
@@ -196,8 +203,9 @@ public class ChatServiceImpl implements ChatService {
                         propertyIntent, propertyIntent.toolName());
             }
             prompt = prompt.system(propertyHandled
-                            ? buildPropertyToolSystemPrompt(propertyIntent, req.getQuestion())
-                            : buildModelSystemPrompt(ragContext))
+                            ? buildPropertyToolSystemPrompt(
+                                    propertyIntent, req.getQuestion(), req.isPlainText())
+                            : buildModelSystemPrompt(ragContext, req.isPlainText()))
                     .user(propertyHandled
                             ? buildPropertyToolUserMessage(
                                     req.getQuestion(), requestedSessionId, history)
@@ -241,7 +249,7 @@ public class ChatServiceImpl implements ChatService {
         log.info("LLM completed: sessionId={}, duration={}ms", requestedSessionId, llmMs);
         List<Map<String, Object>> refs = toRefs(req.getQuestion(), cited);
         String refsJson = objectMapper.writeValueAsString(refs);
-        if (requestedSessionId == null && !propertyHandled) {
+        if (requestedSessionId == null && !propertyHandled && !req.isPlainText()) {
             ragAnswerCache.put(req.getQuestion(), req.getCategoryIds(), answer, refs);
         }
 
@@ -314,7 +322,7 @@ public class ChatServiceImpl implements ChatService {
                         ? "正在整理" + propertyIntentLabel(propertyIntent) + "答复…"
                         : "正在检索知识库资料…");
 
-        var cached = requestedSessionId == null && !propertyHandled
+        var cached = requestedSessionId == null && !propertyHandled && !req.isPlainText()
                 ? ragAnswerCache.find(req.getQuestion(), req.getCategoryIds())
                 : Optional.<RagAnswerCache.Hit>empty();
         ragMetrics.recordCache(cached.isPresent());
@@ -387,8 +395,9 @@ public class ChatServiceImpl implements ChatService {
                     propertyIntent, propertyIntent.toolName());
         }
         prompt = prompt.system(propertyHandled
-                ? buildPropertyToolSystemPrompt(propertyIntent, req.getQuestion())
-                : buildModelSystemPrompt(ragContext))
+                ? buildPropertyToolSystemPrompt(
+                        propertyIntent, req.getQuestion(), req.isPlainText())
+                : buildModelSystemPrompt(ragContext, req.isPlainText()))
                 .user(propertyHandled
                 ? buildPropertyToolUserMessage(
                         req.getQuestion(), requestedSessionId, history)
@@ -423,7 +432,7 @@ public class ChatServiceImpl implements ChatService {
                     transactionTemplate.executeWithoutResult(status ->
                             persistAssistantMessage(finalSessionId, fullAnswer.toString(), referencesJson));
                     conversationSummaryService.maybeSummarize(finalSessionId);
-                    if (requestedSessionId == null && !propertyHandled) {
+                    if (requestedSessionId == null && !propertyHandled && !req.isPlainText()) {
                         ragAnswerCache.put(req.getQuestion(), req.getCategoryIds(), fullAnswer.toString(), references);
                     }
                     long llmMillis = (System.nanoTime() - llmStart) / 1_000_000;
@@ -970,13 +979,16 @@ public class ChatServiceImpl implements ChatService {
                 .advisors(advisors -> advisors.param(ChatMemory.CONVERSATION_ID, String.valueOf(conversationId)));
     }
 
-    private String buildModelSystemPrompt(String ragContext) {
+    private String buildModelSystemPrompt(String ragContext, boolean plainText) {
         // 手动模式的知识库和历史都被收敛到 user message，最终请求严格只有 system + user。
-        return manualHistoryEnabled ? promptManager.systemPrompt() : promptManager.systemPrompt() + "\n\n" + ragContext;
+        String prompt = manualHistoryEnabled
+                ? promptManager.systemPrompt()
+                : promptManager.systemPrompt() + "\n\n" + ragContext;
+        return plainText ? prompt + PLAIN_TEXT_OUTPUT_INSTRUCTION : prompt;
     }
 
     private String buildPropertyToolSystemPrompt(PropertyQueryIntent propertyIntent,
-                                                 String question) {
+                                                 String question, boolean plainText) {
         StringBuilder prompt = new StringBuilder(propertyToolPromptManager.systemPrompt());
         if (propertyIntent == PropertyQueryIntent.CLARIFY) {
             prompt.append("""
@@ -1015,10 +1027,13 @@ public class ChatServiceImpl implements ChatService {
         prompt.append(chineseQuestion
                 ? "\n\n本次用户消息的主要语言是中文，最终回答必须全部使用中文。"
                 : "\n\nThe current user message is in English. Write the entire final answer in English, including table headings, statuses, and notes.");
-        return prompt
+        prompt
                 .append("\n\n当前日期（Europe/London）：")
-                .append(LocalDate.now(LONDON_TIME_ZONE))
-                .toString();
+                .append(LocalDate.now(LONDON_TIME_ZONE));
+        if (plainText) {
+            prompt.append(PLAIN_TEXT_OUTPUT_INSTRUCTION);
+        }
+        return prompt.toString();
     }
 
     private String buildPropertyToolUserMessage(String question, Long sessionId,

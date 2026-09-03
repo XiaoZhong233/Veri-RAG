@@ -4,6 +4,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
 import java.net.URI;
+import java.time.Duration;
 
 /**
  * 企业微信“微信客服”API 配置。
@@ -22,6 +23,8 @@ public class WeComKfProperties {
     private long userId = 2L;
     private URI apiBaseUrl = URI.create("https://qyapi.weixin.qq.com");
     private int syncLimit = 1000;
+    private Duration progressDelay = Duration.ofMillis(1500);
+    private String progressMessage = "正在检索资料，请稍候…";
     private String unsupportedMessage = "您好，目前智能客服仅支持文字消息，请用文字描述您的问题。";
     private String errorMessage = "抱歉，智能客服暂时无法处理您的问题，请稍后再试或联系人工客服。";
 
@@ -87,6 +90,22 @@ public class WeComKfProperties {
 
     public void setSyncLimit(int syncLimit) {
         this.syncLimit = syncLimit;
+    }
+
+    public Duration getProgressDelay() {
+        return progressDelay;
+    }
+
+    public void setProgressDelay(Duration progressDelay) {
+        this.progressDelay = progressDelay;
+    }
+
+    public String getProgressMessage() {
+        return progressMessage;
+    }
+
+    public void setProgressMessage(String progressMessage) {
+        this.progressMessage = progressMessage;
     }
 
     public String getUnsupportedMessage() {

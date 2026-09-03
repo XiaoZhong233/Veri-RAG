@@ -34,4 +34,32 @@ class WeComKfSupportTests {
         assertTrue(result.getBytes(java.nio.charset.StandardCharsets.UTF_8).length <= 12);
         assertTrue(result.endsWith("..."));
     }
+
+    @Test
+    void convertsMarkdownTableToReadableWeComText() {
+        String markdown = """
+                ## 推荐房源
+
+                | 公寓 | 距离 | 链接 |
+                | --- | --- | --- |
+                | Chapter | 10分钟 | [查看](https://example.com) |
+                """;
+
+        String result = WeComPlainTextFormatter.format(markdown);
+
+        assertEquals("""
+                推荐房源
+
+                1. Chapter
+                   距离：10分钟
+                   链接：查看：https://example.com""", result);
+    }
+
+    @Test
+    void removesCommonInlineMarkdownForWeCom() {
+        String result = WeComPlainTextFormatter.format(
+                "**重点**：`Studio`\n- [详情](https://example.com)");
+
+        assertEquals("重点：Studio\n• 详情：https://example.com", result);
+    }
 }

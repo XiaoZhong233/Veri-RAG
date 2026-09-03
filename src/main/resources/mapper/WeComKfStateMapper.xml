@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.verirag.mapper.WeComKfStateMapper">
+
+    <select id="selectCursor" resultType="java.lang.String">
+        SELECT cursor
+        FROM t_wecom_kf_cursor
+        WHERE open_kf_id = #{openKfId}
+    </select>
+
+    <insert id="upsertCursor">
+        INSERT INTO t_wecom_kf_cursor (open_kf_id, cursor)
+        VALUES (#{openKfId}, #{cursor})
+        ON DUPLICATE KEY UPDATE
+            cursor = VALUES(cursor),
+            update_time = CURRENT_TIMESTAMP
+    </insert>
+
+    <select id="isProcessed" resultType="boolean">
+        SELECT EXISTS(
+            SELECT 1 FROM t_wecom_kf_message WHERE message_id = #{messageId}
+        )
+    </select>
+
+    <insert id="insertProcessed">
+        INSERT IGNORE INTO t_wecom_kf_message
+            (message_id, open_kf_id, external_user_id, message_type)
+        VALUES
+            (#{messageId}, #{openKfId}, #{externalUserId}, #{messageType})
+    </insert>
+</mapper>

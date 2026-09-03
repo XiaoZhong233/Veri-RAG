@@ -21,4 +21,16 @@ public class AsyncConfiguration {
         executor.initialize();
         return executor;
     }
+
+    /** 微信客服回调快速确认，消息同步和模型问答在独立线程池执行。 */
+    @Bean("wecomKfExecutor")
+    public TaskExecutor wecomKfExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(1);
+        executor.setMaxPoolSize(4);
+        executor.setQueueCapacity(100);
+        executor.setThreadNamePrefix("wecom-kf-");
+        executor.initialize();
+        return executor;
+    }
 }

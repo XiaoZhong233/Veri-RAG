@@ -52,6 +52,7 @@ public class SecurityConfig {
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(reg -> reg
                         .requestMatchers("/api/auth/**").permitAll()
+                        .requestMatchers("/api/wecom/kf/callback").permitAll()
                         .requestMatchers("/", "/index.html", "/styles.css", "/i18n.js", "/app.js", "/favicon.ico").permitAll()
                         // 供 Docker 内的 Prometheus 健康检查与抓取指标；生产环境应只允许监控网络访问。
                         .requestMatchers("/actuator/health", "/actuator/prometheus").permitAll()

@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS t_wecom_conversation (
     id                BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
-    bot_id            VARCHAR(128) NOT NULL COMMENT '企业微信智能机器人 BotID',
-    conversation_key  VARCHAR(512) NOT NULL COMMENT 'single:userid 或 group:chatid',
+    bot_id            VARCHAR(128) NOT NULL COMMENT '渠道标识：BotID 或 kf:OpenKfID',
+    conversation_key  VARCHAR(512) NOT NULL COMMENT '企业微信会话或外部客户标识',
     user_id           BIGINT       NOT NULL COMMENT '本地 RAG 用户ID',
     session_id        BIGINT       NOT NULL COMMENT '本地聊天会话ID',
     create_time       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -9,7 +9,25 @@ CREATE TABLE IF NOT EXISTS t_wecom_conversation (
     PRIMARY KEY (id),
     UNIQUE KEY uk_wecom_bot_conversation (bot_id, conversation_key),
     KEY idx_wecom_session (session_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='企业微信与本地聊天会话映射';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='企业微信渠道与本地聊天会话映射';
+
+CREATE TABLE IF NOT EXISTS t_wecom_kf_cursor (
+    open_kf_id  VARCHAR(128) NOT NULL COMMENT '微信客服账号ID',
+    cursor      VARCHAR(255) NOT NULL COMMENT 'sync_msg下一页/增量游标',
+    create_time DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (open_kf_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='微信客服消息同步游标';
+
+CREATE TABLE IF NOT EXISTS t_wecom_kf_message (
+    message_id       VARCHAR(128) NOT NULL COMMENT '企业微信客服消息ID',
+    open_kf_id       VARCHAR(128) DEFAULT NULL COMMENT '微信客服账号ID',
+    external_user_id VARCHAR(128) DEFAULT NULL COMMENT '微信客户UserID',
+    message_type     VARCHAR(32)  DEFAULT NULL COMMENT '消息类型',
+    create_time      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '处理完成时间',
+    PRIMARY KEY (message_id),
+    KEY idx_wecom_kf_message_account_user (open_kf_id, external_user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='微信客服已处理消息去重';
 
 CREATE TABLE IF NOT EXISTS t_residence (
     id               BIGINT         NOT NULL AUTO_INCREMENT COMMENT '主键',

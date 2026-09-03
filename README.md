@@ -66,7 +66,8 @@ flowchart LR
 | `t_sales_recommendation` | 同等条件下的销售推荐优先级 |
 | `t_category` / `t_document` | 知识库分类和文档元数据 |
 | `t_chat_session` / `t_chat_message` | 会话、消息、引用和记忆摘要 |
-| `t_wecom_conversation` | 企业微信单聊/群聊与本地聊天会话映射 |
+| `t_wecom_conversation` | 企业微信机器人/微信客服与本地聊天会话映射 |
+| `t_wecom_kf_cursor` / `t_wecom_kf_message` | 微信客服增量同步游标与消息去重 |
 | `t_user` | 后台用户、角色和登录状态 |
 
 库存和价格分开建模：一条 `t_room_inventory` 代表一个可售房型及其日期、库存范围；它可以关联多条 `t_room_price_tier`，例如 12–15 周一个价格、16–25 周一个价格、26 周以上另一个价格。
@@ -169,6 +170,24 @@ GRAFANA_ROOT_URL=https://your-domain.example/grafana/
 ```
 
 企业微信机器人在 Docker 部署中默认关闭。需要启用时设置 `WECOM_BOT_ENABLED=true`，并填写 `WECOM_BOT_ID` 和 `WECOM_BOT_SECRET`。
+
+面向外部微信客户的“微信客服”与内部智能机器人是两套独立协议。启用微信客服回调时，先配置：
+
+```dotenv
+WECOM_KF_ENABLED=true
+WECOM_KF_CORP_ID=企业ID
+WECOM_KF_TOKEN=回调Token
+WECOM_KF_ENCODING_AES_KEY=回调EncodingAESKey
+WECOM_KF_USER_ID=2
+```
+
+部署后在企业微信后台填写回调地址，例如：
+
+```text
+https://your-domain.example/veri-rag/api/wecom/kf/callback
+```
+
+URL 校验通过并取得微信客服 Secret 后，再设置 `WECOM_KF_SECRET` 并重建应用容器。还需在“微信客服 → 可调用接口的应用”中授权自建应用和相应客服账号，并将服务器公网 IP 加入可信 IP。真实凭据只保存在生产 `.env`，不要提交到 Git。
 
 ### 2. 构建并启动
 
@@ -287,11 +306,19 @@ export SPRING_DATA_REDIS_PASSWORD="veri_rag_dev"
 | `RAG_MEMORY_RECENT_MESSAGES` | `8` | 保留的最近原始消息数 |
 | `WECOM_BOT_ENABLED` | Docker 中为 `false` | 是否启动企业微信机器人长连接 |
 | `WECOM_BOT_ID` | 无 | 企业微信智能机器人 BotID |
-| `WECOM_BOT_SECRET` | 配置文件开发值 | 长连接专用 Secret；生产必须使用环境变量 |
+| `WECOM_BOT_SECRET` | 无 | 长连接专用 Secret；生产必须使用环境变量 |
 | `WECOM_BOT_DISPLAY_NAME` | `londonist 助手` | 群聊中用于精确移除 `@机器人` 的展示名称 |
 | `WECOM_BOT_USER_ID` | `2` | 企业微信会话归属的本地用户 ID |
 | `WECOM_BOT_HEARTBEAT_INTERVAL` | `30s` | 长连接心跳间隔 |
 | `WECOM_BOT_STREAM_UPDATE_INTERVAL` | `2500ms` | 企业微信流式消息刷新间隔 |
+| `WECOM_KF_ENABLED` | `false` | 是否启用面向外部微信客户的微信客服 API |
+| `WECOM_KF_CORP_ID` | 无 | 企业 ID，也是加密回调末尾的接收方 ID |
+| `WECOM_KF_SECRET` | 无 | 微信客服授权应用 Secret，用于获取 access_token |
+| `WECOM_KF_TOKEN` | 无 | 回调签名 Token |
+| `WECOM_KF_ENCODING_AES_KEY` | 无 | 43 字符回调消息加密密钥 |
+| `WECOM_KF_USER_ID` | `2` | 微信客服会话归属的本地用户 ID |
+| `WECOM_KF_API_BASE_URL` | `https://qyapi.weixin.qq.com` | 企业微信 API 地址，测试时可覆盖 |
+| `WECOM_KF_SYNC_LIMIT` | `1000` | 单次 `sync_msg` 拉取上限 |
 
 Embedding 服务单次最多接受 20 条文本，因此 `RAG_EMBEDDING_BATCH_SIZE` 不应配置为大于 20。房源、报价和库存查询已经由数据库 Tool 处理，不需要通过提高 RAG `top-k` 解决召回问题。
 

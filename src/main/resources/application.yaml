@@ -51,9 +51,9 @@ server:
 # 企业微信智能机器人长连接。本机主动连接企业微信，不要求公网回调地址。
 wecom:
   bot:
-    enabled: ${WECOM_BOT_ENABLED:true}
-    bot-id: ${WECOM_BOT_ID:aibcdXe0iwU42vcx24mE5ezz2vkFCzItpor}
-    secret: ${WECOM_BOT_SECRET:f7ivac1WTUBKAsJbr2m1SrK1RqHbsj9YPxNv0ANtTMP}
+    enabled: ${WECOM_BOT_ENABLED:false}
+    bot-id: ${WECOM_BOT_ID:}
+    secret: ${WECOM_BOT_SECRET:}
     display-name: ${WECOM_BOT_DISPLAY_NAME:londonist 助手}
     websocket-url: ${WECOM_BOT_WEBSOCKET_URL:wss://openws.work.weixin.qq.com}
     # 企业微信会话统一归属到这个本地用户；当前开发库默认 user1 的 ID 为 2。
@@ -62,6 +62,18 @@ wecom:
     stream-update-interval: ${WECOM_BOT_STREAM_UPDATE_INTERVAL:2500ms}
     welcome-message: ${WECOM_BOT_WELCOME_MESSAGE:您好！我是智能房源助手，请问有什么可以帮您？}
     empty-question-message: "${WECOM_BOT_EMPTY_QUESTION_MESSAGE:请将问题和 @机器人 放在同一条消息中，例如：\\n@londonist 助手 UCL附近有什么房源推荐吗？}"
+  # 微信客服面向外部微信客户。回调只负责通知，应用再用 sync_msg 拉取并通过 send_msg 回复。
+  kf:
+    enabled: ${WECOM_KF_ENABLED:false}
+    corp-id: ${WECOM_KF_CORP_ID:}
+    secret: ${WECOM_KF_SECRET:}
+    token: ${WECOM_KF_TOKEN:}
+    encoding-aes-key: ${WECOM_KF_ENCODING_AES_KEY:}
+    user-id: ${WECOM_KF_USER_ID:2}
+    api-base-url: ${WECOM_KF_API_BASE_URL:https://qyapi.weixin.qq.com}
+    sync-limit: ${WECOM_KF_SYNC_LIMIT:1000}
+    unsupported-message: ${WECOM_KF_UNSUPPORTED_MESSAGE:您好，目前智能客服仅支持文字消息，请用文字描述您的问题。}
+    error-message: ${WECOM_KF_ERROR_MESSAGE:抱歉，智能客服暂时无法处理您的问题，请稍后再试或联系人工客服。}
 
 file:
   upload:

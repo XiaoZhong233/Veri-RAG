@@ -4,7 +4,7 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
 /**
- * 企业微信会话与本地 RAG 会话的持久化映射。
+ * 企业微信机器人/微信客服会话与本地 RAG 会话的持久化映射。
  */
 @Mapper
 public interface WeComConversationMapper {

@@ -36,6 +36,18 @@ class WeComKfSupportTests {
     }
 
     @Test
+    void splitsLongReplyOnUtf8BoundaryWithoutDroppingContent() {
+        String source = "伦敦学生公寓参考价格和库存确认。".repeat(20);
+
+        java.util.List<String> parts = WeComKfMessageService.splitUtf8(source, 48);
+
+        assertTrue(parts.size() > 1);
+        assertTrue(parts.stream().allMatch(part ->
+                part.getBytes(java.nio.charset.StandardCharsets.UTF_8).length <= 48));
+        assertEquals(source, String.join("", parts));
+    }
+
+    @Test
     void convertsMarkdownTableToReadableWeComText() {
         String markdown = """
                 ## 推荐房源

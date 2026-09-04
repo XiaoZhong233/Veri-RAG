@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.verirag.mapper.WeComKfPendingMessageMapper">
+
+    <insert id="insertPending">
+        INSERT IGNORE INTO t_wecom_kf_pending_message
+            (message_id, open_kf_id, external_user_id, payload_json)
+        VALUES
+            (#{messageId}, #{openKfId}, #{externalUserId}, #{payloadJson})
+    </insert>
+
+    <select id="listPendingPayloads" resultType="java.lang.String">
+        SELECT payload_json
+        FROM t_wecom_kf_pending_message
+        ORDER BY create_time ASC
+        LIMIT #{limit}
+    </select>
+
+    <delete id="deletePending">
+        DELETE FROM t_wecom_kf_pending_message
+        WHERE message_id = #{messageId}
+    </delete>
+</mapper>

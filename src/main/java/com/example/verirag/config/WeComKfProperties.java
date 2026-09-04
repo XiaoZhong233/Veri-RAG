@@ -24,9 +24,11 @@ public class WeComKfProperties {
     private URI apiBaseUrl = URI.create("https://qyapi.weixin.qq.com");
     private int syncLimit = 1000;
     private Duration progressDelay = Duration.ofMillis(1500);
+    private Duration messageMergeWindow = Duration.ofMillis(900);
     private String progressMessage = "正在检索资料，请稍候…";
     private String unsupportedMessage = "您好，目前智能客服仅支持文字消息，请用文字描述您的问题。";
     private String errorMessage = "抱歉，智能客服暂时无法处理您的问题，请稍后再试或联系人工客服。";
+    private String handoffMessage = "已为您转接人工顾问，请稍候。";
 
     public boolean isEnabled() {
         return enabled;
@@ -100,6 +102,14 @@ public class WeComKfProperties {
         this.progressDelay = progressDelay;
     }
 
+    public Duration getMessageMergeWindow() {
+        return messageMergeWindow;
+    }
+
+    public void setMessageMergeWindow(Duration messageMergeWindow) {
+        this.messageMergeWindow = messageMergeWindow;
+    }
+
     public String getProgressMessage() {
         return progressMessage;
     }
@@ -122,5 +132,13 @@ public class WeComKfProperties {
 
     public void setErrorMessage(String errorMessage) {
         this.errorMessage = errorMessage;
+    }
+
+    public String getHandoffMessage() {
+        return handoffMessage;
+    }
+
+    public void setHandoffMessage(String handoffMessage) {
+        this.handoffMessage = handoffMessage;
     }
 }

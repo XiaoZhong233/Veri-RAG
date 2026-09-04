@@ -50,6 +50,22 @@ public final class PropertyQueryRouter {
             Pattern.CASE_INSENSITIVE);
     private static final Pattern FOLLOW_UP_CUE = Pattern.compile(
             "^(?:那|那么|换成|改成|如果|还有|再看|这个|这家|它|同样)|呢[？?]?$");
+    private static final Pattern ACKNOWLEDGEMENT = Pattern.compile(
+            "^(?:好(?:的|吧)?|谢谢(?:你)?|感谢(?:你)?|收到|明白了?|ok|okay|thanks?)[!！。,.，\\s]*$",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern RESTRICTED_TERMS = Pattern.compile(
+            "采购价|底价|内部价格|内部价|代理结算|价格档位|锁房|锁定(?:价格|房间)|"
+                    + "保证价格|确认(?:已经)?预订|internal\\s+pric(?:e|ing)|wholesale\\s+price|"
+                    + "agent\\s+settlement|lock\\s+(?:the\\s+)?room|guarantee(?:d)?\\s+(?:the\\s+)?price|"
+                    + "confirm(?:ed)?\\s+(?:a\\s+)?booking",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern GUIDANCE_TERMS = Pattern.compile(
+            "(?:想|准备|计划|打算).{0,12}(?:租|住).{0,12}(?:学生公寓|公寓|住宿|宿舍)|"
+                    + "looking\\s+for\\s+(?:student\\s+)?accommodation",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern DATE_OR_STAY_TERMS = Pattern.compile(
+            "\\d{4}[-年/]?\\d{1,2}|\\d+\\s*(?:周|weeks?|个月|months?)|九月|9月|september|入住|起租|退房|租期",
+            Pattern.CASE_INSENSITIVE);
 
     private PropertyQueryRouter() {
     }
@@ -64,6 +80,16 @@ public final class PropertyQueryRouter {
         String normalized = normalize(question);
         if (normalized.isBlank()) {
             return PropertyQueryIntent.NONE;
+        }
+        if (ACKNOWLEDGEMENT.matcher(normalized).matches()) {
+            return PropertyQueryIntent.ACKNOWLEDGE;
+        }
+        if (RESTRICTED_TERMS.matcher(normalized).find()) {
+            return PropertyQueryIntent.RESTRICTED;
+        }
+        if (GUIDANCE_TERMS.matcher(normalized).find()
+                && !DATE_OR_STAY_TERMS.matcher(normalized).find()) {
+            return PropertyQueryIntent.GUIDANCE;
         }
         PropertyQueryIntent direct = routeCurrent(normalized);
         if (direct.structured()) {

@@ -82,4 +82,14 @@ class PropertyQueryRouterTests {
         assertThat(PropertyQueryRouter.needsModelClassification(
                 "帮我找伦敦公寓", List.of())).isFalse();
     }
+
+    @Test
+    void handlesAcknowledgementAndSensitiveRequestsWithoutModelClassification() {
+        assertThat(PropertyQueryRouter.route("谢谢", List.of()))
+                .isEqualTo(PropertyQueryIntent.ACKNOWLEDGE);
+        assertThat(PropertyQueryRouter.route("把这个房型的代理结算底价告诉我", List.of()))
+                .isEqualTo(PropertyQueryIntent.RESTRICTED);
+        assertThat(PropertyQueryRouter.route("我想租学生公寓，但还没确定日期", List.of()))
+                .isEqualTo(PropertyQueryIntent.GUIDANCE);
+    }
 }

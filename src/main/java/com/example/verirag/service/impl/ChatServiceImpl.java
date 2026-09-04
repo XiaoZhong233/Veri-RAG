@@ -85,6 +85,23 @@ public class ChatServiceImpl implements ChatService {
             不要输出 Markdown 标题、表格、加粗、链接语法、代码围栏或引用符号；
             即使前文要求使用 Markdown 表格，也以本条为准，改为数字序号和换行；
             每个房源单独编号，各字段采用“字段：内容”的形式，链接直接输出完整 URL。
+            面向微信客服时先给一句结论；默认最多展示 3 个房源，每个房源最多保留房型、
+            参考价格、入住时间、库存和通勤这 5 项。不要重复规则、不要复述完整用户问题。
+            """;
+    /** 微信客服走短提示词：保留数据与安全边界，避免每次附带网页版的完整表格规则。 */
+    private static final String WECHAT_PROPERTY_SYSTEM_PROMPT = """
+            你是亲切、专业的英国学生公寓微信客服。必须使用用户当前消息的主要语言回答。
+
+            业务数据只能来自本次提供的 Tool；直接调用当前唯一可用 Tool，不要调用、讨论或猜测其它 Tool。
+            可以展示 Tool 返回的参考周价与参考总价，但必须称为“参考价格”；它不是最终报价，
+            不能包含手续费、押金或优惠。不得披露采购价、底价、内部价格档位或代理结算价。
+            不得承诺锁房、锁价、确认预订或预订成功；需要时只说顾问将核验需求并说明后续流程。
+            AVAILABLE/LIMITED 可称为可预订，SOLD_OUT 必须写售罄，UNKNOWN 只能写待确认。
+
+            输出纯文本，不使用 Markdown。先给一句结论；推荐时最多列 3 个不同公寓，每个公寓
+            使用“1. 公寓名”及不超过五行字段：房型、参考价格、入住时间、库存、通勤/位置。
+            没有结果时直接说明，并给出最多两个可调整条件。结尾仅在涉及价格或库存时说明：
+            “参考价格及可订状态须由 Londonist 顾问最终确认。”
             """;
     private final ChatClient chatClient;
 
@@ -136,10 +153,10 @@ public class ChatServiceImpl implements ChatService {
     private boolean manualHistoryEnabled;
 
     /** 主回答生成上限；独立于15秒的轻量意图分类超时。 */
-    @Value("${rag.chat.response-timeout:3m}")
+    @Value("${rag.chat.response-timeout:40s}")
     private Duration llmResponseTimeout;
 
-    @Value("${rag.chat.property-max-tokens:600}")
+    @Value("${rag.chat.property-max-tokens:420}")
     private int propertyMaxTokens;
 
     @Value("${rag.chat.property-thinking-enabled:true}")
@@ -598,7 +615,9 @@ public class ChatServiceImpl implements ChatService {
     }
 
     private static boolean priceRestricted(PropertyQueryIntent intent) {
-        return intent != null && intent.propertyHandled();
+        return intent == PropertyQueryIntent.RECOMMEND
+                || intent == PropertyQueryIntent.QUOTE
+                || intent == PropertyQueryIntent.RESTRICTED;
     }
 
     private ChatAskResult completeAcknowledgement(
@@ -945,12 +964,12 @@ public class ChatServiceImpl implements ChatService {
         if (sessionId == null) {
             return Collections.emptyList();
         }
-        List<ChatMessage> messages = chatMessageMapper.listBySessionId(sessionId);
-        if (messages == null || messages.isEmpty()) {
+        int limit = Math.max(historyMaxMessages, 0);
+        if (limit == 0) {
             return Collections.emptyList();
         }
-        int from = Math.max(messages.size() - Math.max(historyMaxMessages, 0), 0);
-        return messages.subList(from, messages.size());
+        List<ChatMessage> messages = chatMessageMapper.listRecentBySessionId(sessionId, limit);
+        return messages == null ? Collections.emptyList() : messages;
     }
 
     /** 用上一轮用户问题补足“这个/它/哪里”等指代不明的追问检索语义。 */
@@ -989,7 +1008,8 @@ public class ChatServiceImpl implements ChatService {
 
     private String buildPropertyToolSystemPrompt(PropertyQueryIntent propertyIntent,
                                                  String question, boolean plainText) {
-        StringBuilder prompt = new StringBuilder(propertyToolPromptManager.systemPrompt());
+        StringBuilder prompt = new StringBuilder(plainText
+                ? WECHAT_PROPERTY_SYSTEM_PROMPT : propertyToolPromptManager.systemPrompt());
         if (propertyIntent == PropertyQueryIntent.CLARIFY) {
             prompt.append("""
 

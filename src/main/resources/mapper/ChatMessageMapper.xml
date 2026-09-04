@@ -20,6 +20,18 @@
         ORDER BY create_time ASC, id ASC
     </select>
 
+    <select id="listRecentBySessionId" resultType="com.example.verirag.entity.ChatMessage">
+        SELECT <include refid="MessageColumns" />
+        FROM (
+            SELECT <include refid="MessageColumns" />
+            FROM t_chat_message
+            WHERE session_id = #{sessionId}
+            ORDER BY create_time DESC, id DESC
+            LIMIT #{limit}
+        ) recent_messages
+        ORDER BY create_time ASC, id ASC
+    </select>
+
     <delete id="deleteBySessionId">
         DELETE FROM t_chat_message WHERE session_id = #{sessionId}
     </delete>

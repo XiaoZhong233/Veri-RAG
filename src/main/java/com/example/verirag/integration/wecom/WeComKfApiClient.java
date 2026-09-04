@@ -76,10 +76,19 @@ public class WeComKfApiClient {
     }
 
     public void transitionToAssistant(String openKfId, String externalUserId) {
+        transitionServiceState(openKfId, externalUserId, 1);
+    }
+
+    /** 转入待接入池，由企业微信已有的人工接待规则分配。 */
+    public void transitionToHuman(String openKfId, String externalUserId) {
+        transitionServiceState(openKfId, externalUserId, 2);
+    }
+
+    private void transitionServiceState(String openKfId, String externalUserId, int serviceState) {
         ObjectNode body = objectMapper.createObjectNode();
         body.put("open_kfid", requireText(openKfId, "open_kfid"));
         body.put("external_userid", requireText(externalUserId, "external_userid"));
-        body.put("service_state", 1);
+        body.put("service_state", serviceState);
         postWithAccessToken("/cgi-bin/kf/service_state/trans", body, true);
     }
 

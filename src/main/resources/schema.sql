@@ -29,6 +29,16 @@ CREATE TABLE IF NOT EXISTS t_wecom_kf_message (
     KEY idx_wecom_kf_message_account_user (open_kf_id, external_user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='微信客服已处理消息去重';
 
+CREATE TABLE IF NOT EXISTS t_wecom_kf_pending_message (
+    message_id       VARCHAR(128) NOT NULL COMMENT '企业微信客服消息ID',
+    open_kf_id       VARCHAR(128) DEFAULT NULL COMMENT '微信客服账号ID',
+    external_user_id VARCHAR(128) DEFAULT NULL COMMENT '微信客户UserID',
+    payload_json     MEDIUMTEXT    NOT NULL COMMENT '上游原始消息JSON，用于恢复处理',
+    create_time      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '入队时间',
+    PRIMARY KEY (message_id),
+    KEY idx_wecom_kf_pending_created (create_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='微信客服待处理消息（可靠投递）';
+
 CREATE TABLE IF NOT EXISTS t_residence (
     id               BIGINT         NOT NULL AUTO_INCREMENT COMMENT '主键',
     source_id        VARCHAR(128)   NOT NULL COMMENT 'HTML 中的公寓唯一标识',

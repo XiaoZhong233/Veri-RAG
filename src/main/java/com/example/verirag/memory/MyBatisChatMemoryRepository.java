@@ -46,14 +46,13 @@ public class MyBatisChatMemoryRepository implements ChatMemoryRepository {
         if (session == null) {
             return List.of();
         }
-        List<ChatMessage> rows = chatMessageMapper.listBySessionId(sessionId);
-        int from = Math.max(rows.size() - RECENT_MESSAGES, 0);
+        List<ChatMessage> rows = chatMessageMapper.listRecentBySessionId(sessionId, RECENT_MESSAGES);
         List<Message> result = new ArrayList<>(RECENT_MESSAGES + 1);
         if (session.getMemorySummary() != null && !session.getMemorySummary().isBlank()) {
             result.add(new SystemMessage("以下是本会话较早内容的压缩摘要，仅用于保持对话连续性：\n"
                     + session.getMemorySummary().strip()));
         }
-        rows.subList(from, rows.size()).stream().map(this::toMessage).forEach(result::add);
+        rows.stream().map(this::toMessage).forEach(result::add);
         return result;
     }
 

@@ -67,7 +67,7 @@ public class PropertyIntentClassifier {
         PropertyQueryIntent ruleIntent = javaRulesEnabled
                 ? PropertyQueryRouter.route(question, history)
                 : PropertyQueryIntent.NONE;
-        if (javaRulesEnabled && ruleIntent.structured()) {
+        if (javaRulesEnabled && ruleIntent != PropertyQueryIntent.NONE) {
             logResolution(question, "JAVA_RULE", ruleIntent, null);
             return ruleIntent;
         }

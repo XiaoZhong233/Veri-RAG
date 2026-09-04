@@ -27,9 +27,11 @@ public class AsyncConfiguration {
     @Bean("wecomKfExecutor")
     public TaskExecutor wecomKfExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(1);
+        // 客服请求按客户串行、不同客户并行。核心线程数不能设为 1，否则队列未满前
+        // maxPoolSize 不会生效，所有客户仍会排队。
+        executor.setCorePoolSize(4);
         executor.setMaxPoolSize(4);
-        executor.setQueueCapacity(100);
+        executor.setQueueCapacity(200);
         executor.setThreadNamePrefix("wecom-kf-");
         executor.initialize();
         return executor;
@@ -39,7 +41,8 @@ public class AsyncConfiguration {
     @Bean("wecomKfProgressScheduler")
     public ThreadPoolTaskScheduler wecomKfProgressScheduler() {
         ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
-        scheduler.setPoolSize(1);
+        // 调度任务会发送一次网络请求；至少允许少量并发，避免单个网络抖动拖住全部提示。
+        scheduler.setPoolSize(2);
         scheduler.setThreadNamePrefix("wecom-kf-progress-");
         scheduler.setRemoveOnCancelPolicy(true);
         scheduler.initialize();

@@ -73,9 +73,12 @@ wecom:
     api-base-url: ${WECOM_KF_API_BASE_URL:https://qyapi.weixin.qq.com}
     sync-limit: ${WECOM_KF_SYNC_LIMIT:1000}
     progress-delay: ${WECOM_KF_PROGRESS_DELAY:1500ms}
+    # 同一客户连续发送的碎片化文字在该窗口内合并为一次问答，避免多次重复调用模型。
+    message-merge-window: ${WECOM_KF_MESSAGE_MERGE_WINDOW:900ms}
     progress-message: ${WECOM_KF_PROGRESS_MESSAGE:正在检索资料，请稍候…}
     unsupported-message: ${WECOM_KF_UNSUPPORTED_MESSAGE:您好，目前智能客服仅支持文字消息，请用文字描述您的问题。}
     error-message: ${WECOM_KF_ERROR_MESSAGE:抱歉，智能客服暂时无法处理您的问题，请稍后再试或联系人工客服。}
+    handoff-message: ${WECOM_KF_HANDOFF_MESSAGE:已为您转接人工顾问，请稍候。}
 
 file:
   upload:
@@ -86,9 +89,9 @@ logging:
     path: ${LOG_PATH:logs}
   level:
     root: ${ROOT_LOG_LEVEL:INFO}
-    com.example.verirag: ${APP_LOG_LEVEL:DEBUG}
+    com.example.verirag: ${APP_LOG_LEVEL:INFO}
     com.example.verirag.mapper: WARN
-    org.springframework.ai: DEBUG
+    org.springframework.ai: ${SPRING_AI_LOG_LEVEL:WARN}
     org.mybatis: WARN
 
 # Metrics、Trace 与日志可通过 traceId 关联；OTLP 默认发送到 compose 中暴露的 4318 端口。
@@ -104,9 +107,9 @@ management:
     tags:
       application: ${spring.application.name}
   tracing:
-    # Demo 全量采样便于诊断；生产可按流量下调，例如 0.1。
+    # 生产默认抽样，避免高流量下 Trace 与日志开销放大；排障时可通过环境变量调高。
     sampling:
-      probability: ${OTEL_TRACING_SAMPLING_PROBABILITY:1.0}
+      probability: ${OTEL_TRACING_SAMPLING_PROBABILITY:0.1}
   opentelemetry:
     tracing:
       export:
@@ -135,8 +138,8 @@ rag:
   intent-classifier:
     # 总开关；关闭后无法识别的请求统一按普通 RAG 处理。
     enabled: ${RAG_INTENT_CLASSIFIER_ENABLED:true}
-    # false：所有非空问题仅由模型分类；true：明确问题走 Java，模糊房源问题再由模型兜底。
-    java-rules-enabled: ${RAG_INTENT_JAVA_RULES_ENABLED:false}
+    # 明确问题优先走 Java；模糊房源问题再由模型兜底，减少一次模型往返。
+    java-rules-enabled: ${RAG_INTENT_JAVA_RULES_ENABLED:true}
     # 分类请求只允许很短的等待时间；失败或超时自动回退普通 RAG。
     timeout: ${RAG_INTENT_CLASSIFIER_TIMEOUT:15s}
     # 留空时复用主聊天模型；生产可配置为响应更快的小模型。
@@ -145,9 +148,9 @@ rag:
     thinking-enabled: ${RAG_INTENT_CLASSIFIER_THINKING_ENABLED:false}
   chat:
     # 用户问答的模型生成上限；同步 Tool 循环超过该时间也会被取消。
-    response-timeout: ${RAG_CHAT_RESPONSE_TIMEOUT:3m}
+    response-timeout: ${RAG_CHAT_RESPONSE_TIMEOUT:40s}
     # 房源 Tool 回答比普通知识库问答更适合短输出；不改变全局 LLM_MAX_TOKENS。
-    property-max-tokens: ${RAG_PROPERTY_MAX_TOKENS:600}
+    property-max-tokens: ${RAG_PROPERTY_MAX_TOKENS:420}
     # 部分 Qwen 兼容模型关闭思考后会跳过 Tool 并直接生成答案，因此默认保持开启以保证调用可靠性。
     property-thinking-enabled: ${RAG_PROPERTY_THINKING_ENABLED:true}
     # 对仅接受 system/user 角色的兼容模型，将摘要和历史压成纯文本拼进当前 user message。

@@ -76,7 +76,7 @@ class PropertyQueryToolsTests {
     }
 
     @Test
-    void searchesAndGroupsByResidenceWithoutExposingPrices() throws Exception {
+    void searchesAndGroupsByResidenceWithReferencePrices() throws Exception {
         Residence first = residence(1L, "chapter-islington", "Chapter Islington");
         Residence second = residence(2L, "chapter-highbury", "Chapter Highbury");
         RoomInventory available = inventory(11L, 1L, "AVAILABLE", "Classic Ensuite");
@@ -102,12 +102,16 @@ class PropertyQueryToolsTests {
         assertThat(result.residences()).extracting(
                 PropertyQueryTools.ResidenceOfferGroup::residenceName)
                 .containsExactly("Chapter Islington", "Chapter Highbury");
-        assertThat(result.priceDisclosure())
-                .isEqualTo("CONSULTANT_CONFIRMATION_REQUIRED");
+        assertThat(result.priceDisclosure()).isEqualTo("REFERENCE_PRICE_AVAILABLE");
+        assertThat(result.residences().get(0).rooms().get(0).referenceWeeklyPrice())
+                .isEqualByComparingTo("430");
+        assertThat(result.residences().get(0).rooms().get(0).estimatedTotalPrice())
+                .isEqualByComparingTo("11180");
         String json = new ObjectMapper().findAndRegisterModules()
                 .writeValueAsString(result);
         assertThat(json)
-                .doesNotContain("weeklyPrice", "priceTiers", "estimatedTotalPrice", "430");
+                .contains("referenceWeeklyPrice", "estimatedTotalPrice", "430", "11180")
+                .doesNotContain("priceTiers");
     }
 
     @Test
@@ -369,7 +373,7 @@ class PropertyQueryToolsTests {
     }
 
     @Test
-    void checksSpecificOfferWithoutExposingPrice() {
+    void checksSpecificOfferWithReferencePrice() {
         Residence residence = residence(1L, "chapter-islington", "Chapter Islington");
         RoomInventory inventory = inventory(11L, 1L, "AVAILABLE", "Classic Ensuite");
         RoomPriceTier priceTier = tier(101L, 11L, 20, 39, "430");
@@ -385,8 +389,9 @@ class PropertyQueryToolsTests {
         assertThat(availability.stayWeeks()).isEqualTo(26);
         assertThat(availability.dateStatus()).isEqualTo("MATCHED");
         assertThat(availability.available()).isTrue();
-        assertThat(availability.priceDisclosure())
-                .isEqualTo("CONSULTANT_CONFIRMATION_REQUIRED");
+        assertThat(availability.priceDisclosure()).isEqualTo("REFERENCE_PRICE_AVAILABLE");
+        assertThat(availability.referenceWeeklyPrice()).isEqualByComparingTo("430");
+        assertThat(availability.estimatedTotalPrice()).isEqualByComparingTo("11180");
     }
 
     @Test

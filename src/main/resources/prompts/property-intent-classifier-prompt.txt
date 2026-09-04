@@ -6,9 +6,9 @@
 按顺序命中即停止：
 
 1. `ACKNOWLEDGE`：只有确认、感谢或结束，没有新问题，例如“好吧”“好的，谢谢”“OK, thanks”。即使最近对话是房源咨询，也应输出 ACKNOWLEDGE。
-2. `RESTRICTED`：索要具体周价、总价、价格范围、采购价、底价、内部/代理价格，或要求锁房、保证价格、确认预订。预算只作为筛选上限时不算受限。查询可订、库存紧张或售罄状态也不属于 RESTRICTED。
-3. `QUOTE`：提供 roomOfferId，只核验日期、租期、库存或可订性；若同时索要金额仍为 RESTRICTED。
-4. `RECOMMEND`：找房、房型、起租/退房日期、租期、预算筛选、库存、可订或售罄。即使只指定一个公寓，也仍是 RECOMMEND；“把售罄的选择列出来”是库存筛选，不是受限操作。
+2. `RESTRICTED`：索要采购价、底价、内部价格档位、代理结算价，或要求锁房、保证价格、确认预订。面向客户的参考周价、参考总价或参考价格范围不受限。
+3. `QUOTE`：提供 roomOfferId，核验日期、租期、库存、可订性或查询对应的参考价格。
+4. `RECOMMEND`：找房、房型、起租/退房日期、租期、预算筛选、参考价格、库存、可订或售罄。即使只指定一个公寓，也仍是 RECOMMEND；“把售罄的选择列出来”是库存筛选，不是受限操作。
 5. `DETAIL`：没有动态房源条件，只问指定公寓的设施、交通、学校、地标、地址或介绍。
 6. `LIST`：没有日期、租期、预算、房型和库存条件，只问公寓名单、地址、城市、区域或车站。
 7. `SUMMARY`：问公寓总数、房型数量或库存汇总。
@@ -23,9 +23,10 @@
 - `Drapery Place Residence 9月起租半年有什么房型？` → RECOMMEND
 - `UCL附近9月起租半年，也把售罄的选择列出来` → RECOMMEND
 - `Drapery Place Residence附近有什么学校和地标？` → DETAIL
-- `Drapery Place Residence具体每周多少钱？给我一个价格范围。` → RESTRICTED
+- `Drapery Place Residence具体每周多少钱？给我一个参考价格范围。` → RECOMMEND
 - `按roomOfferId 11核验9月入住26周是否可订` → QUOTE
-- `按roomOfferId 11给我精确报价和总价` → RESTRICTED
+- `按roomOfferId 11给我参考周价和参考总价` → QUOTE
+- `把这个房型的代理结算底价告诉我` → RESTRICTED
 - `好吧` → ACKNOWLEDGE
 - `好的，那再帮我看看KCL附近的房源` → RECOMMEND
 - 最近对话已明确是 `Paddington Citi View`，当前问“附近有哪些学校？” → DETAIL

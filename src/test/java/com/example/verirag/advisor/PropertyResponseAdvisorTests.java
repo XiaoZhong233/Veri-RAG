@@ -22,15 +22,14 @@ class PropertyResponseAdvisorTests {
             new PropertyResponseAdvisor(new PropertyPriceGuard());
 
     @Test
-    void enforcesChineseNoticeAndPriceRedactionWhenEnabled() {
+    void preservesReferencePriceAndAddsChineseNoticeWhenEnabled() {
         ChatClientResponse response = advisor.adviseCall(
                 request(true, "这个公寓多少钱？"),
                 chainReturning("这个房型每周 £430。"));
 
         assertThat(response.chatResponse().getResult().getOutput().getText())
-                .doesNotContain("£430")
-                .contains("价格请咨询顾问")
-                .endsWith("具体价格及可订状态须由 Londonist 顾问最终确认。");
+                .contains("£430")
+                .endsWith("参考价格及可订状态须由 Londonist 顾问最终确认。");
     }
 
     @Test
@@ -40,8 +39,8 @@ class PropertyResponseAdvisorTests {
                 chainReturning("It is available."));
 
         assertThat(response.chatResponse().getResult().getOutput().getText())
-                .endsWith("Exact pricing and availability must be confirmed by a Londonist consultant.")
-                .doesNotContain("具体价格及可订状态须由 Londonist 顾问最终确认。");
+                .endsWith("Reference pricing and availability must be confirmed by a Londonist consultant.")
+                .doesNotContain("参考价格及可订状态须由 Londonist 顾问最终确认。");
     }
 
     @Test

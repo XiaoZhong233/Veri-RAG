@@ -46,9 +46,10 @@ class PropertyToolPromptManagerTests {
                 .contains("最终表格最多4行公寓数据")
                 .contains("一句自然友好的结论")
                 .contains("未查询售罄时不得说“没有售罄房源”")
-                .contains("| 公寓 | 位置参考 | 推荐房型 | 可入住时间 | 租期 | 库存 | 匹配说明 |")
+                .contains("| 公寓 | 位置参考 | 推荐房型 | 可入住时间 | 租期 | 参考价格 | 库存 | 匹配说明 |")
                 .contains("表格一行代表一个不同公寓")
-                .contains("不得输出、推算或暗示具体周价、总价、价格档位、价格范围")
+                .contains("可以输出 Tool 返回的 referenceWeeklyPrice")
+                .contains("不得输出、推算或暗示采购价、底价")
                 .contains("绝不能声称已经锁房、保留房间、确认预订或保证价格")
                 .contains("顾问将核验需求并说明后续流程")
                 .contains("普通学校或地标找房时应留空")
@@ -59,6 +60,6 @@ class PropertyToolPromptManagerTests {
                 .doesNotContain("Exact pricing and availability must be confirmed")
                 .doesNotContain("具体价格及可订状态须由 Londonist 顾问最终确认")
                 .doesNotContain("Drapery Place Residence")
-                .doesNotContain("每周价格", "预计总价", "quote_room_offer");
+                .doesNotContain("quote_room_offer");
     }
 }

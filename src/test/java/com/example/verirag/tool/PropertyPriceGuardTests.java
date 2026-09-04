@@ -11,25 +11,23 @@ class PropertyPriceGuardTests {
     private final PropertyPriceGuard guard = new PropertyPriceGuard();
 
     @Test
-    void redactsChinesePriceAmountsRangesAndTotals() {
+    void preservesChineseReferencePricesAndAddsNotice() {
         String answer = "每周 £430/周，价格范围 £450-£500，总价为 11180 英镑。";
 
         String protectedAnswer = guard.enforce(answer);
 
         assertThat(protectedAnswer)
-                .doesNotContain("£430", "£450", "£500", "11180")
-                .contains("价格请咨询顾问")
+                .contains("£430", "£450", "£500", "11180")
                 .endsWith(PropertyPriceGuard.NOTICE_ZH);
     }
 
     @Test
-    void redactsEnglishPricesAndAddsEnglishNotice() {
+    void preservesEnglishReferencePricesAndAddsEnglishNotice() {
         String protectedAnswer = guard.enforce(
                 "The room is GBP 430 per week and the total is £11,180.");
 
         assertThat(protectedAnswer)
-                .doesNotContain("430", "11,180")
-                .contains("price on request")
+                .contains("430", "11,180")
                 .endsWith(PropertyPriceGuard.NOTICE_EN);
     }
 
@@ -42,24 +40,23 @@ class PropertyPriceGuardTests {
     }
 
     @Test
-    void usesQuestionLanguageAndCleansRedactedBudgetWording() {
+    void usesQuestionLanguageWithoutRemovingBudgetAmounts() {
         String english = guard.enforce(
                 "No rooms with a maximum weekly budget of £400, and a weekly budget of £400. "
                         + "This is because the weekly budget of £400 is restrictive.\n\n> "
                         + PropertyPriceGuard.NOTICE_ZH,
                 "Find a room near KCL with a weekly budget of £400");
         assertThat(english)
-                .contains("within your stated budget")
-                .doesNotContain(PropertyPriceGuard.NOTICE_ZH, "£400", "price on request budget",
-                        "a within your stated budget", "the within your stated budget")
+                .contains("£400")
+                .doesNotContain(PropertyPriceGuard.NOTICE_ZH)
                 .endsWith(PropertyPriceGuard.NOTICE_EN);
 
         String chinese = guard.enforce(
                 "预算为£400的条件下没有房源。\n\n> " + PropertyPriceGuard.NOTICE_EN,
                 "预算400英镑，有什么房源？");
         assertThat(chinese)
-                .contains("您的预算条件下没有房源")
-                .doesNotContain(PropertyPriceGuard.NOTICE_EN, "£400")
+                .contains("预算为£400的条件下没有房源")
+                .doesNotContain(PropertyPriceGuard.NOTICE_EN)
                 .endsWith(PropertyPriceGuard.NOTICE_ZH);
     }
 
@@ -85,11 +82,13 @@ class PropertyPriceGuardTests {
     }
 
     @Test
-    void aiFacingRecordsContainNoPriceFields() {
+    void aiFacingRecordsContainReferencePriceFields() {
         assertThat(recordFields(PropertyQueryTools.RoomMatch.class))
-                .doesNotContain("priceTiers", "weeklyPrice", "estimatedTotalPrice", "note");
+                .contains("referenceWeeklyPrice", "currency", "estimatedTotalPrice", "priceUpdatedAt")
+                .doesNotContain("priceTiers", "note");
         assertThat(recordFields(PropertyQueryTools.RoomOfferAvailability.class))
-                .doesNotContain("priceTier", "weeklyPrice", "estimatedTotalPrice");
+                .contains("referenceWeeklyPrice", "currency", "estimatedTotalPrice", "priceUpdatedAt")
+                .doesNotContain("priceTier");
     }
 
     private static String[] recordFields(Class<?> type) {

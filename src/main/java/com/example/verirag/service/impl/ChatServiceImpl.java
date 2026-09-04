@@ -1010,7 +1010,7 @@ public class ChatServiceImpl implements ChatService {
         else if (propertyIntent == PropertyQueryIntent.RESTRICTED) {
             prompt.append("""
 
-                    本次是受限房源请求，没有提供 Tool。不得披露采购价、底价、内部价格档位或代理
+                    本次是受限房源请求，没有提供 Tool。面向客户的参考价格可以披露，但不得披露采购价、底价、内部价格档位或代理
                     结算价，不得保证价格、锁房或确认预订。简洁说明无法执行，并引导 Londonist
                     顾问人工确认；不要检索、列举或推荐房源。
                     """);

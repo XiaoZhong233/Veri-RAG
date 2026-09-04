@@ -17,15 +17,15 @@ import java.util.StringJoiner;
 
 /**
  * Formats an already completed read-only property Tool result when the model times out while
- * composing the final answer. The formatter intentionally exposes no price fields and makes no
- * booking commitment, so availability data is not lost merely because prose generation failed.
+ * composing the final answer. The formatter includes the public reference prices returned by the
+ * Tool but makes no booking or final-price commitment.
  */
 public final class PropertyToolFallbackFormatter {
 
     private static final String NOTICE_ZH =
-            "> 具体价格及可订状态须由 Londonist 顾问最终确认。";
+            "> 参考价格及可订状态须由 Londonist 顾问最终确认。";
     private static final String NOTICE_EN =
-            "> Exact pricing and availability must be confirmed by a Londonist consultant.";
+            "> Reference pricing and availability must be confirmed by a Londonist consultant.";
 
     private PropertyToolFallbackFormatter() {
     }
@@ -67,10 +67,10 @@ public final class PropertyToolFallbackFormatter {
                 : "I found " + result.residences().size()
                         + " residences matching your requirements:\n\n");
         answer.append(chinese
-                ? "| 公寓 | 位置参考 | 推荐房型 | 可入住时间 | 租期 | 库存 | 匹配说明 |\n"
-                        + "|---|---|---|---|---|---|---|\n"
-                : "| Residence | Location | Room options | Available dates | Stay | Availability | Match |\n"
-                        + "|---|---|---|---|---|---|---|\n");
+                ? "| 公寓 | 位置参考 | 推荐房型 | 可入住时间 | 租期 | 参考价格 | 库存 | 匹配说明 |\n"
+                        + "|---|---|---|---|---|---|---|---|\n"
+                : "| Residence | Location | Room options | Available dates | Stay | Reference price | Availability | Match |\n"
+                        + "|---|---|---|---|---|---|---|---|\n");
         for (ResidenceOfferGroup group : result.residences()) {
             List<RoomMatch> rooms = group.rooms() == null ? List.of() : group.rooms();
             answer.append("| ").append(cell(group.residenceName()))
@@ -80,6 +80,7 @@ public final class PropertyToolFallbackFormatter {
                     .append(" | ").append(result.stayWeeks() == null
                             ? (chinese ? "待确认" : "To confirm")
                             : result.stayWeeks() + (chinese ? "周" : " weeks"))
+                    .append(" | ").append(joinRooms(rooms, room -> price(room, chinese)))
                     .append(" | ").append(joinRooms(rooms,
                             room -> inventory(room.inventoryStatus(), room.remainingQuantity(), chinese)))
                     .append(" | ").append(chinese
@@ -141,10 +142,37 @@ public final class PropertyToolFallbackFormatter {
                 : (chinese ? "当前不可预订或待确认" : "Unavailable or requires confirmation");
         return (chinese
                 ? "房型核验结果：\n\n- 公寓：" + cell(result.residenceName())
-                        + "\n- 房型：" + cell(result.roomName()) + "\n- 状态：" + status + "\n\n"
+                        + "\n- 房型：" + cell(result.roomName()) + "\n- 状态：" + status
+                        + "\n- 参考价格：" + price(result, true) + "\n\n"
                 : "Room check result:\n\n- Residence: " + cell(result.residenceName())
-                        + "\n- Room: " + cell(result.roomName()) + "\n- Status: " + status + "\n\n")
+                        + "\n- Room: " + cell(result.roomName()) + "\n- Status: " + status
+                        + "\n- Reference price: " + price(result, false) + "\n\n")
                 + notice(chinese);
+    }
+
+    private static String price(RoomMatch room, boolean chinese) {
+        return price(room.referenceWeeklyPrice(), room.currency(),
+                room.estimatedTotalPrice(), chinese);
+    }
+
+    private static String price(RoomOfferAvailability availability, boolean chinese) {
+        return price(availability.referenceWeeklyPrice(), availability.currency(),
+                availability.estimatedTotalPrice(), chinese);
+    }
+
+    private static String price(java.math.BigDecimal weeklyPrice, String currency,
+                                java.math.BigDecimal totalPrice, boolean chinese) {
+        if (weeklyPrice == null) {
+            return chinese ? "待确认" : "To confirm";
+        }
+        String unit = "GBP".equalsIgnoreCase(nonBlank(currency)) ? "£" : nonBlank(currency) + " ";
+        String weekly = unit + weeklyPrice.stripTrailingZeros().toPlainString()
+                + (chinese ? "/周" : "/week");
+        if (totalPrice == null) {
+            return weekly;
+        }
+        return weekly + (chinese ? "；参考总价 " : "; estimated total ")
+                + unit + totalPrice.stripTrailingZeros().toPlainString();
     }
 
     private static String formatSummary(InventorySummary result, boolean chinese) {

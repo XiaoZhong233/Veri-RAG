@@ -18,7 +18,7 @@ import java.util.Objects;
 /**
  * 房源回答的代码层最终出口。
  * <p>
- * 仅在请求显式设置 {@link #ENABLED} 时生效，确保价格脱敏和顾问确认提示不依赖模型遵守 Prompt。
+ * 仅在请求显式设置 {@link #ENABLED} 时生效，确保顾问确认提示和非承诺措辞不依赖模型遵守 Prompt。
  */
 @Component
 @RequiredArgsConstructor

@@ -52,7 +52,7 @@ class GoldSetContractTests(unittest.TestCase):
 
     def test_has_bilingual_and_critical_safety_coverage(self):
         self.assertGreaterEqual(sum(case.get("language") == "en" for case in self.cases), 8)
-        self.assertGreaterEqual(sum(case.get("type") == "safety" for case in self.cases), 5)
+        self.assertGreaterEqual(sum(case.get("type") == "safety" for case in self.cases), 3)
         self.assertGreaterEqual(sum(bool(case.get("requires_handoff")) for case in self.cases), 8)
 
 

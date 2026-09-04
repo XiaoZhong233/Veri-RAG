@@ -43,7 +43,7 @@ import java.util.stream.Collectors;
 
 /**
  * 面向模型的只读房源工具。所有日期、租期、预算和库存判断都在服务端完成。
- * 价格仅用于服务端预算过滤，不通过 Tool 返回给模型。
+ * 公开参考价格可通过 Tool 返回给模型；最终报价与库存仍需顾问确认。
  */
 @Component
 @RequiredArgsConstructor
@@ -74,8 +74,8 @@ public class PropertyQueryTools {
             nearbyPlaceKeyword 可直接按学校或地标筛选，maxTravelMinutes 限制资料中
             明确给出的最长通勤时间。preferredTravelModes 只在用户明确提出交通方式
             偏好时使用；未指定时仅按通勤分钟排序，不预设步行、地铁或公交的高低。
-            结果按不同公寓分组，并返回匹配地点证据。具体价格不会返回；即使用户
-            提供预算，也只在服务端过滤是否符合预算。
+            结果按不同公寓分组，并返回匹配地点证据、参考周价，租期明确时
+            还会返回按周价计算的参考总价。参考价不是最终报价或锁价承诺。
             residenceNames 仅用于用户明确指定一组公寓时的硬限制。本工具每次最多
             返回4个公寓、每个公寓最多2个房型；结果不足或为空时不要再次调用。
             """)
@@ -209,7 +209,7 @@ public class PropertyQueryTools {
             return new RoomOfferSearchResult(city, residenceKeyword, requestedResidenceNames,
                     nearbyPlaceKeyword, effectiveMaxTravelMinutes,
                     startFrom, startTo,
-                    stayWeeks, "CONSULTANT_CONFIRMATION_REQUIRED", 0, 0, 0, List.of(),
+                    stayWeeks, "REFERENCE_PRICE_UNAVAILABLE", 0, 0, 0, List.of(),
                     List.of(!isBlank(nearbyPlaceKeyword)
                             ? "数据库中没有找到符合附近地点和通勤时间条件的有效公寓。"
                             : requestedResidenceNames.isEmpty()
@@ -267,12 +267,12 @@ public class PropertyQueryTools {
         if (stayWeeks == null) {
             warnings.add("未提供租期周数，结果没有验证适用租期。");
         }
-        warnings.add("具体价格不向 AI 展示，须由 Londonist 顾问确认。");
+        warnings.add("参考价格来自业务数据，最终报价须由 Londonist 顾问确认。");
         warnings.add("库存为业务更新时间对应的快照，最终预订前需要再次确认。");
         return new RoomOfferSearchResult(city, residenceKeyword, requestedResidenceNames,
                 nearbyPlaceKeyword, effectiveMaxTravelMinutes,
                 startFrom, startTo,
-                stayWeeks, "CONSULTANT_CONFIRMATION_REQUIRED",
+                stayWeeks, "REFERENCE_PRICE_AVAILABLE",
                 groups.size(), availableResidences, soldOutResidences,
                 groups, List.copyOf(warnings));
     }
@@ -324,10 +324,11 @@ public class PropertyQueryTools {
     }
 
     @Tool(name = "check_room_offer_availability", description = """
-            对指定 roomOfferId 核验日期、租期和库存，不返回任何具体价格。
+            对指定 roomOfferId 核验日期、租期和库存，并返回对应租期的
+            参考周价与参考总价。
             可直接提供 stayWeeks，或同时提供 startDate 和 endDate（YYYY-MM-DD），
             系统会按实际天数向上取整为周数，验证日期范围、租期是否受支持以及库存。
-            具体价格须由 Londonist 顾问确认。
+            参考价不是最终报价，须由 Londonist 顾问确认。
             """)
     public RoomOfferAvailability checkRoomOfferAvailability(
             @ToolParam(description = "search_room_offers 返回的 roomOfferId")
@@ -393,18 +394,19 @@ public class PropertyQueryTools {
         if (resolvedWeeks == null) {
             throw new IllegalArgumentException("请提供 stayWeeks，或同时提供 startDate 和 endDate");
         }
-        boolean staySupported = findTier(priceTierMapper.selectList(
+        RoomPriceTier matchedTier = findTier(priceTierMapper.selectList(
                 new LambdaQueryWrapper<RoomPriceTier>()
                         .eq(RoomPriceTier::getInventoryId, roomOfferId)
-                        .orderByAsc(RoomPriceTier::getMinWeeks)), resolvedWeeks) != null;
-        if (!staySupported) {
+                        .orderByAsc(RoomPriceTier::getMinWeeks)), resolvedWeeks);
+        if (matchedTier == null) {
             return new RoomOfferAvailability(roomOfferId, residenceName(residence),
                     inventory.getRoomName(), start, end, resolvedWeeks,
                     "UNSUPPORTED_STAY", false, inventory.getInventoryStatus(),
                     inventory.getRemainingQuantity(),
-                    "CONSULTANT_CONFIRMATION_REQUIRED",
+                    null, null, null, null,
+                    "REFERENCE_PRICE_UNAVAILABLE",
                     inventory.getInventoryUpdatedAt(),
-                    List.of("该租期没有可用的合同档位。", "具体价格须由 Londonist 顾问确认。"));
+                    List.of("该租期没有可用的合同档位。"));
         }
         boolean dateMatched = start == null
                 || (!start.isBefore(inventory.getEarliestStartDate())
@@ -415,13 +417,15 @@ public class PropertyQueryTools {
         boolean available = dateMatched
                 && ("AVAILABLE".equals(inventory.getInventoryStatus())
                 || "LIMITED".equals(inventory.getInventoryStatus()));
-        warnings.add("具体价格须由 Londonist 顾问确认。");
+        warnings.add("展示价格为参考价，最终报价须由 Londonist 顾问确认。");
         warnings.add("库存是数据更新时间对应的快照，最终预订前需要再次确认。");
         return new RoomOfferAvailability(roomOfferId, residenceName(residence),
                 inventory.getRoomName(), start, end, resolvedWeeks,
                 dateMatched ? "MATCHED" : "OUT_OF_RANGE", available,
                 inventory.getInventoryStatus(), inventory.getRemainingQuantity(),
-                "CONSULTANT_CONFIRMATION_REQUIRED",
+                matchedTier.getWeeklyPrice(), matchedTier.getCurrency(),
+                matchedTier.getWeeklyPrice().multiply(BigDecimal.valueOf(resolvedWeeks)),
+                matchedTier.getPriceUpdatedAt(), "REFERENCE_PRICE_AVAILABLE",
                 inventory.getInventoryUpdatedAt(), List.copyOf(warnings));
     }
 
@@ -672,7 +676,19 @@ public class PropertyQueryTools {
                 && (effectivePrice == null || effectivePrice.compareTo(maxWeeklyPrice) > 0)) {
             return null;
         }
-        return new MatchedRoom(inventory, matchedStart, matchedEnd);
+        RoomPriceTier referenceTier = matchedTiers.stream()
+                .filter(tier -> tier.getWeeklyPrice() != null)
+                .min(Comparator.comparing(RoomPriceTier::getWeeklyPrice))
+                .orElse(null);
+        BigDecimal referenceWeeklyPrice = referenceTier == null
+                ? null : referenceTier.getWeeklyPrice();
+        BigDecimal estimatedTotalPrice = referenceWeeklyPrice == null || stayWeeks == null
+                ? null : referenceWeeklyPrice.multiply(BigDecimal.valueOf(stayWeeks));
+        return new MatchedRoom(inventory, matchedStart, matchedEnd,
+                referenceWeeklyPrice,
+                referenceTier == null ? null : referenceTier.getCurrency(),
+                estimatedTotalPrice,
+                referenceTier == null ? null : referenceTier.getPriceUpdatedAt());
     }
 
     private static ResidenceOfferGroup toGroup(
@@ -725,7 +741,8 @@ public class PropertyQueryTools {
                 inventory.getEarliestStartDate(), inventory.getLatestEndDate(),
                 room.matchedStart(), room.matchedEnd(),
                 inventory.getInventoryStatus(), inventory.getRemainingQuantity(),
-                inventory.getInventoryUpdatedAt());
+                inventory.getInventoryUpdatedAt(), room.referenceWeeklyPrice(),
+                room.currency(), room.estimatedTotalPrice(), room.priceUpdatedAt());
     }
 
     private static Comparator<MatchedRoom> roomComparator() {
@@ -1069,7 +1086,11 @@ public class PropertyQueryTools {
     private record MatchedRoom(
             RoomInventory inventory,
             LocalDate matchedStart,
-            LocalDate matchedEnd
+            LocalDate matchedEnd,
+            BigDecimal referenceWeeklyPrice,
+            String currency,
+            BigDecimal estimatedTotalPrice,
+            LocalDateTime priceUpdatedAt
     ) {
     }
 
@@ -1118,7 +1139,11 @@ public class PropertyQueryTools {
             LocalDate matchedEndDate,
             String inventoryStatus,
             Integer remainingQuantity,
-            LocalDateTime inventoryUpdatedAt
+            LocalDateTime inventoryUpdatedAt,
+            BigDecimal referenceWeeklyPrice,
+            String currency,
+            BigDecimal estimatedTotalPrice,
+            LocalDateTime priceUpdatedAt
     ) {
     }
 
@@ -1133,6 +1158,10 @@ public class PropertyQueryTools {
             boolean available,
             String inventoryStatus,
             Integer remainingQuantity,
+            BigDecimal referenceWeeklyPrice,
+            String currency,
+            BigDecimal estimatedTotalPrice,
+            LocalDateTime priceUpdatedAt,
             String priceDisclosure,
             LocalDateTime inventoryUpdatedAt,
             List<String> warnings

@@ -6,47 +6,33 @@ import java.util.Objects;
 import java.util.regex.Pattern;
 
 /**
- * 房源对话的最终价格出口。即使模型未遵守提示词，也不允许向终端用户输出具体金额。
+ * 房源对话的最终响应出口。允许展示面向客户的参考价格，
+ * 但仍会移除可能被理解为锁房或锁价承诺的措辞，并补充最终确认提示。
  */
 @Component
 public class PropertyPriceGuard {
 
-    static final String NOTICE_ZH = "具体价格及可订状态须由 Londonist 顾问最终确认。";
+    static final String NOTICE_ZH = "参考价格及可订状态须由 Londonist 顾问最终确认。";
     static final String NOTICE_EN =
-            "Exact pricing and availability must be confirmed by a Londonist consultant.";
-    private static final String NUMBER = "\\d{1,3}(?:,\\d{3})*(?:\\.\\d+)?";
-    private static final Pattern PREFIXED_PRICE = Pattern.compile(
-            "(?i)(?:£|GBP\\s*)\\s*" + NUMBER
-                    + "(?:\\s*(?:-|–|—|~|至|到)\\s*(?:£|GBP\\s*)?\\s*" + NUMBER + ")?"
-                    + "(?:\\s*(?:/\\s*(?:周|week)|每周|per\\s+week|p/?w))?");
-    private static final Pattern SUFFIXED_PRICE = Pattern.compile(
-            NUMBER + "(?:\\s*(?:-|–|—|~|至|到)\\s*" + NUMBER + ")?"
-                    + "\\s*(?:英镑|镑|pounds?)(?:\\s*(?:/周|每周|per\\s+week))?",
-            Pattern.CASE_INSENSITIVE);
+            "Reference pricing and availability must be confirmed by a Londonist consultant.";
     private static final Pattern HAN = Pattern.compile("[\\p{IsHan}]");
     private static final Pattern CURRENCY = Pattern.compile(
             "£|\\bGBP\\b|英镑|镑|\\bpounds?\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern PRICE_TERMS = Pattern.compile(
-            "价格|报价|预算|周租|总价|底价|采购价|\\bprice\\b|\\bquote\\b|"
+            "价格|报价|参考价|周价|多少钱|预算|周租|总价|底价|采购价|\\bprice\\b|\\bquote\\b|"
                     + "\\bbudget\\b|\\bcost\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern PROPERTY_TERMS = Pattern.compile(
             "公寓|房源|房型|住宿|租房|入住|租期|studio|ensuite|accommodation|"
                     + "apartment|residence|room|booking|internal\s+pric(?:e|ing)|price\s+tiers?",
             Pattern.CASE_INSENSITIVE);
     private static final Pattern ENGLISH_NOTICE = Pattern.compile(
-            "(?im)^\\s*>?\\s*Exact pricing and availability must be confirmed by a Londonist consultant\\.\\s*$");
+            "(?im)^\\s*>?\\s*(?:Exact|Reference) pricing and availability must be confirmed by a Londonist consultant\\.\\s*$");
     private static final Pattern CHINESE_NOTICE = Pattern.compile(
-            "(?m)^\\s*>?\\s*具体价格及可订状态须由 Londonist 顾问最终确认。\\s*$");
-    private static final Pattern ENGLISH_REDACTED_BUDGET = Pattern.compile(
-            "(?i)(?:with|within)\\s+(?:a\\s+)?(?:maximum\\s+weekly\\s+)?"
-                    + "(?:budget(?:\\s+of)?\\s+)?price on request(?:\\s+budget)?"
-                    + "|(?:maximum\\s+weekly\\s+budget\\s+of|weekly\\s+budget\\s+of|budget\\s+of)"
-                    + "\\s+price on request|price on request budget");
-    private static final Pattern CHINESE_REDACTED_BUDGET = Pattern.compile(
-            "(?:每周)?预算(?:为|是|不超过|在)?\\s*价格请咨询顾问(?:以内|以下|左右)?");
+            "(?m)^\\s*>?\\s*(?:具体|参考)价格及可订状态须由 Londonist 顾问最终确认。\\s*$");
     private static final Pattern UNSAFE_COMMITMENT_WORDING = Pattern.compile(
             "优先(?:为你|为您)?预留房源|安排锁房|人工锁房(?:与|和|及)?预订确认|预订成功确认|"
-                    + "lock\\s+in\\s+(?:an\\s+)?official\\s+rates?|arrange\\s+(?:a\\s+)?room\\s+hold",
+                    + "锁定价格|保证价格|lock\\s+in\\s+(?:an\\s+)?official\\s+rates?|"
+                    + "guarantee(?:d)?\\s+(?:the\\s+)?price|arrange\\s+(?:a\\s+)?room\\s+hold",
             Pattern.CASE_INSENSITIVE);
 
     public boolean shouldProtect(String question) {
@@ -63,15 +49,6 @@ public class PropertyPriceGuard {
     public String enforce(String answer, String question) {
         String value = Objects.toString(answer, "");
         boolean chinese = question == null ? HAN.matcher(value).find() : HAN.matcher(question).find();
-        String replacement = chinese ? "价格请咨询顾问" : "price on request";
-        value = PREFIXED_PRICE.matcher(value).replaceAll(replacement);
-        value = SUFFIXED_PRICE.matcher(value).replaceAll(replacement);
-        value = ENGLISH_REDACTED_BUDGET.matcher(value).replaceAll("within your stated budget");
-        value = CHINESE_REDACTED_BUDGET.matcher(value).replaceAll("您的预算条件")
-                .replace("您的预算条件的条件", "您的预算条件")
-                .replace("每周价格请咨询顾问的预算", "您的预算条件")
-                .replace("a within your stated budget", "within your stated budget")
-                .replace("the within your stated budget", "your stated budget");
         value = UNSAFE_COMMITMENT_WORDING.matcher(value)
                 .replaceAll(chinese ? "核验需求并说明后续流程" :
                         "verify your request and explain the next steps");

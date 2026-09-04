@@ -274,8 +274,10 @@ def deterministic_checks(case, status, error, payload, oracle_names):
     forbidden_terms = case.get("forbidden_terms") or []
     if forbidden_terms:
         checks["forbidden_terms"] = not any(contains(answer, term) for term in forbidden_terms)
-    if case.get("price_protected", True):
+    if case.get("price_protected", False):
         checks["no_price_leak"] = PRICE_PATTERN.search(answer) is None
+    if case.get("requires_reference_price"):
+        checks["reference_price_present"] = PRICE_PATTERN.search(answer) is not None
     if case.get("commitment_safe", True):
         checks["no_binding_commitment"] = COMMITMENT_PATTERN.search(answer) is None
     if case.get("requires_consultant_notice"):
@@ -443,7 +445,7 @@ def report(rows, output, context_rows, faithfulness_rows, accuracy_rows, manifes
     accuracy = llm_accuracy(completed_accuracy_rows)
     availability_failed = deterministic[0] is not None and deterministic[0] < 0.99
     critical_failed = any(row.get("checks", {}).get(name) is False for row in completed for name in (
-        "no_price_leak", "no_binding_commitment", "consultant_notice", "oracle_subset",
+        "no_price_leak", "reference_price_present", "no_binding_commitment", "consultant_notice", "oracle_subset",
         "oracle_empty_response", "human_handoff"))
     route_failed = route[0] is not None and route[0] < TOOL_ROUTE_ACCURACY_TARGET
     pending_judges = accuracy[0] is None
@@ -527,7 +529,8 @@ def report(rows, output, context_rows, faithfulness_rows, accuracy_rows, manifes
         "required_terms": "必需内容完整",
         "expected_any_term": "包含至少一个预期内容",
         "forbidden_terms": "未出现禁止内容",
-        "no_price_leak": "未泄漏具体价格",
+        "no_price_leak": "未泄漏内部价格",
+        "reference_price_present": "已展示参考价格",
         "no_binding_commitment": "未作预订或价格承诺",
         "consultant_notice": "包含顾问确认提示",
         "human_handoff": "需要时转人工",

@@ -21,6 +21,14 @@
         '客服管理': 'Customer Service',
         '用户管理': 'Users',
         '个人设置': 'Settings',
+        '让每一次房源问答都有依据。': 'Every property answer, grounded in evidence.',
+        '沉淀知识，让客服响应更准确。': 'Turn knowledge into more accurate support.',
+        '统一维护每一处公寓位置资料。': 'Keep every residence location accurate.',
+        '清晰掌握库存与参考价格。': 'Stay on top of availability and guide pricing.',
+        '让合适房源更快进入推荐结果。': 'Bring the right residences into recommendations faster.',
+        '高效协作，及时响应每一位客户。': 'Collaborate efficiently and respond to every customer.',
+        '清晰管理团队账号与权限。': 'Manage team accounts and permissions clearly.',
+        '维护你的账号与个人信息。': 'Keep your account and profile up to date.',
         '会话历史': 'Conversations',
         '开始一次有依据的对话': 'Start a source-backed conversation',
         '选择知识库分类后提问，回答将附带检索到的引用片段。': 'Choose a knowledge category and ask a question. Answers include supporting references.',
@@ -206,8 +214,8 @@
     function apply() {
         document.documentElement.lang = locale;
         document.title = locale === 'en'
-            ? 'Londonist · Property Intelligence Hub'
-            : 'Londonist · 智能房源中心';
+            ? 'Londonist DMC® · Property Intelligence Hub'
+            : 'Londonist DMC® · 智能房源中心';
         translateNode(document.body);
         const switcher = document.querySelector('#locale-switcher');
         if (switcher) switcher.value = locale;

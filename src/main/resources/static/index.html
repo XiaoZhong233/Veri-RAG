@@ -4,19 +4,20 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="api-base" content="/veri-rag">
-    <title>Londonist · 智能房源中心</title>
+    <title>Londonist DMC® · 智能房源中心</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@4.6.0/fonts/remixicon.css">
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <main class="app-shell">
     <section id="login-view" class="login-view" aria-labelledby="login-title">
-        <div class="brand-panel"><p class="eyebrow">LONDONIST / PROPERTY INTELLIGENCE HUB</p><h1>让房源推荐更准确。</h1><p>统一管理公寓资料、报价库存与销售推荐，为学生快速匹配合适房源。</p><div class="brand-orb" aria-hidden="true"></div></div>
-        <form id="login-form" class="login-card"><div><p class="eyebrow">WELCOME BACK</p><h2 id="login-title">登录系统</h2><p class="muted">使用您的后台账号继续。</p></div><label>用户名<input id="login-username" autocomplete="username" placeholder="例如：admin" required></label><label>密码<input id="login-password" type="password" autocomplete="current-password" placeholder="请输入密码" required></label><p id="login-error" class="form-error" role="alert"></p><button id="login-submit" class="primary-button" type="submit">登录</button></form>
+        <div class="brand-panel"><img class="login-brand-logo" src="assets/londonist-logo.svg" alt="Londonist DMC"><p class="eyebrow">PROPERTY INTELLIGENCE HUB</p><h1>STUDENTS<br>LIVE BRIGHTER<br>IN LONDON</h1><p class="brand-tagline">More than a room. A brighter tomorrow.</p><p>统一管理公寓资料、报价库存与销售推荐，为学生快速匹配合适房源。</p></div>
+        <form id="login-form" class="login-card"><img class="mobile-login-logo" src="assets/londonist-logo.svg" alt="Londonist DMC"><div><p class="eyebrow">WELCOME BACK</p><h2 id="login-title">登录系统</h2><p class="muted">使用您的后台账号继续。</p></div><label>用户名<input id="login-username" autocomplete="username" placeholder="例如：admin" required></label><label>密码<input id="login-password" type="password" autocomplete="current-password" placeholder="请输入密码" required></label><p id="login-error" class="form-error" role="alert"></p><button id="login-submit" class="primary-button" type="submit">登录</button></form>
+        <footer class="filing-footer login-filing"><a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">沪ICP备2026042729号-1</a></footer>
     </section>
 
     <section id="console-view" class="console-view hidden">
-        <aside class="sidebar"><a class="logo" href="#chat"><span>L</span> Londonist</a><nav>
+        <aside class="sidebar"><a class="logo" href="#chat" aria-label="Londonist DMC 智能房源中心"><img src="assets/londonist-logo.svg" alt="Londonist DMC"></a><nav>
             <button class="nav-item active" data-view="chat"><i class="ri-sparkling-2-line" aria-hidden="true"></i><span>智能问答</span></button>
             <button class="nav-item" data-view="knowledge"><i class="ri-book-open-line" aria-hidden="true"></i><span>知识库</span></button>
             <button class="nav-item" data-view="residences"><i class="ri-building-2-line" aria-hidden="true"></i><span>公寓地址</span></button>
@@ -25,9 +26,10 @@
             <button class="nav-item admin-only" data-view="wecom"><i class="ri-customer-service-2-line" aria-hidden="true"></i><span>客服管理</span></button>
             <button class="nav-item admin-only" data-view="users"><i class="ri-team-line" aria-hidden="true"></i><span>用户管理</span></button>
             <button class="nav-item" data-view="profile"><i class="ri-settings-3-line" aria-hidden="true"></i><span>个人设置</span></button>
-        </nav><button id="logout-button" class="logout-button" type="button"><i class="ri-logout-box-r-line" aria-hidden="true"></i><span>退出登录</span></button></aside>
+        </nav><div class="brand-signature" aria-hidden="true"><span>A BETTER</span><span>LONDON STAY</span><span>FOR A BRIGHTER</span><span>TOMORROW</span></div><button id="logout-button" class="logout-button" type="button"><i class="ri-logout-box-r-line" aria-hidden="true"></i><span>退出登录</span></button></aside>
         <div class="content">
-            <header class="topbar"><div><p id="view-eyebrow" class="eyebrow">PROPERTY INTELLIGENCE HUB</p><h1 id="view-title">智能问答</h1></div><div class="topbar-actions"><label class="locale-control"><span class="sr-only">语言</span><i class="ri-global-line" aria-hidden="true"></i><select id="locale-switcher" aria-label="语言"><option value="zh-CN">中文</option><option value="en">English</option></select></label><button id="avatar-upload-button" class="current-user" type="button" title="点击上传头像"><span id="current-avatar" class="avatar avatar-large"></span><span id="current-user-name"></span><i class="ri-arrow-down-s-line" aria-hidden="true"></i></button></div><input id="avatar-input" type="file" accept="image/jpeg,image/png,image/gif" hidden></header>
+            <section class="brand-hero" aria-label="Londonist 品牌宣言"><div class="brand-hero-copy"><strong>STUDENTS<br>LIVE BRIGHTER<br>IN LONDON</strong><em>More than a room. A brighter tomorrow.</em></div><span class="brand-hero-mark">LONDON<br>PEOPLE<br>PLACES<br>POSSIBILITIES</span></section>
+            <header class="topbar"><div><p class="topbar-label"><span id="view-eyebrow" class="eyebrow">PROPERTY INTELLIGENCE HUB</span><span class="brand-context"> / LONDONIST DMC®</span></p><h1 id="view-title">智能问答</h1><p id="view-tagline" class="view-tagline">让每一次房源问答都有依据。</p></div><div class="topbar-actions"><label class="locale-control"><span class="sr-only">语言</span><i class="ri-global-line" aria-hidden="true"></i><select id="locale-switcher" aria-label="语言"><option value="zh-CN">中文</option><option value="en">English</option></select></label><button id="avatar-upload-button" class="current-user" type="button" title="点击上传头像"><span id="current-avatar" class="avatar avatar-large"></span><span id="current-user-name"></span><i class="ri-arrow-down-s-line" aria-hidden="true"></i></button></div><input id="avatar-input" type="file" accept="image/jpeg,image/png,image/gif" hidden></header>
 
             <section id="chat-view" class="view-panel chat-layout">
                 <aside class="session-panel"><div class="session-heading"><strong>会话历史</strong><button id="new-chat-button" class="icon-button" title="新建会话" type="button">+</button></div><div id="session-list" class="session-list"></div></aside>
@@ -121,6 +123,7 @@
             <section id="users-view" class="view-panel hidden"><section id="permission-notice" class="notice hidden">当前账号不是管理员，没有用户管理权限。</section><section id="user-management" class="panel"><div class="toolbar"><label class="search-box"><span>⌕</span><input id="keyword" type="search" placeholder="按用户名或姓名搜索"></label><button id="search-button" class="secondary-button" type="button">搜索</button><button id="create-button" class="primary-button" type="button">+ 新增用户</button></div><div class="table-wrap"><table><thead><tr><th>用户</th><th>姓名</th><th>角色</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="user-table-body"></tbody></table><p id="empty-state" class="empty-state hidden">没有找到用户。</p></div><footer class="pagination"><span id="pagination-info">共 0 位用户</span><div><button id="prev-page" class="page-button" type="button">上一页</button><span id="page-number">1</span><button id="next-page" class="page-button" type="button">下一页</button></div></footer></section></section>
 
             <section id="profile-view" class="view-panel hidden"><div class="panel profile-panel"><h2>个人设置</h2><form id="profile-form"><label>姓名<input id="profile-real-name" maxlength="64" placeholder="请输入姓名"></label><button class="primary-button" type="submit">保存资料</button></form><hr><form id="password-form"><h3>修改密码</h3><label>当前密码<input id="old-password" type="password" required></label><label>新密码<input id="new-password" type="password" minlength="6" required></label><button class="secondary-button" type="submit">更新密码</button></form></div></section>
+            <footer class="filing-footer console-filing"><a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">沪ICP备2026042729号-1</a></footer>
         </div>
     </section>
 </main>

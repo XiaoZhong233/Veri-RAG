@@ -93,13 +93,13 @@ function renderCurrentUser() {
     $('#profile-real-name').value = state.user.realName || '';
 }
 
-const viewInfo = {chat: ['PROPERTY INTELLIGENCE HUB', '智能问答'], knowledge: ['KNOWLEDGE BASE', '知识库'], residences: ['PROPERTY DATA', '公寓地址'], offers: ['INVENTORY & PRICING', '房型库存'], recommendations: ['SALES PREFERENCE', '推荐管理'], wecom: ['CUSTOMER SERVICE', '客服管理'], users: ['ADMINISTRATION', '用户管理'], profile: ['ACCOUNT', '个人设置']};
+const viewInfo = {chat: ['PROPERTY INTELLIGENCE HUB', '智能问答', '让每一次房源问答都有依据。'], knowledge: ['KNOWLEDGE BASE', '知识库', '沉淀知识，让客服响应更准确。'], residences: ['PROPERTY DATA', '公寓地址', '统一维护每一处公寓位置资料。'], offers: ['INVENTORY & PRICING', '房型库存', '清晰掌握库存与参考价格。'], recommendations: ['SALES PREFERENCE', '推荐管理', '让合适房源更快进入推荐结果。'], wecom: ['CUSTOMER SERVICE', '客服管理', '高效协作，及时响应每一位客户。'], users: ['ADMINISTRATION', '用户管理', '清晰管理团队账号与权限。'], profile: ['ACCOUNT', '个人设置', '维护你的账号与个人信息。']};
 function showView(view) {
     if ((view === 'users' || view === 'recommendations' || view === 'wecom') && !isAdmin()) { showToast('没有管理权限'); return; }
     state.view = view;
     Object.keys(viewInfo).forEach(name => $(`#${name}-view`).classList.toggle('hidden', name !== view));
     document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.view === view));
-    $('#view-eyebrow').textContent = viewInfo[view][0]; $('#view-title').textContent = viewInfo[view][1];
+    $('#view-eyebrow').textContent = viewInfo[view][0]; $('#view-title').textContent = viewInfo[view][1]; $('#view-tagline').textContent = viewInfo[view][2];
     if (view === 'users') loadUsers();
     if (view === 'knowledge') { renderCategories(); loadDocuments(); }
     if (view === 'residences') loadResidences();

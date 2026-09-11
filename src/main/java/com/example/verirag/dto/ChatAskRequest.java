@@ -18,4 +18,7 @@ public class ChatAskRequest {
     private List<Long> categoryIds;
     /** 是否要求模型输出适合纯文本聊天渠道的内容；网页版默认保留 Markdown。 */
     private boolean plainText;
+    /** 仅服务端微信渠道设置，网页请求不能开启转接动作。 */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private boolean allowHumanHandoff;
 }

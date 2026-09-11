@@ -276,20 +276,103 @@ class WeComKfSupportTests {
                 "message-waiting-rejected", "kf-1", "user-1", "text");
     }
 
+    @Test
+    void doesNotHandoffJustBecauseTextContainsKeyword() throws Exception {
+        var api = mock(WeComKfApiClient.class);
+        var state = mock(WeComKfStateMapper.class);
+        var pending = mock(WeComKfPendingMessageMapper.class);
+        var chat = mock(ChatService.class);
+        var result = new com.example.verirag.dto.ChatAskResult();
+        result.setAnswer("好的，继续为您查找房源。");
+        when(chat.ask(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any())).thenReturn(result);
+        when(api.getServiceState("kf-1", "user-1")).thenReturn(1);
+        var service = service(new WeComKfProperties(), api, state, pending, chat, Runnable::run);
+        service.processMessage(new ObjectMapper().readTree("""
+                {"msgid":"negative","open_kfid":"kf-1","external_userid":"user-1",
+                 "origin":3,"msgtype":"text","text":{"content":"不要转人工，继续帮我找房"}}
+                """));
+        verify(api, never()).listServicers(org.mockito.ArgumentMatchers.anyString());
+        verify(chat).ask(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.argThat(
+                req -> req.isAllowHumanHandoff() && req.getQuestion().contains("不要转人工")));
+        verify(api).sendText(eq("kf-1"), eq("user-1"), startsWith("vr_"), eq(result.getAnswer()));
+    }
+
+    @Test
+    void modelHandoffDoesNotRequireOldKeywords() throws Exception {
+        var api = mock(WeComKfApiClient.class);
+        var state = mock(WeComKfStateMapper.class);
+        var pending = mock(WeComKfPendingMessageMapper.class);
+        var service = service(new WeComKfProperties(), api, state, pending);
+        when(api.getServiceState("kf-1", "user-1")).thenReturn(1);
+        when(api.listServicers("kf-1")).thenReturn(java.util.List.of(
+                new WeComKfApiClient.KfServicer("advisor-1", 0L, 0)));
+        service.processMessage(new ObjectMapper().readTree("""
+                {"msgid":"human-semantic","open_kfid":"kf-1","external_userid":"user-1",
+                 "origin":3,"msgtype":"text","text":{"content":"我想和真人聊一下"}}
+                """));
+        verify(api).transitionToHuman("kf-1", "user-1", "advisor-1");
+    }
+
+    @Test
+    void malformedPayloadDoesNotStopFollowingMessages() {
+        var api = mock(WeComKfApiClient.class);
+        var state = mock(WeComKfStateMapper.class);
+        var pending = mock(WeComKfPendingMessageMapper.class);
+        when(pending.listPendingMessages(eq(100), org.mockito.ArgumentMatchers.anyList())).thenReturn(java.util.List.of(
+                new WeComKfPendingMessageMapper.PendingMessage("bad", "not-json"),
+                new WeComKfPendingMessageMapper.PendingMessage("good", "{\"msgid\":\"good\",\"origin\":0}")));
+        var service = service(new WeComKfProperties(), api, state, pending, mock(ChatService.class), Runnable::run);
+        service.recoverPendingMessages();
+        verify(pending).recordFailure("bad");
+        verify(pending).deletePending("good");
+        verify(pending).deleteRetry("good");
+    }
+
+    @Test
+    void rejectedExecutorReleasesMessageForLaterRecovery() {
+        var api = mock(WeComKfApiClient.class);
+        var state = mock(WeComKfStateMapper.class);
+        var pending = mock(WeComKfPendingMessageMapper.class);
+        when(pending.listPendingMessages(eq(100), org.mockito.ArgumentMatchers.anyList())).thenReturn(java.util.List.of(
+                new WeComKfPendingMessageMapper.PendingMessage("retry", "{\"msgid\":\"retry\",\"origin\":0}")));
+        TaskExecutor executor = task -> { throw new java.util.concurrent.RejectedExecutionException("busy"); };
+        var service = service(new WeComKfProperties(), api, state, pending, mock(ChatService.class), executor);
+        service.recoverPendingMessages();
+        service.recoverPendingMessages();
+        verify(pending, org.mockito.Mockito.times(2)).recordFailure("retry");
+        verify(pending, org.mockito.Mockito.times(2)).listPendingMessages(100, java.util.List.of());
+    }
+
     private static WeComKfMessageService service(
             WeComKfProperties properties,
             WeComKfApiClient apiClient,
             WeComKfStateMapper stateMapper,
             WeComKfPendingMessageMapper pendingMapper) {
+        ChatService chatService = mock(ChatService.class);
+        com.example.verirag.dto.ChatAskResult result = new com.example.verirag.dto.ChatAskResult();
+        result.setHumanHandoff(true);
+        try {
+            when(chatService.ask(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                    .thenReturn(result);
+        } catch (Exception ex) {
+            throw new AssertionError(ex);
+        }
+        return service(properties, apiClient, stateMapper, pendingMapper, chatService, mock(TaskExecutor.class));
+    }
+
+    private static WeComKfMessageService service(
+            WeComKfProperties properties, WeComKfApiClient apiClient,
+            WeComKfStateMapper stateMapper, WeComKfPendingMessageMapper pendingMapper,
+            ChatService chatService, TaskExecutor executor) {
         return new WeComKfMessageService(
                 properties,
                 apiClient,
                 stateMapper,
                 pendingMapper,
                 mock(WeComConversationMapper.class),
-                mock(ChatService.class),
+                chatService,
                 mock(TaskScheduler.class),
-                mock(TaskExecutor.class),
+                executor,
                 mock(WeComKfMetrics.class),
                 new ObjectMapper());
     }

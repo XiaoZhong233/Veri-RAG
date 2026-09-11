@@ -3,6 +3,7 @@ package com.example.verirag.tool;
 /** 房源问题的确定性 Tool 路由意图。 */
 public enum PropertyQueryIntent {
     NONE(null),
+    HUMAN_HANDOFF(null),
     ACKNOWLEDGE(null),
     CLARIFY(null),
     GUIDANCE(null),

@@ -170,8 +170,15 @@ public class ChatServiceImpl implements ChatService {
             assertSessionOwner(userId, requestedSessionId);
         }
         List<ChatMessage> history = loadRecentHistory(requestedSessionId);
-        PropertyQueryIntent propertyIntent = propertyIntentClassifier
-                .resolve(req.getQuestion(), history);
+        PropertyQueryIntent propertyIntent = req.isAllowHumanHandoff()
+                ? propertyIntentClassifier.resolve(req.getQuestion(), history, true)
+                : propertyIntentClassifier.resolve(req.getQuestion(), history);
+        if (req.isAllowHumanHandoff() && propertyIntent == PropertyQueryIntent.HUMAN_HANDOFF) {
+            ChatAskResult result = new ChatAskResult();
+            result.setSessionId(requestedSessionId);
+            result.setHumanHandoff(true);
+            return result;
+        }
         if (propertyIntent == PropertyQueryIntent.ACKNOWLEDGE) {
             return completeAcknowledgement(
                     userId, requestedSessionId, req.getQuestion(), requestStart);
@@ -489,6 +496,7 @@ public class ChatServiceImpl implements ChatService {
 
     private static String propertyIntentLabel(PropertyQueryIntent intent) {
         return switch (intent) {
+            case HUMAN_HANDOFF -> "人工转接";
             case ACKNOWLEDGE -> "对话确认";
             case CLARIFY -> "房源咨询意图澄清";
             case GUIDANCE -> "房源咨询补充条件";

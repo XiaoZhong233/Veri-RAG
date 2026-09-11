@@ -16,6 +16,10 @@ class PropertyIntentPromptManagerTests {
         ReflectionTestUtils.invokeMethod(manager, "load");
 
         assertThat(manager.systemPrompt())
+                .contains("HUMAN_HANDOFF")
+                .contains("否定、撤回或拒绝转接不得输出该标签")
+                .contains("以最后的明确要求为准")
+                .contains("人工客服几点上班")
                 .contains("面向客户的参考周价、参考总价或参考价格范围不受限")
                 .contains("即使只指定一个公寓，也仍是 RECOMMEND")
                 .contains("“把售罄的选择列出来”是库存筛选，不是受限操作")

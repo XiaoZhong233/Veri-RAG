@@ -39,6 +39,14 @@ CREATE TABLE IF NOT EXISTS t_wecom_kf_pending_message (
     KEY idx_wecom_kf_pending_created (create_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='微信客服待处理消息（可靠投递）';
 
+-- 独立重试表：已有数据库无需 ALTER，启动时幂等创建即可。
+CREATE TABLE IF NOT EXISTS t_wecom_kf_message_retry (
+    message_id VARCHAR(128) NOT NULL,
+    failure_count INT NOT NULL DEFAULT 0,
+    next_retry_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (message_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='微信客服失败重试状态；失败6次后隔离，原消息保留';
+
 CREATE TABLE IF NOT EXISTS t_residence (
     id               BIGINT         NOT NULL AUTO_INCREMENT COMMENT '主键',
     source_id        VARCHAR(128)   NOT NULL COMMENT 'HTML 中的公寓唯一标识',

@@ -27,7 +27,7 @@ import java.util.regex.Pattern;
 public class PropertyIntentClassifier {
 
     private static final Pattern INTENT_TOKEN = Pattern.compile(
-            "\\b(NONE|ACKNOWLEDGE|CLARIFY|GUIDANCE|RESTRICTED|RECOMMEND|QUOTE|DETAIL|LIST|SUMMARY)\\b",
+            "\\b(NONE|HUMAN_HANDOFF|ACKNOWLEDGE|CLARIFY|GUIDANCE|RESTRICTED|RECOMMEND|QUOTE|DETAIL|LIST|SUMMARY)\\b",
             Pattern.CASE_INSENSITIVE);
     private static final int MAX_LOG_QUESTION_CHARS = 300;
     private static final int MAX_HISTORY_MESSAGES = 4;
@@ -58,16 +58,22 @@ public class PropertyIntentClassifier {
     }
 
     public PropertyQueryIntent resolve(String question, List<ChatMessage> history) {
+        return resolve(question, history, false);
+    }
+
+    /** 微信客服与房源意图共用一次模型分类；不让房源规则提前短路转人工判断。 */
+    public PropertyQueryIntent resolve(String question, List<ChatMessage> history, boolean allowHumanHandoff) {
         if (question == null || question.isBlank()) {
             logResolution(question, "INPUT", PropertyQueryIntent.NONE,
                     "blank_question");
             return PropertyQueryIntent.NONE;
         }
 
-        PropertyQueryIntent ruleIntent = javaRulesEnabled
+        boolean useRules = javaRulesEnabled && !allowHumanHandoff;
+        PropertyQueryIntent ruleIntent = useRules
                 ? PropertyQueryRouter.route(question, history)
                 : PropertyQueryIntent.NONE;
-        if (javaRulesEnabled && ruleIntent != PropertyQueryIntent.NONE) {
+        if (useRules && ruleIntent != PropertyQueryIntent.NONE) {
             logResolution(question, "JAVA_RULE", ruleIntent, null);
             return ruleIntent;
         }
@@ -76,7 +82,7 @@ public class PropertyIntentClassifier {
                     PropertyQueryIntent.NONE, "classifier_disabled");
             return PropertyQueryIntent.NONE;
         }
-        if (javaRulesEnabled
+        if (useRules
                 && !PropertyQueryRouter.needsModelClassification(question, history)) {
             logResolution(question, "JAVA_RULE", PropertyQueryIntent.NONE,
                     "no_property_signal");
@@ -96,12 +102,17 @@ public class PropertyIntentClassifier {
                 options.extraBody(Map.of("enable_thinking", false));
             }
             String content = classifierChatClient.prompt()
-                    .system(promptManager.systemPrompt())
+                    .system(promptManager.systemPrompt() + (allowHumanHandoff
+                            ? "\n当前渠道支持人工转接，可以输出 HUMAN_HANDOFF。"
+                            : "\n当前渠道不执行人工转接，不得输出 HUMAN_HANDOFF；人工服务咨询输出 NONE。"))
                     .user(buildInput(question, history))
                     .options(options)
                     .call()
                     .content();
             PropertyQueryIntent classified = parseIntent(content);
+            if (!allowHumanHandoff && classified == PropertyQueryIntent.HUMAN_HANDOFF) {
+                classified = PropertyQueryIntent.NONE;
+            }
             long durationMs = (System.nanoTime() - started) / 1_000_000L;
             logResolution(question, "MODEL_CLASSIFIER", classified,
                     classified.propertyHandled() ? "durationMs=" + durationMs
@@ -119,7 +130,7 @@ public class PropertyIntentClassifier {
 
     private static void logResolution(String question, String source,
                                       PropertyQueryIntent intent, String reason) {
-        String route = intent.structured() ? "TOOL"
+        String route = intent == PropertyQueryIntent.HUMAN_HANDOFF ? "HUMAN_HANDOFF" : intent.structured() ? "TOOL"
                 : intent.propertyHandled() ? "PROPERTY" : "RAG";
         String tool = intent.structured() ? intent.toolName() : "-";
         if (reason == null || reason.isBlank()) {

@@ -11,12 +11,43 @@
             (#{messageId}, #{openKfId}, #{externalUserId}, #{payloadJson})
     </insert>
 
-    <select id="listPendingPayloads" resultType="java.lang.String">
-        SELECT payload_json
-        FROM t_wecom_kf_pending_message
-        ORDER BY create_time ASC
+    <resultMap id="pendingMessage" type="com.example.verirag.mapper.WeComKfPendingMessageMapper$PendingMessage">
+        <constructor>
+            <arg column="message_id" javaType="java.lang.String"/>
+            <arg column="payload_json" javaType="java.lang.String"/>
+        </constructor>
+    </resultMap>
+
+    <select id="listPendingMessages" resultMap="pendingMessage">
+        SELECT p.message_id, p.payload_json
+        FROM t_wecom_kf_pending_message p
+        LEFT JOIN t_wecom_kf_message_retry r ON r.message_id = p.message_id
+        WHERE (r.message_id IS NULL OR (r.failure_count &lt; 6 AND r.next_retry_at &lt;= CURRENT_TIMESTAMP))
+        AND NOT EXISTS (SELECT 1 FROM t_wecom_kf_message done WHERE done.message_id = p.message_id)
+        <if test="excludedIds != null and !excludedIds.isEmpty()">
+            AND p.message_id NOT IN
+            <foreach collection="excludedIds" item="id" open="(" separator="," close=")">#{id}</foreach>
+        </if>
+        ORDER BY p.create_time ASC, p.message_id ASC
         LIMIT #{limit}
     </select>
+
+    <!-- 失败后等待 15、30、60、120、240 秒；第6次失败停止自动重试。 -->
+    <insert id="recordFailure">
+        INSERT INTO t_wecom_kf_message_retry (message_id, failure_count, next_retry_at)
+        VALUES (#{messageId}, 1, DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 15 SECOND))
+        ON DUPLICATE KEY UPDATE
+            next_retry_at = TIMESTAMPADD(SECOND, LEAST(900, 15 * POW(2, LEAST(failure_count, 6))), CURRENT_TIMESTAMP),
+            failure_count = LEAST(failure_count + 1, 6)
+    </insert>
+
+    <select id="failureCount" resultType="int">
+        SELECT COALESCE(MAX(failure_count), 0) FROM t_wecom_kf_message_retry WHERE message_id = #{messageId}
+    </select>
+
+    <delete id="deleteRetry">
+        DELETE FROM t_wecom_kf_message_retry WHERE message_id = #{messageId}
+    </delete>
 
     <delete id="deletePending">
         DELETE FROM t_wecom_kf_pending_message

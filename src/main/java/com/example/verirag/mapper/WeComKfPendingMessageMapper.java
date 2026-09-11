@@ -14,7 +14,16 @@ public interface WeComKfPendingMessageMapper {
                       @Param("externalUserId") String externalUserId,
                       @Param("payloadJson") String payloadJson);
 
-    List<String> listPendingPayloads(@Param("limit") int limit);
+    record PendingMessage(String messageId, String payloadJson) {}
+
+    List<PendingMessage> listPendingMessages(@Param("limit") int limit,
+                                            @Param("excludedIds") List<String> excludedIds);
+
+    int recordFailure(@Param("messageId") String messageId);
+
+    int failureCount(@Param("messageId") String messageId);
+
+    int deleteRetry(@Param("messageId") String messageId);
 
     int deletePending(@Param("messageId") String messageId);
 }

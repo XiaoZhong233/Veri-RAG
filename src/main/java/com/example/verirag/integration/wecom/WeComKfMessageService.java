@@ -38,9 +38,6 @@ import java.util.concurrent.ScheduledFuture;
 public class WeComKfMessageService {
 
     private static final int MAX_TEXT_BYTES = 2048;
-    private static final java.util.regex.Pattern HUMAN_HANDOFF = java.util.regex.Pattern.compile(
-            "转人工|人工客服|找(?:人工|顾问)|联系(?:人工|顾问)|human\\s+agent|live\\s+agent",
-            java.util.regex.Pattern.CASE_INSENSITIVE);
     private final WeComKfProperties properties;
     private final WeComKfApiClient apiClient;
     private final WeComKfStateMapper stateMapper;
@@ -145,13 +142,35 @@ public class WeComKfMessageService {
                 message.toString()) > 0;
     }
 
-    private void recoverPendingMessages() {
+    void recoverPendingMessages() {
         try {
-            for (String payload : pendingMessageMapper.listPendingPayloads(100)) {
-                enqueueMessage(objectMapper.readTree(payload));
+            for (var pending : pendingMessageMapper.listPendingMessages(
+                    100, java.util.List.copyOf(inFlightMessageIds))) {
+                try {
+                    JsonNode message = objectMapper.readTree(pending.payloadJson());
+                    if (message == null || !pending.messageId().equals(message.path("msgid").asText(""))) {
+                        throw new IllegalArgumentException("Pending message ID does not match payload");
+                    }
+                    enqueueMessage(message);
+                } catch (Exception ex) {
+                    recordFailure(pending.messageId(), ex);
+                }
             }
         } catch (Exception ex) {
             log.warn("event=wecom.kf.pending_recovery_failed error={}", rootMessage(ex));
+        }
+    }
+
+    private void recordFailure(String messageId, Exception error) {
+        if (stateMapper.isProcessed(messageId)) {
+            return;
+        }
+        pendingMessageMapper.recordFailure(messageId);
+        int failures = pendingMessageMapper.failureCount(messageId);
+        log.error("event=wecom.kf.message_retry_recorded msgId={} failures={} isolated={} error={}",
+                messageId, failures, failures >= 6, rootMessage(error));
+        if (failures >= 6) {
+            metrics.increment("retry_exhausted");
         }
     }
 
@@ -217,35 +236,60 @@ public class WeComKfMessageService {
 
     private void enqueueClaimedMessages(String key, java.util.List<JsonNode> messages) {
         long queuedAt = System.nanoTime();
-        customerQueues.compute(key, (ignored, tail) -> {
-            CompletableFuture<Void> previous = tail == null
-                    ? CompletableFuture.completedFuture(null)
-                    : tail.handle((unused, error) -> null);
-            CompletableFuture<Void> next = previous.thenRunAsync(() -> {
-                metrics.recordQueue(Duration.ofNanos(System.nanoTime() - queuedAt));
-                long replyStarted = System.nanoTime();
-                try {
-                    processMessages(messages);
-                    metrics.recordReply(Duration.ofNanos(System.nanoTime() - replyStarted), "success");
-                    metrics.increment("answered");
-                } catch (RuntimeException ex) {
-                    metrics.recordReply(Duration.ofNanos(System.nanoTime() - replyStarted), "error");
-                    metrics.increment("failed");
-                    log.error("event=wecom.kf.message_processing_failed messageIds={} "
-                                    + "openKfId={} externalUserId={} error={}",
-                            messages.stream().map(item -> item.path("msgid").asText(""))
-                                    .toList(),
-                            messages.getFirst().path("open_kfid").asText(""),
-                            messages.getFirst().path("external_userid").asText(""),
-                            rootMessage(ex));
-                    throw ex;
-                } finally {
-                    messages.forEach(item -> inFlightMessageIds.remove(item.path("msgid").asText("")));
-                }
-            }, messageExecutor);
-            next.whenComplete((unused, error) -> customerQueues.remove(key, next));
-            return next;
+        CompletableFuture<Void> queued;
+        try {
+            queued = customerQueues.compute(key, (ignored, tail) -> {
+                CompletableFuture<Void> previous = tail == null
+                        ? CompletableFuture.completedFuture(null)
+                        : tail.handle((unused, error) -> null);
+                return previous.thenRunAsync(() -> {
+                    metrics.recordQueue(Duration.ofNanos(System.nanoTime() - queuedAt));
+                    long replyStarted = System.nanoTime();
+                    try {
+                        processMessages(messages);
+                        metrics.recordReply(Duration.ofNanos(System.nanoTime() - replyStarted), "success");
+                        metrics.increment("answered");
+                    } catch (RuntimeException ex) {
+                        metrics.recordReply(Duration.ofNanos(System.nanoTime() - replyStarted), "error");
+                        metrics.increment("failed");
+                        log.error("event=wecom.kf.message_processing_failed messageIds={} "
+                                        + "openKfId={} externalUserId={} error={}",
+                                messages.stream().map(item -> item.path("msgid").asText(""))
+                                        .toList(),
+                                messages.getFirst().path("open_kfid").asText(""),
+                                messages.getFirst().path("external_userid").asText(""),
+                                rootMessage(ex));
+                        throw ex;
+                    }
+                }, messageExecutor);
+            });
+        } catch (RuntimeException ex) {
+            finishQueuedMessages(messages, ex);
+            return;
+        }
+        // 在 compute 之外清理，兼容任务立即完成；拒绝执行也必须释放 in-flight 标记。
+        queued.whenComplete((unused, error) -> {
+            try {
+                finishQueuedMessages(messages, error);
+            } finally {
+                customerQueues.remove(key, queued);
+            }
         });
+    }
+
+    private void finishQueuedMessages(java.util.List<JsonNode> messages, Throwable error) {
+        for (JsonNode message : messages) {
+            String id = message.path("msgid").asText("");
+            try {
+                if (error != null) {
+                    recordFailure(id, new IllegalStateException(error));
+                }
+            } catch (RuntimeException ex) {
+                log.error("event=wecom.kf.retry_state_failed msgId={} error={}", id, rootMessage(ex));
+            } finally {
+                inFlightMessageIds.remove(id);
+            }
+        }
     }
 
     private void processMessages(java.util.List<JsonNode> messages) {
@@ -274,13 +318,6 @@ public class WeComKfMessageService {
             return;
         }
         if (serviceState == 3 || serviceState == 4) {
-            messages.forEach(item -> markProcessed(item.path("msgid").asText(""),
-                    openKfId, externalUserId, "text"));
-            return;
-        }
-        if (HUMAN_HANDOFF.matcher(question).find()) {
-            handoffOrContinueWithAssistant(openKfId, externalUserId,
-                    first.path("msgid").asText(""), serviceState);
             messages.forEach(item -> markProcessed(item.path("msgid").asText(""),
                     openKfId, externalUserId, "text"));
             return;
@@ -358,12 +395,6 @@ public class WeComKfMessageService {
 
         String question = message.path("text").path("content").asText("").trim();
         if (!StringUtils.hasText(question)) {
-            markProcessed(messageId, openKfId, externalUserId, messageType);
-            return;
-        }
-        if (HUMAN_HANDOFF.matcher(question).find()) {
-            handoffOrContinueWithAssistant(
-                    openKfId, externalUserId, messageId, serviceState);
             markProcessed(messageId, openKfId, externalUserId, messageType);
             return;
         }
@@ -509,6 +540,7 @@ public class WeComKfMessageService {
         ChatAskRequest request = new ChatAskRequest();
         request.setQuestion(question);
         request.setPlainText(true);
+        request.setAllowHumanHandoff(true);
         request.setSessionId(conversationMapper.selectSessionId(
                 channelId, externalUserId, properties.getUserId()));
         ProgressNotice progressNotice = new ProgressNotice(
@@ -517,8 +549,10 @@ public class WeComKfMessageService {
         ChatAskResult result;
         try {
             result = chatService.ask(properties.getUserId(), request);
-            conversationMapper.upsertSessionId(
-                    channelId, externalUserId, properties.getUserId(), result.getSessionId());
+            if (!result.isHumanHandoff() && result.getSessionId() != null) {
+                conversationMapper.upsertSessionId(
+                        channelId, externalUserId, properties.getUserId(), result.getSessionId());
+            }
         } catch (Exception ex) {
             log.warn("event=wecom.kf.answer_failed openKfId={} externalUserId={} error={}",
                     openKfId, externalUserId, rootMessage(ex));
@@ -529,6 +563,11 @@ public class WeComKfMessageService {
         }
         // 发送层会使用同一幂等 msgid 做短暂重试；最终失败才交给队列错误处理。
         progressNotice.finish();
+        if (result.isHumanHandoff()) {
+            handoffOrContinueWithAssistant(openKfId, externalUserId, messageId,
+                    apiClient.getServiceState(openKfId, externalUserId));
+            return;
+        }
         sendSystemTexts(openKfId, externalUserId, messageId, "final",
                 WeComPlainTextFormatter.format(result.getAnswer()));
         log.info("event=wecom.kf.answer_sent openKfId={} externalUserId={} sessionId={}",
@@ -637,6 +676,7 @@ public class WeComKfMessageService {
         stateMapper.insertProcessed(messageId, blankToNull(openKfId),
                 blankToNull(externalUserId), blankToNull(messageType));
         pendingMessageMapper.deletePending(messageId);
+        pendingMessageMapper.deleteRetry(messageId);
     }
 
     private static String replyMessageId(String inboundMessageId, String messageKind) {

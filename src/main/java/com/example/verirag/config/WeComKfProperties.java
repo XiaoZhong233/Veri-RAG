@@ -28,7 +28,8 @@ public class WeComKfProperties {
     private String progressMessage = "正在检索资料，请稍候…";
     private String unsupportedMessage = "您好，目前智能客服仅支持文字消息，请用文字描述您的问题。";
     private String errorMessage = "抱歉，智能客服暂时无法处理您的问题，请稍后再试或联系人工客服。";
-    private String handoffMessage = "已为您转接人工顾问，请稍候。";
+    private String handoffMessage = "当前客服渠道暂不支持直接转人工，智能客服会继续为您服务。如需人工协助，请留下联系方式和具体需求。";
+    private String stuckSessionRecoveryMessage = "智能客服会话已恢复，请重新发送一次刚才的问题。";
 
     public boolean isEnabled() {
         return enabled;
@@ -140,5 +141,13 @@ public class WeComKfProperties {
 
     public void setHandoffMessage(String handoffMessage) {
         this.handoffMessage = handoffMessage;
+    }
+
+    public String getStuckSessionRecoveryMessage() {
+        return stuckSessionRecoveryMessage;
+    }
+
+    public void setStuckSessionRecoveryMessage(String stuckSessionRecoveryMessage) {
+        this.stuckSessionRecoveryMessage = stuckSessionRecoveryMessage;
     }
 }

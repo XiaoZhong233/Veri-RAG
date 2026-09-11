@@ -78,7 +78,10 @@ wecom:
     progress-message: ${WECOM_KF_PROGRESS_MESSAGE:正在检索资料，请稍候…}
     unsupported-message: ${WECOM_KF_UNSUPPORTED_MESSAGE:您好，目前智能客服仅支持文字消息，请用文字描述您的问题。}
     error-message: ${WECOM_KF_ERROR_MESSAGE:抱歉，智能客服暂时无法处理您的问题，请稍后再试或联系人工客服。}
-    handoff-message: ${WECOM_KF_HANDOFF_MESSAGE:已为您转接人工顾问，请稍候。}
+    # 自定义 API 接入不支持后台“机器人+人工”规则；这里只做友好说明，不切入待接入池。
+    handoff-message: ${WECOM_KF_HANDOFF_MESSAGE:当前客服渠道暂不支持直接转人工，智能客服会继续为您服务。如需人工协助，请留下联系方式和具体需求。}
+    # 用于修复旧版本已经错误进入待接入池（service_state=2）的会话。
+    stuck-session-recovery-message: ${WECOM_KF_STUCK_SESSION_RECOVERY_MESSAGE:智能客服会话已恢复，请重新发送一次刚才的问题。}
 
 file:
   upload:

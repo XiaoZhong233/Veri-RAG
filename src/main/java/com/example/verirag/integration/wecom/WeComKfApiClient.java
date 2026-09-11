@@ -79,17 +79,28 @@ public class WeComKfApiClient {
         transitionServiceState(openKfId, externalUserId, 1);
     }
 
-    /** 转入待接入池，由企业微信已有的人工接待规则分配。 */
-    public void transitionToHuman(String openKfId, String externalUserId) {
-        transitionServiceState(openKfId, externalUserId, 2);
+    /** 结束旧会话，并返回用于发送结束提示语的事件消息 code。 */
+    public String transitionToEnded(String openKfId, String externalUserId) {
+        return transitionServiceState(openKfId, externalUserId, 4)
+                .path("msg_code").asText("");
     }
 
-    private void transitionServiceState(String openKfId, String externalUserId, int serviceState) {
+    public void sendEventText(String code, String messageId, String content) {
+        ObjectNode body = objectMapper.createObjectNode();
+        body.put("code", requireText(code, "msg_code"));
+        body.put("msgid", requireText(messageId, "msgid"));
+        body.put("msgtype", "text");
+        body.putObject("text").put("content", requireText(content, "message content"));
+        postWithAccessToken("/cgi-bin/kf/send_msg_on_event", body, true, true);
+    }
+
+    private JsonNode transitionServiceState(
+            String openKfId, String externalUserId, int serviceState) {
         ObjectNode body = objectMapper.createObjectNode();
         body.put("open_kfid", requireText(openKfId, "open_kfid"));
         body.put("external_userid", requireText(externalUserId, "external_userid"));
         body.put("service_state", serviceState);
-        postWithAccessToken("/cgi-bin/kf/service_state/trans", body, true);
+        return postWithAccessToken("/cgi-bin/kf/service_state/trans", body, true);
     }
 
     private JsonNode postWithAccessToken(String path, JsonNode body, boolean retryInvalidToken) {

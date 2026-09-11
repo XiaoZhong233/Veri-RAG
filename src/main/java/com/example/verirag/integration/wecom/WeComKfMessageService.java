@@ -259,18 +259,16 @@ public class WeComKfMessageService {
             return;
         }
         int serviceState = apiClient.getServiceState(openKfId, externalUserId);
-        if (serviceState == 2 || serviceState == 3 || serviceState == 4) {
+        if (serviceState == 2) {
+            recoverStuckSession(openKfId, externalUserId,
+                    first.path("msgid").asText(""));
             messages.forEach(item -> markProcessed(item.path("msgid").asText(""),
                     openKfId, externalUserId, "text"));
             return;
         }
-        if (HUMAN_HANDOFF.matcher(question).find()) {
-            apiClient.transitionToHuman(openKfId, externalUserId);
-            sendSystemText(openKfId, externalUserId, first.path("msgid").asText(""), "handoff",
-                    properties.getHandoffMessage());
+        if (serviceState == 3 || serviceState == 4) {
             messages.forEach(item -> markProcessed(item.path("msgid").asText(""),
                     openKfId, externalUserId, "text"));
-            metrics.increment("handoff");
             return;
         }
         if (serviceState == 0) {
@@ -278,12 +276,19 @@ public class WeComKfMessageService {
         } else if (serviceState != 1) {
             throw new IllegalStateException("Unknown WeCom KF service_state: " + serviceState);
         }
+        if (HUMAN_HANDOFF.matcher(question).find()) {
+            sendHandoffUnavailableMessage(openKfId, externalUserId,
+                    first.path("msgid").asText(""));
+            messages.forEach(item -> markProcessed(item.path("msgid").asText(""),
+                    openKfId, externalUserId, "text"));
+            return;
+        }
         answerQuestion(first.path("msgid").asText(""), openKfId, externalUserId, question);
         messages.forEach(item -> markProcessed(item.path("msgid").asText(""),
                 openKfId, externalUserId, "text"));
     }
 
-    private void processMessage(JsonNode message) {
+    void processMessage(JsonNode message) {
         String messageId = message.path("msgid").asText("");
         if (!StringUtils.hasText(messageId) || stateMapper.isProcessed(messageId)) {
             return;
@@ -311,24 +316,19 @@ public class WeComKfMessageService {
         }
 
         int serviceState = apiClient.getServiceState(openKfId, externalUserId);
-        // 2=待接入池、3=人工接待、4=已结束；这些状态下机器人不能也不应抢答。
-        if (serviceState == 2 || serviceState == 3 || serviceState == 4) {
+        // 旧版本会把“转人工”错误地切到待接入池；自定义 API 渠道无人接管，需结束旧会话。
+        if (serviceState == 2) {
+            recoverStuckSession(openKfId, externalUserId, messageId);
+            markProcessed(messageId, openKfId, externalUserId, messageType);
+            return;
+        }
+        // 3=人工接待、4=已结束；这些状态下机器人不能抢答。
+        if (serviceState == 3 || serviceState == 4) {
             log.info("event=wecom.kf.message_skipped reason=service_state state={} "
                             + "openKfId={} externalUserId={}",
                     serviceState, openKfId, externalUserId);
             markProcessed(messageId, openKfId, externalUserId, messageType);
             return;
-        }
-        if ("text".equals(messageType)) {
-            String question = message.path("text").path("content").asText("").trim();
-            if (HUMAN_HANDOFF.matcher(question).find()) {
-                apiClient.transitionToHuman(openKfId, externalUserId);
-                sendSystemText(openKfId, externalUserId, messageId, "handoff",
-                        properties.getHandoffMessage());
-                markProcessed(messageId, openKfId, externalUserId, messageType);
-                metrics.increment("handoff");
-                return;
-            }
         }
         if (serviceState == 0) {
             apiClient.transitionToAssistant(openKfId, externalUserId);
@@ -348,8 +348,35 @@ public class WeComKfMessageService {
             markProcessed(messageId, openKfId, externalUserId, messageType);
             return;
         }
+        if (HUMAN_HANDOFF.matcher(question).find()) {
+            sendHandoffUnavailableMessage(openKfId, externalUserId, messageId);
+            markProcessed(messageId, openKfId, externalUserId, messageType);
+            return;
+        }
         answerQuestion(messageId, openKfId, externalUserId, question);
         markProcessed(messageId, openKfId, externalUserId, messageType);
+    }
+
+    private void sendHandoffUnavailableMessage(
+            String openKfId, String externalUserId, String messageId) {
+        sendSystemText(openKfId, externalUserId, messageId, "handoff-unavailable",
+                properties.getHandoffMessage());
+        metrics.increment("handoff_unavailable");
+    }
+
+    private void recoverStuckSession(
+            String openKfId, String externalUserId, String inboundMessageId) {
+        String msgCode = apiClient.transitionToEnded(openKfId, externalUserId);
+        if (!StringUtils.hasText(msgCode)) {
+            throw new IllegalStateException(
+                    "WeCom service_state/trans returned no msg_code for ended session");
+        }
+        String outgoingMessageId = replyMessageId(inboundMessageId, "stuck-session-recovery");
+        apiClient.sendEventText(msgCode, outgoingMessageId,
+                truncateUtf8(properties.getStuckSessionRecoveryMessage(), MAX_TEXT_BYTES));
+        metrics.increment("stuck_session_recovered");
+        log.info("event=wecom.kf.stuck_session_recovered openKfId={} externalUserId={}",
+                openKfId, externalUserId);
     }
 
     private void answerQuestion(

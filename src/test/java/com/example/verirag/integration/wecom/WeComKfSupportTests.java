@@ -1,10 +1,25 @@
 package com.example.verirag.integration.wecom;
 
+import com.example.verirag.config.WeComKfProperties;
+import com.example.verirag.mapper.WeComConversationMapper;
+import com.example.verirag.mapper.WeComKfPendingMessageMapper;
+import com.example.verirag.mapper.WeComKfStateMapper;
+import com.example.verirag.observability.WeComKfMetrics;
+import com.example.verirag.service.ChatService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.task.TaskExecutor;
+import org.springframework.scheduling.TaskScheduler;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.startsWith;
 
 class WeComKfSupportTests {
 
@@ -73,5 +88,70 @@ class WeComKfSupportTests {
                 "**重点**：`Studio`\n- [详情](https://example.com)");
 
         assertEquals("重点：Studio\n• 详情：https://example.com", result);
+    }
+
+    @Test
+    void keepsAssistantStateWhenCustomerRequestsHuman() throws Exception {
+        WeComKfApiClient apiClient = mock(WeComKfApiClient.class);
+        WeComKfStateMapper stateMapper = mock(WeComKfStateMapper.class);
+        WeComKfPendingMessageMapper pendingMapper = mock(WeComKfPendingMessageMapper.class);
+        WeComKfProperties properties = new WeComKfProperties();
+        WeComKfMessageService service = service(
+                properties, apiClient, stateMapper, pendingMapper);
+        when(apiClient.getServiceState("kf-1", "user-1")).thenReturn(1);
+
+        service.processMessage(new ObjectMapper().readTree("""
+                {"msgid":"message-1","open_kfid":"kf-1","external_userid":"user-1",
+                 "origin":3,"msgtype":"text","text":{"content":"转人工"}}
+                """));
+
+        verify(apiClient).sendText(eq("kf-1"), eq("user-1"), startsWith("vr_"),
+                eq(properties.getHandoffMessage()));
+        verify(apiClient, never()).transitionToEnded("kf-1", "user-1");
+        verify(stateMapper).insertProcessed("message-1", "kf-1", "user-1", "text");
+    }
+
+    @Test
+    void endsLegacyWaitingSessionAndUsesEventMessage() throws Exception {
+        WeComKfApiClient apiClient = mock(WeComKfApiClient.class);
+        WeComKfStateMapper stateMapper = mock(WeComKfStateMapper.class);
+        WeComKfPendingMessageMapper pendingMapper = mock(WeComKfPendingMessageMapper.class);
+        WeComKfProperties properties = new WeComKfProperties();
+        WeComKfMessageService service = service(
+                properties, apiClient, stateMapper, pendingMapper);
+        when(apiClient.getServiceState("kf-1", "user-1")).thenReturn(2);
+        when(apiClient.transitionToEnded("kf-1", "user-1")).thenReturn("event-code");
+
+        service.processMessage(new ObjectMapper().readTree("""
+                {"msgid":"message-2","open_kfid":"kf-1","external_userid":"user-1",
+                 "origin":3,"msgtype":"text","text":{"content":"还在吗"}}
+                """));
+
+        verify(apiClient).sendEventText(eq("event-code"), startsWith("vr_"),
+                eq(properties.getStuckSessionRecoveryMessage()));
+        verify(apiClient, never()).sendText(
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString());
+        verify(stateMapper).insertProcessed("message-2", "kf-1", "user-1", "text");
+    }
+
+    private static WeComKfMessageService service(
+            WeComKfProperties properties,
+            WeComKfApiClient apiClient,
+            WeComKfStateMapper stateMapper,
+            WeComKfPendingMessageMapper pendingMapper) {
+        return new WeComKfMessageService(
+                properties,
+                apiClient,
+                stateMapper,
+                pendingMapper,
+                mock(WeComConversationMapper.class),
+                mock(ChatService.class),
+                mock(TaskScheduler.class),
+                mock(TaskExecutor.class),
+                mock(WeComKfMetrics.class),
+                new ObjectMapper());
     }
 }

@@ -383,18 +383,10 @@ public class WeComKfMessageService {
 
     private void handoffOrContinueWithAssistant(
             String openKfId, String externalUserId, String messageId, int serviceState) {
-        java.util.Optional<WeComKfApiClient.KfServicer> target = selectActiveServicer(
-                openKfId, externalUserId);
-        if (target.isPresent()) {
-            try {
-                transferToHuman(openKfId, externalUserId, messageId, target.get().userId());
-                return;
-            } catch (RuntimeException ex) {
-                metrics.increment("handoff_failed");
-                log.warn("event=wecom.kf.handoff_failed openKfId={} externalUserId={} "
-                                + "servicerUserId={} error={}",
-                        openKfId, externalUserId, target.get().userId(), rootMessage(ex));
-            }
+        HandoffAttempt attempt = tryActiveServicers(
+                openKfId, externalUserId, messageId);
+        if (attempt.assigned()) {
+            return;
         }
         // 分配人工失败时继续保持机器人接待，不能让客户进入无人处理状态。
         ensureAssistantState(openKfId, externalUserId, serviceState);
@@ -405,43 +397,55 @@ public class WeComKfMessageService {
 
     private void resumeWaitingSession(
             String openKfId, String externalUserId, String inboundMessageId) {
-        java.util.Optional<WeComKfApiClient.KfServicer> target = selectActiveServicer(
-                openKfId, externalUserId);
-        if (target.isPresent()) {
-            try {
-                transferToHuman(
-                        openKfId, externalUserId, inboundMessageId, target.get().userId());
-                return;
-            } catch (RuntimeException ex) {
-                metrics.increment("handoff_failed");
-                log.warn("event=wecom.kf.waiting_handoff_failed openKfId={} "
-                                + "externalUserId={} servicerUserId={} error={}",
-                        openKfId, externalUserId, target.get().userId(), rootMessage(ex));
-            }
+        HandoffAttempt attempt = tryActiveServicers(
+                openKfId, externalUserId, inboundMessageId);
+        if (attempt.assigned()) {
+            return;
         }
-        String msgCode = apiClient.transitionToEnded(openKfId, externalUserId);
-        if (!StringUtils.hasText(msgCode)) {
-            log.warn("event=wecom.kf.stuck_session_recovered_without_notice openKfId={} "
-                    + "externalUserId={} reason=empty_msg_code", openKfId, externalUserId);
-        } else {
-            try {
-                String outgoingMessageId = replyMessageId(
-                        inboundMessageId, "stuck-session-recovery");
-                apiClient.sendEventText(msgCode, outgoingMessageId,
-                        truncateUtf8(properties.getStuckSessionRecoveryMessage(), MAX_TEXT_BYTES));
-            } catch (RuntimeException ex) {
-                // 状态已成功结束。提示消息失败不能导致同一入站消息无限重试。
-                log.warn("event=wecom.kf.stuck_session_notice_failed openKfId={} "
-                                + "externalUserId={} error={}",
-                        openKfId, externalUserId, rootMessage(ex));
-            }
+
+        // 状态可能在“查询”和“分配”之间被人工端改变，先重新读取再决定后续动作。
+        int latestState = apiClient.getServiceState(openKfId, externalUserId);
+        if (latestState == 3 || latestState == 4) {
+            log.info("event=wecom.kf.waiting_session_changed openKfId={} "
+                            + "externalUserId={} latestState={}",
+                    openKfId, externalUserId, latestState);
+            return;
         }
-        metrics.increment("stuck_session_recovered");
-        log.info("event=wecom.kf.stuck_session_recovered openKfId={} externalUserId={}",
-                openKfId, externalUserId);
+        if (latestState == 0 || latestState == 1) {
+            ensureAssistantState(openKfId, externalUserId, latestState);
+            sendSystemText(openKfId, externalUserId, inboundMessageId,
+                    "stuck-session-recovery", properties.getStuckSessionRecoveryMessage());
+            metrics.increment("stuck_session_recovered");
+            return;
+        }
+
+        // 企业微信不允许 2→1 或 2→4，只能等待可用接待人员并转换为 3。
+        throw attempt.lastError() != null ? attempt.lastError()
+                : new IllegalStateException("WeCom session is waiting but has no active servicer");
     }
 
-    private java.util.Optional<WeComKfApiClient.KfServicer> selectActiveServicer(
+    private HandoffAttempt tryActiveServicers(
+            String openKfId, String externalUserId, String inboundMessageId) {
+        java.util.List<WeComKfApiClient.KfServicer> active = activeServicers(
+                openKfId, externalUserId);
+        RuntimeException lastError = null;
+        for (WeComKfApiClient.KfServicer servicer : active) {
+            try {
+                transferToHuman(
+                        openKfId, externalUserId, inboundMessageId, servicer.userId());
+                return new HandoffAttempt(true, null);
+            } catch (RuntimeException ex) {
+                lastError = ex;
+                metrics.increment("handoff_failed");
+                log.warn("event=wecom.kf.handoff_failed openKfId={} externalUserId={} "
+                                + "servicerUserId={} error={}",
+                        openKfId, externalUserId, servicer.userId(), rootMessage(ex));
+            }
+        }
+        return new HandoffAttempt(false, lastError);
+    }
+
+    private java.util.List<WeComKfApiClient.KfServicer> activeServicers(
             String openKfId, String externalUserId) {
         java.util.List<WeComKfApiClient.KfServicer> active = apiClient.listServicers(openKfId)
                 .stream()
@@ -449,10 +453,14 @@ public class WeComKfMessageService {
                 .sorted(java.util.Comparator.comparing(WeComKfApiClient.KfServicer::userId))
                 .toList();
         if (active.isEmpty()) {
-            return java.util.Optional.empty();
+            return active;
         }
         int index = Math.floorMod(externalUserId.hashCode(), active.size());
-        return java.util.Optional.of(active.get(index));
+        java.util.List<WeComKfApiClient.KfServicer> ordered = new java.util.ArrayList<>(active.size());
+        for (int offset = 0; offset < active.size(); offset++) {
+            ordered.add(active.get((index + offset) % active.size()));
+        }
+        return java.util.List.copyOf(ordered);
     }
 
     private void transferToHuman(
@@ -699,6 +707,9 @@ public class WeComKfMessageService {
 
     private static String firstText(String preferred, String fallback) {
         return StringUtils.hasText(preferred) ? preferred : fallback;
+    }
+
+    private record HandoffAttempt(boolean assigned, RuntimeException lastError) {
     }
 
     private static String rootMessage(Throwable error) {

@@ -6,6 +6,7 @@ import com.example.verirag.mapper.WeComKfPendingMessageMapper;
 import com.example.verirag.mapper.WeComKfStateMapper;
 import com.example.verirag.observability.WeComKfMetrics;
 import com.example.verirag.service.ChatService;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.task.TaskExecutor;
@@ -217,7 +218,7 @@ class WeComKfSupportTests {
     }
 
     @Test
-    void endsLegacyWaitingSessionAndUsesEventMessage() throws Exception {
+    void doesNotAttemptIllegalEndFromWaitingState() throws Exception {
         WeComKfApiClient apiClient = mock(WeComKfApiClient.class);
         WeComKfStateMapper stateMapper = mock(WeComKfStateMapper.class);
         WeComKfPendingMessageMapper pendingMapper = mock(WeComKfPendingMessageMapper.class);
@@ -225,37 +226,31 @@ class WeComKfSupportTests {
         WeComKfMessageService service = service(
                 properties, apiClient, stateMapper, pendingMapper);
         when(apiClient.getServiceState("kf-1", "user-1")).thenReturn(2);
-        when(apiClient.transitionToEnded("kf-1", "user-1")).thenReturn("event-code");
 
-        service.processMessage(new ObjectMapper().readTree("""
+        JsonNode message = new ObjectMapper().readTree("""
                 {"msgid":"message-2","open_kfid":"kf-1","external_userid":"user-1",
                  "origin":3,"msgtype":"text","text":{"content":"还在吗"}}
-                """));
+                """);
 
-        verify(apiClient).sendEventText(eq("event-code"), startsWith("vr_"),
-                eq(properties.getStuckSessionRecoveryMessage()));
-        verify(apiClient, never()).sendText(
-                org.mockito.ArgumentMatchers.anyString(),
-                org.mockito.ArgumentMatchers.anyString(),
-                org.mockito.ArgumentMatchers.anyString(),
-                org.mockito.ArgumentMatchers.anyString());
-        verify(stateMapper).insertProcessed("message-2", "kf-1", "user-1", "text");
+        assertThrows(IllegalStateException.class, () -> service.processMessage(message));
+
+        verify(apiClient, never()).transitionToEnded("kf-1", "user-1");
+        verify(stateMapper, never()).insertProcessed("message-2", "kf-1", "user-1", "text");
     }
 
     @Test
-    void endsWaitingSessionWhenAssignmentIsRejected() throws Exception {
+    void acceptsConcurrentChangeAfterWaitingAssignmentIsRejected() throws Exception {
         WeComKfApiClient apiClient = mock(WeComKfApiClient.class);
         WeComKfStateMapper stateMapper = mock(WeComKfStateMapper.class);
         WeComKfPendingMessageMapper pendingMapper = mock(WeComKfPendingMessageMapper.class);
         WeComKfProperties properties = new WeComKfProperties();
         WeComKfMessageService service = service(
                 properties, apiClient, stateMapper, pendingMapper);
-        when(apiClient.getServiceState("kf-1", "user-1")).thenReturn(2);
+        when(apiClient.getServiceState("kf-1", "user-1")).thenReturn(2, 3);
         when(apiClient.listServicers("kf-1")).thenReturn(java.util.List.of(
                 new WeComKfApiClient.KfServicer("advisor-1", 0L, 0)));
         when(apiClient.transitionToHuman("kf-1", "user-1", "advisor-1"))
                 .thenThrow(new IllegalStateException("handoff rejected"));
-        when(apiClient.transitionToEnded("kf-1", "user-1")).thenReturn("event-code");
 
         service.processMessage(new ObjectMapper().readTree("""
                 {"msgid":"message-waiting-rejected","open_kfid":"kf-1",
@@ -263,9 +258,7 @@ class WeComKfSupportTests {
                  "text":{"content":"还在吗"}}
                 """));
 
-        verify(apiClient).transitionToEnded("kf-1", "user-1");
-        verify(apiClient).sendEventText(eq("event-code"), startsWith("vr_"),
-                eq(properties.getStuckSessionRecoveryMessage()));
+        verify(apiClient, never()).transitionToEnded("kf-1", "user-1");
         verify(stateMapper).insertProcessed(
                 "message-waiting-rejected", "kf-1", "user-1", "text");
     }

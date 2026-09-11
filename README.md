@@ -189,6 +189,8 @@ https://your-domain.example/veri-rag/api/wecom/kf/callback
 
 URL 校验通过并取得微信客服 Secret 后，再设置 `WECOM_KF_SECRET` 并重建应用容器。还需在“微信客服 → 可调用接口的应用”中授权自建应用和相应客服账号，并将服务器公网 IP 加入可信 IP。真实凭据只保存在生产 `.env`，不要提交到 Git。
 
+微信客服 Secret 本身不能读取通讯录。若要在客服管理页自动列出成员，需要在“应用管理”中新建一个自建应用，将需要作为接待人员的成员加入该应用可见范围，并把该应用 Secret 配置为 `WECOM_CONTACTS_SECRET`。未配置时仍可在后台手工输入企业微信成员账号（userid）。
+
 微信客服回答超过 `WECOM_KF_PROGRESS_DELAY` 时，会先发送一条独立的检索提示。最终回答使用纯文本渠道提示词，并在发送前将模型偶尔返回的 Markdown 表格、标题、链接等转换为微信中易读的编号列表；网页版仍保留 Markdown 和流式展示。
 
 ### 2. 构建并启动
@@ -316,6 +318,7 @@ export SPRING_DATA_REDIS_PASSWORD="veri_rag_dev"
 | `WECOM_KF_ENABLED` | `false` | 是否启用面向外部微信客户的微信客服 API |
 | `WECOM_KF_CORP_ID` | 无 | 企业 ID，也是加密回调末尾的接收方 ID |
 | `WECOM_KF_SECRET` | 无 | 微信客服授权应用 Secret，用于获取 access_token |
+| `WECOM_CONTACTS_SECRET` | 无 | 可选；自建应用 Secret，用于获取其可见范围内的成员 userid |
 | `WECOM_KF_TOKEN` | 无 | 回调签名 Token |
 | `WECOM_KF_ENCODING_AES_KEY` | 无 | 43 字符回调消息加密密钥 |
 | `WECOM_KF_USER_ID` | `2` | 微信客服会话归属的本地用户 ID |

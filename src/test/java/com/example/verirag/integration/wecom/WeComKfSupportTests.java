@@ -93,6 +93,19 @@ class WeComKfSupportTests {
     }
 
     @Test
+    void requiresSeparateContactsSecretForMemberDirectory() {
+        WeComKfProperties properties = new WeComKfProperties();
+        properties.setCorpId("corp-1");
+        WeComKfApiClient apiClient = new WeComKfApiClient(
+                properties, new ObjectMapper());
+
+        IllegalStateException error = assertThrows(
+                IllegalStateException.class, apiClient::listVisibleMemberIds);
+
+        assertTrue(error.getMessage().contains("WECOM_CONTACTS_SECRET"));
+    }
+
+    @Test
     void keepsAssistantStateWhenCustomerRequestsHuman() throws Exception {
         WeComKfApiClient apiClient = mock(WeComKfApiClient.class);
         WeComKfStateMapper stateMapper = mock(WeComKfStateMapper.class);

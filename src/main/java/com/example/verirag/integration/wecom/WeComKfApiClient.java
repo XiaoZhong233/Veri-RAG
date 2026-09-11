@@ -31,6 +31,7 @@ public class WeComKfApiClient {
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
     private volatile AccessToken accessToken;
+    private volatile AccessToken contactsAccessToken;
 
     public WeComKfApiClient(WeComKfProperties properties, ObjectMapper objectMapper) {
         this.properties = properties;
@@ -115,7 +116,8 @@ public class WeComKfApiClient {
                 body.put("cursor", cursor);
             }
             body.put("limit", 10000);
-            JsonNode response = postWithAccessToken("/cgi-bin/user/list_id", body, true);
+            JsonNode response = postWithContactsAccessToken(
+                    "/cgi-bin/user/list_id", body, true);
             response.path("dept_user").forEach(item -> {
                 List<Long> departmentIds = new ArrayList<>();
                 item.path("department").forEach(department ->
@@ -236,21 +238,53 @@ public class WeComKfApiClient {
         return response;
     }
 
+    private JsonNode postWithContactsAccessToken(
+            String path, JsonNode body, boolean retryInvalidToken) {
+        JsonNode response = post(path + "?access_token="
+                + encode(getContactsAccessToken()), body);
+        int errorCode = response.path("errcode").asInt(-1);
+        if (retryInvalidToken && (errorCode == 40014 || errorCode == 42001)) {
+            contactsAccessToken = null;
+            response = post(path + "?access_token="
+                    + encode(getContactsAccessToken()), body);
+            errorCode = response.path("errcode").asInt(-1);
+        }
+        if (errorCode != 0) {
+            throw apiError(path, response);
+        }
+        return response;
+    }
+
     private String getAccessToken() {
-        AccessToken current = accessToken;
+        return getAccessToken(false);
+    }
+
+    private String getContactsAccessToken() {
+        if (!StringUtils.hasText(properties.getContactsSecret())) {
+            throw new IllegalStateException(
+                    "未配置 WECOM_CONTACTS_SECRET，请在客服管理页手工输入 userid");
+        }
+        return getAccessToken(true);
+    }
+
+    private String getAccessToken(boolean contacts) {
+        AccessToken current = contacts ? contactsAccessToken : accessToken;
         Instant now = Instant.now();
         if (current != null && now.isBefore(current.expiresAt())) {
             return current.value();
         }
         synchronized (this) {
-            current = accessToken;
+            current = contacts ? contactsAccessToken : accessToken;
             now = Instant.now();
             if (current != null && now.isBefore(current.expiresAt())) {
                 return current.value();
             }
+            String secret = contacts
+                    ? properties.getContactsSecret() : properties.getSecret();
+            String configName = contacts
+                    ? "wecom.kf.contacts-secret" : "wecom.kf.secret";
             String path = "/cgi-bin/gettoken?corpid=" + encode(properties.getCorpId())
-                    + "&corpsecret=" + encode(requireText(
-                            properties.getSecret(), "wecom.kf.secret"));
+                    + "&corpsecret=" + encode(requireText(secret, configName));
             JsonNode response = get(path);
             if (response.path("errcode").asInt(-1) != 0) {
                 throw apiError("/cgi-bin/gettoken", response);
@@ -260,7 +294,13 @@ public class WeComKfApiClient {
                 throw new IllegalStateException("WeCom gettoken returned an empty access_token");
             }
             long expiresIn = Math.max(response.path("expires_in").asLong(7200L) - 300L, 60L);
-            accessToken = new AccessToken(value, Instant.now().plusSeconds(expiresIn));
+            AccessToken token = new AccessToken(
+                    value, Instant.now().plusSeconds(expiresIn));
+            if (contacts) {
+                contactsAccessToken = token;
+            } else {
+                accessToken = token;
+            }
             return value;
         }
     }

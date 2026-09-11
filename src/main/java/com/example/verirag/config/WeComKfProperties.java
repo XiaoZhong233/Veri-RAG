@@ -18,6 +18,7 @@ public class WeComKfProperties {
     private boolean enabled;
     private String corpId;
     private String secret;
+    private String contactsSecret;
     private String token;
     private String encodingAesKey;
     private long userId = 2L;
@@ -55,6 +56,14 @@ public class WeComKfProperties {
 
     public void setSecret(String secret) {
         this.secret = secret;
+    }
+
+    public String getContactsSecret() {
+        return contactsSecret;
+    }
+
+    public void setContactsSecret(String contactsSecret) {
+        this.contactsSecret = contactsSecret;
     }
 
     public String getToken() {

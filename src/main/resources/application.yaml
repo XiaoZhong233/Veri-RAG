@@ -67,6 +67,8 @@ wecom:
     enabled: ${WECOM_KF_ENABLED:false}
     corp-id: ${WECOM_KF_CORP_ID:}
     secret: ${WECOM_KF_SECRET:}
+    # 可选：具备通讯录可见范围的自建应用 Secret，仅用于获取成员 userid。
+    contacts-secret: ${WECOM_CONTACTS_SECRET:}
     token: ${WECOM_KF_TOKEN:}
     encoding-aes-key: ${WECOM_KF_ENCODING_AES_KEY:}
     user-id: ${WECOM_KF_USER_ID:2}

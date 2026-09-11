@@ -76,10 +76,13 @@ wecom:
     # 同一客户连续发送的碎片化文字在该窗口内合并为一次问答，避免多次重复调用模型。
     message-merge-window: ${WECOM_KF_MESSAGE_MERGE_WINDOW:900ms}
     progress-message: ${WECOM_KF_PROGRESS_MESSAGE:正在检索资料，请稍候…}
+    # API 管理模式下，enter_session 事件会携带 welcome_code，由应用负责发送欢迎语。
+    welcome-message: "${WECOM_KF_WELCOME_MESSAGE:Hello💓 This is Londonist DMC Team! 为了更快为您匹配房源，麻烦告知下您的租期、意向位置、预算，我这边马上为您筛选合适的公寓。}"
     unsupported-message: ${WECOM_KF_UNSUPPORTED_MESSAGE:您好，目前智能客服仅支持文字消息，请用文字描述您的问题。}
     error-message: ${WECOM_KF_ERROR_MESSAGE:抱歉，智能客服暂时无法处理您的问题，请稍后再试或联系人工客服。}
     # 自定义 API 接入不支持后台“机器人+人工”规则；这里只做友好说明，不切入待接入池。
     handoff-message: ${WECOM_KF_HANDOFF_MESSAGE:当前客服渠道暂不支持直接转人工，智能客服会继续为您服务。如需人工协助，请留下联系方式和具体需求。}
+    handoff-success-message: ${WECOM_KF_HANDOFF_SUCCESS_MESSAGE:已为您转接人工顾问，请稍候。}
     # 用于修复旧版本已经错误进入待接入池（service_state=2）的会话。
     stuck-session-recovery-message: ${WECOM_KF_STUCK_SESSION_RECOVERY_MESSAGE:智能客服会话已恢复，请重新发送一次刚才的问题。}
 

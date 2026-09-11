@@ -16,6 +16,8 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 
 /** 微信客服 access_token、消息同步与文本回复客户端。 */
 @Component
@@ -75,8 +77,65 @@ public class WeComKfApiClient {
         return response.path("service_state").asInt(-1);
     }
 
+    public List<KfAccount> listAccounts() {
+        JsonNode response = getWithAccessToken("/cgi-bin/kf/account/list", true);
+        List<KfAccount> accounts = new ArrayList<>();
+        response.path("account_list").forEach(item -> accounts.add(new KfAccount(
+                item.path("open_kfid").asText(""),
+                item.path("name").asText(""),
+                item.path("avatar").asText(""))));
+        return List.copyOf(accounts);
+    }
+
+    public List<KfServicer> listServicers(String openKfId) {
+        String path = "/cgi-bin/kf/servicer/list?open_kfid="
+                + encode(requireText(openKfId, "open_kfid"));
+        JsonNode response = getWithAccessToken(path, true);
+        List<KfServicer> servicers = new ArrayList<>();
+        response.path("servicer_list").forEach(item -> servicers.add(new KfServicer(
+                item.path("userid").asText(""),
+                item.path("department_id").asLong(0L),
+                item.path("status").asInt(-1))));
+        return List.copyOf(servicers);
+    }
+
+    public List<KfServicerResult> addServicers(String openKfId, List<String> userIds) {
+        return changeServicers("/cgi-bin/kf/servicer/add", openKfId, userIds);
+    }
+
+    public List<KfServicerResult> removeServicers(String openKfId, List<String> userIds) {
+        return changeServicers("/cgi-bin/kf/servicer/del", openKfId, userIds);
+    }
+
+    private List<KfServicerResult> changeServicers(
+            String path, String openKfId, List<String> userIds) {
+        if (userIds == null || userIds.isEmpty() || userIds.size() > 100) {
+            throw new IllegalArgumentException("userid_list size must be between 1 and 100");
+        }
+        ObjectNode body = objectMapper.createObjectNode();
+        body.put("open_kfid", requireText(openKfId, "open_kfid"));
+        var array = body.putArray("userid_list");
+        userIds.stream().map(id -> requireText(id, "userid")).distinct().forEach(array::add);
+        JsonNode response = postWithAccessToken(path, body, true);
+        List<KfServicerResult> results = new ArrayList<>();
+        response.path("result_list").forEach(item -> results.add(new KfServicerResult(
+                item.path("userid").asText(""),
+                item.path("errcode").asInt(-1),
+                item.path("errmsg").asText(""))));
+        return List.copyOf(results);
+    }
+
     public void transitionToAssistant(String openKfId, String externalUserId) {
         transitionServiceState(openKfId, externalUserId, 1);
+    }
+
+    /** 将会话直接分配给指定且处于“正在接待”的企业微信成员。 */
+    public String transitionToHuman(
+            String openKfId, String externalUserId, String servicerUserId) {
+        ObjectNode body = serviceStateBody(openKfId, externalUserId, 3);
+        body.put("servicer_userid", requireText(servicerUserId, "servicer_userid"));
+        return postWithAccessToken("/cgi-bin/kf/service_state/trans", body, true)
+                .path("msg_code").asText("");
     }
 
     /** 结束旧会话，并返回用于发送结束提示语的事件消息 code。 */
@@ -96,11 +155,32 @@ public class WeComKfApiClient {
 
     private JsonNode transitionServiceState(
             String openKfId, String externalUserId, int serviceState) {
+        return postWithAccessToken("/cgi-bin/kf/service_state/trans",
+                serviceStateBody(openKfId, externalUserId, serviceState), true);
+    }
+
+    private ObjectNode serviceStateBody(
+            String openKfId, String externalUserId, int serviceState) {
         ObjectNode body = objectMapper.createObjectNode();
         body.put("open_kfid", requireText(openKfId, "open_kfid"));
         body.put("external_userid", requireText(externalUserId, "external_userid"));
         body.put("service_state", serviceState);
-        return postWithAccessToken("/cgi-bin/kf/service_state/trans", body, true);
+        return body;
+    }
+
+    private JsonNode getWithAccessToken(String path, boolean retryInvalidToken) {
+        String separator = path.contains("?") ? "&" : "?";
+        JsonNode response = get(path + separator + "access_token=" + encode(getAccessToken()));
+        int errorCode = response.path("errcode").asInt(-1);
+        if (retryInvalidToken && (errorCode == 40014 || errorCode == 42001)) {
+            accessToken = null;
+            response = get(path + separator + "access_token=" + encode(getAccessToken()));
+            errorCode = response.path("errcode").asInt(-1);
+        }
+        if (errorCode != 0) {
+            throw apiError(path, response);
+        }
+        return response;
     }
 
     private JsonNode postWithAccessToken(String path, JsonNode body, boolean retryInvalidToken) {
@@ -212,5 +292,17 @@ public class WeComKfApiClient {
     }
 
     private record AccessToken(String value, Instant expiresAt) {
+    }
+
+    public record KfAccount(String openKfId, String name, String avatar) {
+    }
+
+    public record KfServicer(String userId, long departmentId, int status) {
+        public boolean active() {
+            return StringUtils.hasText(userId) && status == 0;
+        }
+    }
+
+    public record KfServicerResult(String userId, int errorCode, String errorMessage) {
     }
 }

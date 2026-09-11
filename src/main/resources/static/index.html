@@ -22,6 +22,7 @@
             <button class="nav-item" data-view="residences"><i class="ri-building-2-line" aria-hidden="true"></i><span>公寓地址</span></button>
             <button class="nav-item" data-view="offers"><i class="ri-home-6-line" aria-hidden="true"></i><span>房型库存</span></button>
             <button class="nav-item admin-only" data-view="recommendations"><i class="ri-star-line" aria-hidden="true"></i><span>推荐管理</span></button>
+            <button class="nav-item admin-only" data-view="wecom"><i class="ri-customer-service-2-line" aria-hidden="true"></i><span>客服管理</span></button>
             <button class="nav-item admin-only" data-view="users"><i class="ri-team-line" aria-hidden="true"></i><span>用户管理</span></button>
             <button class="nav-item" data-view="profile"><i class="ri-settings-3-line" aria-hidden="true"></i><span>个人设置</span></button>
         </nav><button id="logout-button" class="logout-button" type="button"><i class="ri-logout-box-r-line" aria-hidden="true"></i><span>退出登录</span></button></aside>
@@ -102,6 +103,18 @@
                         </table>
                         <p id="recommendation-empty" class="empty-state hidden">还没有销售推荐配置。</p>
                     </div>
+                </section>
+            </section>
+
+            <section id="wecom-view" class="view-panel hidden">
+                <section class="notice wecom-notice">自定义 API 模式由本系统管理接待人员和会话分配。只有状态为“正在接待”的成员会收到转人工会话；欢迎语由 enter_session 事件触发。</section>
+                <section class="panel">
+                    <div class="section-heading"><div><h2>微信客服接待人员</h2><p class="muted">成员 userid 可在企业微信通讯录中查看；添加后还需由成员将接待状态设为“正在接待”。</p></div><button id="wecom-refresh-button" class="secondary-button" type="button"><i class="ri-refresh-line" aria-hidden="true"></i>刷新</button></div>
+                    <div class="toolbar wecom-toolbar">
+                        <label>客服账号<select id="wecom-account-select"><option value="">正在加载客服账号…</option></select></label>
+                        <form id="wecom-servicer-form" class="wecom-add-form"><label>接待人员 userid<input id="wecom-servicer-userids" maxlength="2048" placeholder="多个 userid 用逗号或空格分隔" required></label><button id="wecom-servicer-add" class="primary-button" type="submit">+ 添加接待人员</button></form>
+                    </div>
+                    <div class="table-wrap wecom-table-wrap"><table><thead><tr><th>接待人员 userid / 部门</th><th>接待状态</th><th>转人工分配</th><th>操作</th></tr></thead><tbody id="wecom-servicer-table-body"></tbody></table><p id="wecom-servicer-empty" class="empty-state hidden">当前客服账号还没有接待人员。</p></div>
                 </section>
             </section>
 

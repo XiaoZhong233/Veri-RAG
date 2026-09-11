@@ -18,6 +18,7 @@
         '公寓地址': 'Residences',
         '房型库存': 'Inventory',
         '推荐管理': 'Recommendations',
+        '客服管理': 'Customer Service',
         '用户管理': 'Users',
         '个人设置': 'Settings',
         '会话历史': 'Conversations',
@@ -84,6 +85,20 @@
         '启用': 'Enabled',
         '停用': 'Disabled',
         '添加推荐公寓': 'Add recommendation',
+        '微信客服接待人员': 'WeCom service agents',
+        '刷新': 'Refresh',
+        '客服账号': 'Service account',
+        '接待人员 userid': 'Agent userid',
+        '添加接待人员': 'Add agent',
+        '接待人员 userid / 部门': 'Agent userid / Department',
+        '接待状态': 'Agent status',
+        '转人工分配': 'Human handoff',
+        '正在接待': 'Accepting chats',
+        '停止接待': 'Not accepting chats',
+        '由部门配置': 'Configured by department',
+        '可自动分配': 'Available for assignment',
+        '不会自动分配': 'Not assigned automatically',
+        '移除': 'Remove',
         '用户': 'User',
         '姓名': 'Name',
         '角色': 'Role',
@@ -125,7 +140,8 @@
         '按用户名或姓名搜索': 'Search username or name',
         '请输入姓名': 'Enter your name',
         '例如：arofan-house': 'e.g. arofan-house',
-        '例如：本月主推': 'e.g. Featured this month'
+        '例如：本月主推': 'e.g. Featured this month',
+        '多个 userid 用逗号或空格分隔': 'Separate multiple userids with commas or spaces'
     };
 
     const reverse = Object.fromEntries(Object.entries(en).map(([zh, value]) => [value, zh]));

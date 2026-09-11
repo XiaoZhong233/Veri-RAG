@@ -92,9 +92,9 @@ function renderCurrentUser() {
     $('#profile-real-name').value = state.user.realName || '';
 }
 
-const viewInfo = {chat: ['PROPERTY INTELLIGENCE HUB', '智能问答'], knowledge: ['KNOWLEDGE BASE', '知识库'], residences: ['PROPERTY DATA', '公寓地址'], offers: ['INVENTORY & PRICING', '房型库存'], recommendations: ['SALES PREFERENCE', '推荐管理'], users: ['ADMINISTRATION', '用户管理'], profile: ['ACCOUNT', '个人设置']};
+const viewInfo = {chat: ['PROPERTY INTELLIGENCE HUB', '智能问答'], knowledge: ['KNOWLEDGE BASE', '知识库'], residences: ['PROPERTY DATA', '公寓地址'], offers: ['INVENTORY & PRICING', '房型库存'], recommendations: ['SALES PREFERENCE', '推荐管理'], wecom: ['CUSTOMER SERVICE', '客服管理'], users: ['ADMINISTRATION', '用户管理'], profile: ['ACCOUNT', '个人设置']};
 function showView(view) {
-    if ((view === 'users' || view === 'recommendations') && !isAdmin()) { showToast('没有管理权限'); return; }
+    if ((view === 'users' || view === 'recommendations' || view === 'wecom') && !isAdmin()) { showToast('没有管理权限'); return; }
     state.view = view;
     Object.keys(viewInfo).forEach(name => $(`#${name}-view`).classList.toggle('hidden', name !== view));
     document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.view === view));
@@ -104,6 +104,7 @@ function showView(view) {
     if (view === 'residences') loadResidences();
     if (view === 'offers') loadOffers();
     if (view === 'recommendations') loadRecommendations();
+    if (view === 'wecom') loadWeComAccounts();
 }
 
 async function loadCategories() {
@@ -774,6 +775,80 @@ async function saveRecommendation(event) {
     } catch (error) { $('#recommendation-form-error').textContent = error.message; }
 }
 
+async function loadWeComAccounts() {
+    if (!isAdmin()) return;
+    const select = $('#wecom-account-select');
+    const selected = select.value;
+    try {
+        const accounts = await request('/api/wecom/kf/admin/accounts');
+        select.innerHTML = accounts.length
+            ? accounts.map(account => `<option value="${escapeHtml(account.openKfId)}">${escapeHtml(account.name || account.openKfId)}</option>`).join('')
+            : '<option value="">没有可管理的微信客服账号</option>';
+        if (accounts.some(account => account.openKfId === selected)) select.value = selected;
+        await loadWeComServicers();
+    } catch (error) {
+        select.innerHTML = '<option value="">客服接口不可用</option>';
+        renderWeComServicers([]);
+        showToast(error.message);
+    }
+}
+
+async function loadWeComServicers() {
+    const openKfId = $('#wecom-account-select').value;
+    if (!openKfId) return renderWeComServicers([]);
+    try {
+        const path = `/api/wecom/kf/admin/accounts/${encodeURIComponent(openKfId)}/servicers`;
+        renderWeComServicers(await request(path));
+    } catch (error) {
+        renderWeComServicers([]);
+        showToast(error.message);
+    }
+}
+
+function renderWeComServicers(servicers) {
+    $('#wecom-servicer-table-body').innerHTML = servicers.map(servicer => {
+        const userId = servicer.userId || '';
+        const identity = userId || `部门 ${servicer.departmentId}`;
+        const active = Boolean(userId) && servicer.status === 0;
+        const status = servicer.status === 0 ? '正在接待' : servicer.status === 1 ? '停止接待' : '由部门配置';
+        const remove = userId ? `<button class="text-button danger" data-wecom-remove="${escapeHtml(userId)}" type="button">移除</button>` : '-';
+        return `<tr><td><strong>${escapeHtml(identity)}</strong></td><td><span class="status-tag ${active ? 'active' : 'disabled'}">${status}</span></td><td>${active ? '<span class="assignment-ready">可自动分配</span>' : '<span class="muted">不会自动分配</span>'}</td><td><div class="row-actions">${remove}</div></td></tr>`;
+    }).join('');
+    $('#wecom-servicer-empty').classList.toggle('hidden', servicers.length !== 0);
+}
+
+async function addWeComServicers(event) {
+    event.preventDefault();
+    const openKfId = $('#wecom-account-select').value;
+    const userIds = [...new Set($('#wecom-servicer-userids').value.split(/[\s,，;；]+/).map(value => value.trim()).filter(Boolean))];
+    if (!openKfId || !userIds.length) return showToast('请选择客服账号并填写接待人员 userid');
+    const button = $('#wecom-servicer-add');
+    button.disabled = true;
+    try {
+        const path = `/api/wecom/kf/admin/accounts/${encodeURIComponent(openKfId)}/servicers`;
+        const results = await request(path, {method: 'POST', body: JSON.stringify({userIds})});
+        const failed = results.filter(item => item.errorCode !== 0);
+        if (failed.length) throw new Error(failed.map(item => `${item.userId}: ${item.errorMessage || item.errorCode}`).join('；'));
+        event.target.reset();
+        showToast(`已添加 ${results.length || userIds.length} 名接待人员`);
+        await loadWeComServicers();
+    } catch (error) { showToast(error.message); }
+    finally { button.disabled = false; }
+}
+
+async function removeWeComServicer(userId) {
+    const openKfId = $('#wecom-account-select').value;
+    if (!openKfId || !confirm(`确定从该客服账号移除接待人员“${userId}”吗？`)) return;
+    try {
+        const path = `/api/wecom/kf/admin/accounts/${encodeURIComponent(openKfId)}/servicers`;
+        const results = await request(path, {method: 'DELETE', body: JSON.stringify({userIds: [userId]})});
+        const failed = results.find(item => item.errorCode !== 0);
+        if (failed) throw new Error(failed.errorMessage || `企业微信错误码 ${failed.errorCode}`);
+        showToast('接待人员已移除');
+        await loadWeComServicers();
+    } catch (error) { showToast(error.message); }
+}
+
 async function loadUsers() {
     if (!isAdmin()) return;
     try { const query = new URLSearchParams({keyword: $('#keyword').value.trim(), page: state.userPage, size: state.userSize}); const result = await request(`/api/users/page?${query}`); state.userTotal = result.total; renderUsers(result.records); const pages = Math.max(Math.ceil(result.total / state.userSize), 1); $('#pagination-info').textContent = `共 ${result.total} 位用户`; $('#page-number').textContent = `${state.userPage} / ${pages}`; $('#prev-page').disabled = state.userPage <= 1; $('#next-page').disabled = state.userPage >= pages; } catch (error) { showToast(error.message); }
@@ -799,6 +874,7 @@ $('#upload-document-button').addEventListener('click', () => $('#document-dialog
 $('#new-residence-button').addEventListener('click', () => openResidenceDialog()); $('#import-residence-button').addEventListener('click', () => $('#residence-import-dialog').showModal()); $('#import-residence-detail-button').addEventListener('click', () => { $('#residence-detail-import-form').reset(); $('#residence-detail-import-error').textContent = ''; $('#residence-detail-import-result').classList.add('hidden'); $('#residence-detail-import-dialog').showModal(); }); $('#residence-form').addEventListener('submit', saveResidence); $('#residence-import-form').addEventListener('submit', importResidences); $('#residence-detail-import-form').addEventListener('submit', importResidenceDetails); $('#residence-detail-form').addEventListener('submit', saveResidenceDetail); $('#residence-search-button').addEventListener('click', () => { state.residencePage = 1; loadResidences(); }); $('#residence-city').addEventListener('change', () => { state.residencePage = 1; loadResidences(); }); $('#residence-region').addEventListener('change', () => { state.residencePage = 1; loadResidences(); }); $('#residence-query').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); state.residencePage = 1; loadResidences(); } }); $('#residence-prev').addEventListener('click', () => { if (state.residencePage > 1) { state.residencePage--; loadResidences(); } }); $('#residence-next').addEventListener('click', () => { if (state.residencePage * state.residenceSize < state.residenceTotal) { state.residencePage++; loadResidences(); } }); $('#residence-table-body').addEventListener('click', async event => { const button = event.target.closest('[data-residence-action]'); if (!button) return; if (button.dataset.residenceAction === 'detail') return openResidenceDetailDialog(Number(button.dataset.id)); if (button.dataset.residenceAction === 'edit') return openResidenceDialog(Number(button.dataset.id)); if (!confirm(`确定删除公寓“${button.dataset.name}”吗？`)) return; try { await request(`/api/residences/${button.dataset.id}`, {method: 'DELETE'}); state.residenceOptions = []; showToast('公寓已删除'); await loadResidences(); } catch (error) { showToast(error.message); } });
 $('#new-offer-button').addEventListener('click', () => openOfferDialog()); $('#import-offer-button').addEventListener('click', () => { $('#offer-import-form').reset(); $('#offer-import-error').textContent = ''; $('#offer-import-result').classList.add('hidden'); $('#offer-import-dialog').showModal(); }); $('#offer-form').addEventListener('submit', saveOffer); $('#offer-import-form').addEventListener('submit', importOffers); $('#add-price-tier').addEventListener('click', () => addPriceTier()); $('#price-tier-list').addEventListener('click', event => { const button = event.target.closest('.remove-price-tier'); if (button) button.closest('.price-tier-card').remove(); }); $('#offer-search-button').addEventListener('click', () => { state.offerPage = 1; loadOffers(); }); $('#offer-residence').addEventListener('change', () => { state.offerPage = 1; loadOffers(); }); $('#offer-status').addEventListener('change', () => { state.offerPage = 1; loadOffers(); }); $('#offer-keyword').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); state.offerPage = 1; loadOffers(); } }); $('#offer-prev').addEventListener('click', () => { if (state.offerPage > 1) { state.offerPage--; loadOffers(); } }); $('#offer-next').addEventListener('click', () => { if (state.offerPage * state.offerSize < state.offerTotal) { state.offerPage++; loadOffers(); } }); $('#offer-inventory-status').addEventListener('change', event => { if (event.target.value === 'SOLD_OUT') $('#offer-quantity').value = 0; }); $('#offer-table-body').addEventListener('click', async event => { const button = event.target.closest('[data-offer-action]'); if (!button) return; if (button.dataset.offerAction === 'edit') return openOfferDialog(Number(button.dataset.id)); if (!confirm(`确定删除房型“${button.dataset.name}”及其全部价格档位吗？`)) return; try { await request(`/api/room-offers/${button.dataset.id}`, {method: 'DELETE'}); showToast('房型已删除'); await loadOffers(); } catch (error) { showToast(error.message); } });
 $('#new-recommendation-button').addEventListener('click', () => openRecommendationDialog()); $('#recommendation-form').addEventListener('submit', saveRecommendation); $('#recommendation-table-body').addEventListener('click', async event => { const button = event.target.closest('[data-recommendation-action]'); if (!button) return; if (button.dataset.recommendationAction === 'edit') return openRecommendationDialog(Number(button.dataset.id)); if (!confirm(`确定删除“${button.dataset.name}”的推荐配置吗？`)) return; try { await request(`/api/sales-recommendations/${button.dataset.id}`, {method: 'DELETE'}); showToast('推荐配置已删除'); await loadRecommendations(); } catch (error) { showToast(error.message); } });
+$('#wecom-refresh-button').addEventListener('click', loadWeComAccounts); $('#wecom-account-select').addEventListener('change', loadWeComServicers); $('#wecom-servicer-form').addEventListener('submit', addWeComServicers); $('#wecom-servicer-table-body').addEventListener('click', event => { const button = event.target.closest('[data-wecom-remove]'); if (button) removeWeComServicer(button.dataset.wecomRemove); });
 $('#search-button').addEventListener('click', () => { state.userPage = 1; loadUsers(); }); $('#create-button').addEventListener('click', () => openUserDialog()); $('#prev-page').addEventListener('click', () => { if (state.userPage > 1) { state.userPage--; loadUsers(); } }); $('#next-page').addEventListener('click', () => { if (state.userPage * state.userSize < state.userTotal) { state.userPage++; loadUsers(); } }); $('#user-form').addEventListener('submit', saveUser); $('#close-dialog').addEventListener('click', () => $('#user-dialog').close()); $('#cancel-dialog').addEventListener('click', () => $('#user-dialog').close()); $('#user-table-body').addEventListener('click', async event => { const button = event.target.closest('[data-user-action]'); if (!button) return; const user = JSON.parse(button.closest('tr').dataset.user); if (button.dataset.userAction === 'edit') return openUserDialog(user); if (!confirm(`确定删除用户“${user.username}”吗？`)) return; try { await request(`/api/users/${user.id}`, {method: 'DELETE'}); showToast('用户已删除'); loadUsers(); } catch (error) { showToast(error.message); } });
 $('#profile-form').addEventListener('submit', saveProfile); $('#password-form').addEventListener('submit', changePassword); document.querySelectorAll('[data-close-dialog]').forEach(button => button.addEventListener('click', () => $(`#${button.dataset.closeDialog}`).close()));
 if (state.token) showConsole();

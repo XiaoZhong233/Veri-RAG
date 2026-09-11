@@ -26,9 +26,11 @@ public class WeComKfProperties {
     private Duration progressDelay = Duration.ofMillis(1500);
     private Duration messageMergeWindow = Duration.ofMillis(900);
     private String progressMessage = "正在检索资料，请稍候…";
+    private String welcomeMessage = "您好！为了更快为您匹配房源，请告知租期、意向位置和预算。";
     private String unsupportedMessage = "您好，目前智能客服仅支持文字消息，请用文字描述您的问题。";
     private String errorMessage = "抱歉，智能客服暂时无法处理您的问题，请稍后再试或联系人工客服。";
     private String handoffMessage = "当前客服渠道暂不支持直接转人工，智能客服会继续为您服务。如需人工协助，请留下联系方式和具体需求。";
+    private String handoffSuccessMessage = "已为您转接人工顾问，请稍候。";
     private String stuckSessionRecoveryMessage = "智能客服会话已恢复，请重新发送一次刚才的问题。";
 
     public boolean isEnabled() {
@@ -119,6 +121,14 @@ public class WeComKfProperties {
         this.progressMessage = progressMessage;
     }
 
+    public String getWelcomeMessage() {
+        return welcomeMessage;
+    }
+
+    public void setWelcomeMessage(String welcomeMessage) {
+        this.welcomeMessage = welcomeMessage;
+    }
+
     public String getUnsupportedMessage() {
         return unsupportedMessage;
     }
@@ -141,6 +151,14 @@ public class WeComKfProperties {
 
     public void setHandoffMessage(String handoffMessage) {
         this.handoffMessage = handoffMessage;
+    }
+
+    public String getHandoffSuccessMessage() {
+        return handoffSuccessMessage;
+    }
+
+    public void setHandoffSuccessMessage(String handoffSuccessMessage) {
+        this.handoffSuccessMessage = handoffSuccessMessage;
     }
 
     public String getStuckSessionRecoveryMessage() {

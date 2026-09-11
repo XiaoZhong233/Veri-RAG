@@ -260,7 +260,7 @@ public class WeComKfMessageService {
         }
         int serviceState = apiClient.getServiceState(openKfId, externalUserId);
         if (serviceState == 2) {
-            recoverStuckSession(openKfId, externalUserId,
+            resumeWaitingSession(openKfId, externalUserId,
                     first.path("msgid").asText(""));
             messages.forEach(item -> markProcessed(item.path("msgid").asText(""),
                     openKfId, externalUserId, "text"));
@@ -271,17 +271,17 @@ public class WeComKfMessageService {
                     openKfId, externalUserId, "text"));
             return;
         }
+        if (HUMAN_HANDOFF.matcher(question).find()) {
+            handoffOrContinueWithAssistant(openKfId, externalUserId,
+                    first.path("msgid").asText(""), serviceState);
+            messages.forEach(item -> markProcessed(item.path("msgid").asText(""),
+                    openKfId, externalUserId, "text"));
+            return;
+        }
         if (serviceState == 0) {
             apiClient.transitionToAssistant(openKfId, externalUserId);
         } else if (serviceState != 1) {
             throw new IllegalStateException("Unknown WeCom KF service_state: " + serviceState);
-        }
-        if (HUMAN_HANDOFF.matcher(question).find()) {
-            sendHandoffUnavailableMessage(openKfId, externalUserId,
-                    first.path("msgid").asText(""));
-            messages.forEach(item -> markProcessed(item.path("msgid").asText(""),
-                    openKfId, externalUserId, "text"));
-            return;
         }
         answerQuestion(first.path("msgid").asText(""), openKfId, externalUserId, question);
         messages.forEach(item -> markProcessed(item.path("msgid").asText(""),
@@ -297,6 +297,17 @@ public class WeComKfMessageService {
         String externalUserId = message.path("external_userid").asText("");
         String messageType = message.path("msgtype").asText("");
         int origin = message.path("origin").asInt(0);
+
+        if ("event".equals(messageType)
+                && "enter_session".equals(message.path("event").path("event_type").asText(""))) {
+            JsonNode event = message.path("event");
+            openKfId = firstText(openKfId, event.path("open_kfid").asText(""));
+            externalUserId = firstText(
+                    externalUserId, event.path("external_userid").asText(""));
+            sendWelcomeMessage(messageId, openKfId, externalUserId, event);
+            markProcessed(messageId, openKfId, externalUserId, messageType);
+            return;
+        }
 
         if (origin == 3) {
             String customerContent = "text".equals(messageType)
@@ -316,9 +327,9 @@ public class WeComKfMessageService {
         }
 
         int serviceState = apiClient.getServiceState(openKfId, externalUserId);
-        // 旧版本会把“转人工”错误地切到待接入池；自定义 API 渠道无人接管，需结束旧会话。
+        // 旧版本可能把会话留在待接入池；有在线接待人员则立即分配，否则结束后恢复机器人入口。
         if (serviceState == 2) {
-            recoverStuckSession(openKfId, externalUserId, messageId);
+            resumeWaitingSession(openKfId, externalUserId, messageId);
             markProcessed(messageId, openKfId, externalUserId, messageType);
             return;
         }
@@ -330,13 +341,8 @@ public class WeComKfMessageService {
             markProcessed(messageId, openKfId, externalUserId, messageType);
             return;
         }
-        if (serviceState == 0) {
-            apiClient.transitionToAssistant(openKfId, externalUserId);
-        } else if (serviceState != 1) {
-            throw new IllegalStateException("Unknown WeCom KF service_state: " + serviceState);
-        }
-
         if (!"text".equals(messageType)) {
+            ensureAssistantState(openKfId, externalUserId, serviceState);
             sendSystemText(openKfId, externalUserId, messageId, "final",
                     properties.getUnsupportedMessage());
             markProcessed(messageId, openKfId, externalUserId, messageType);
@@ -349,23 +355,47 @@ public class WeComKfMessageService {
             return;
         }
         if (HUMAN_HANDOFF.matcher(question).find()) {
-            sendHandoffUnavailableMessage(openKfId, externalUserId, messageId);
+            handoffOrContinueWithAssistant(
+                    openKfId, externalUserId, messageId, serviceState);
             markProcessed(messageId, openKfId, externalUserId, messageType);
             return;
         }
+        ensureAssistantState(openKfId, externalUserId, serviceState);
         answerQuestion(messageId, openKfId, externalUserId, question);
         markProcessed(messageId, openKfId, externalUserId, messageType);
     }
 
-    private void sendHandoffUnavailableMessage(
-            String openKfId, String externalUserId, String messageId) {
+    private void ensureAssistantState(
+            String openKfId, String externalUserId, int serviceState) {
+        if (serviceState == 0) {
+            apiClient.transitionToAssistant(openKfId, externalUserId);
+        } else if (serviceState != 1) {
+            throw new IllegalStateException("Unknown WeCom KF service_state: " + serviceState);
+        }
+    }
+
+    private void handoffOrContinueWithAssistant(
+            String openKfId, String externalUserId, String messageId, int serviceState) {
+        java.util.Optional<WeComKfApiClient.KfServicer> target = selectActiveServicer(
+                openKfId, externalUserId);
+        if (target.isPresent()) {
+            transferToHuman(openKfId, externalUserId, messageId, target.get().userId());
+            return;
+        }
+        ensureAssistantState(openKfId, externalUserId, serviceState);
         sendSystemText(openKfId, externalUserId, messageId, "handoff-unavailable",
                 properties.getHandoffMessage());
         metrics.increment("handoff_unavailable");
     }
 
-    private void recoverStuckSession(
+    private void resumeWaitingSession(
             String openKfId, String externalUserId, String inboundMessageId) {
+        java.util.Optional<WeComKfApiClient.KfServicer> target = selectActiveServicer(
+                openKfId, externalUserId);
+        if (target.isPresent()) {
+            transferToHuman(openKfId, externalUserId, inboundMessageId, target.get().userId());
+            return;
+        }
         String msgCode = apiClient.transitionToEnded(openKfId, externalUserId);
         if (!StringUtils.hasText(msgCode)) {
             throw new IllegalStateException(
@@ -376,6 +406,51 @@ public class WeComKfMessageService {
                 truncateUtf8(properties.getStuckSessionRecoveryMessage(), MAX_TEXT_BYTES));
         metrics.increment("stuck_session_recovered");
         log.info("event=wecom.kf.stuck_session_recovered openKfId={} externalUserId={}",
+                openKfId, externalUserId);
+    }
+
+    private java.util.Optional<WeComKfApiClient.KfServicer> selectActiveServicer(
+            String openKfId, String externalUserId) {
+        java.util.List<WeComKfApiClient.KfServicer> active = apiClient.listServicers(openKfId)
+                .stream()
+                .filter(WeComKfApiClient.KfServicer::active)
+                .sorted(java.util.Comparator.comparing(WeComKfApiClient.KfServicer::userId))
+                .toList();
+        if (active.isEmpty()) {
+            return java.util.Optional.empty();
+        }
+        int index = Math.floorMod(externalUserId.hashCode(), active.size());
+        return java.util.Optional.of(active.get(index));
+    }
+
+    private void transferToHuman(
+            String openKfId, String externalUserId, String inboundMessageId,
+            String servicerUserId) {
+        String msgCode = apiClient.transitionToHuman(
+                openKfId, externalUserId, servicerUserId);
+        if (!StringUtils.hasText(msgCode)) {
+            throw new IllegalStateException(
+                    "WeCom service_state/trans returned no msg_code for human handoff");
+        }
+        apiClient.sendEventText(msgCode,
+                replyMessageId(inboundMessageId, "handoff-success"),
+                truncateUtf8(properties.getHandoffSuccessMessage(), MAX_TEXT_BYTES));
+        metrics.increment("handoff_success");
+        log.info("event=wecom.kf.handoff_success openKfId={} externalUserId={} servicerUserId={}",
+                openKfId, externalUserId, servicerUserId);
+    }
+
+    private void sendWelcomeMessage(
+            String messageId, String openKfId, String externalUserId, JsonNode event) {
+        String welcomeCode = event.path("welcome_code").asText("");
+        if (!StringUtils.hasText(welcomeCode)
+                || !StringUtils.hasText(properties.getWelcomeMessage())) {
+            return;
+        }
+        apiClient.sendEventText(welcomeCode, replyMessageId(messageId, "welcome"),
+                truncateUtf8(properties.getWelcomeMessage(), MAX_TEXT_BYTES));
+        metrics.increment("welcome_sent");
+        log.info("event=wecom.kf.welcome_sent openKfId={} externalUserId={}",
                 openKfId, externalUserId);
     }
 
@@ -579,6 +654,10 @@ public class WeComKfMessageService {
 
     private static String blankToNull(String value) {
         return StringUtils.hasText(value) ? value : null;
+    }
+
+    private static String firstText(String preferred, String fallback) {
+        return StringUtils.hasText(preferred) ? preferred : fallback;
     }
 
     private static String rootMessage(Throwable error) {

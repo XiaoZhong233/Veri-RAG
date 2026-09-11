@@ -36,6 +36,11 @@ public class WeComKfAdminController {
         return R.ok(apiClient.listAccounts());
     }
 
+    @GetMapping("/members")
+    public R<List<WeComKfApiClient.KfMemberId>> members() {
+        return R.ok(apiClient.listVisibleMemberIds());
+    }
+
     @GetMapping("/accounts/{openKfId}/servicers")
     public R<List<WeComKfApiClient.KfServicer>> servicers(
             @PathVariable String openKfId) {

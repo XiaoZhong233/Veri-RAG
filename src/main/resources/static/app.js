@@ -5,7 +5,8 @@ const state = {
     documentPage: 1, documentSize: 10, documentTotal: 0,
     residencePage: 1, residenceSize: 20, residenceTotal: 0,
     offerPage: 1, offerSize: 20, offerTotal: 0, residenceOptions: [],
-    categories: [], activeSessionId: null, selectedDocumentIds: new Set()
+    categories: [], activeSessionId: null, selectedDocumentIds: new Set(),
+    wecomMembers: []
 };
 const $ = (selector) => document.querySelector(selector);
 
@@ -785,11 +786,33 @@ async function loadWeComAccounts() {
             ? accounts.map(account => `<option value="${escapeHtml(account.openKfId)}">${escapeHtml(account.name || account.openKfId)}</option>`).join('')
             : '<option value="">没有可管理的微信客服账号</option>';
         if (accounts.some(account => account.openKfId === selected)) select.value = selected;
-        await loadWeComServicers();
+        await Promise.all([loadWeComServicers(), loadWeComMembers()]);
     } catch (error) {
         select.innerHTML = '<option value="">客服接口不可用</option>';
         renderWeComServicers([]);
         showToast(error.message);
+    }
+}
+
+async function loadWeComMembers() {
+    const select = $('#wecom-member-select');
+    const selected = select.value;
+    try {
+        state.wecomMembers = await request('/api/wecom/kf/admin/members');
+        select.disabled = false;
+        select.title = '';
+        select.innerHTML = state.wecomMembers.length
+            ? `<option value="">请选择企业成员</option>${state.wecomMembers.map(member => {
+                const departments = member.departmentIds?.length ? ` · 部门 ${member.departmentIds.join(', ')}` : '';
+                return `<option value="${escapeHtml(member.userId)}">${escapeHtml(member.userId + departments)}</option>`;
+            }).join('')}`
+            : '<option value="">当前应用可见范围内没有成员</option>';
+        if (state.wecomMembers.some(member => member.userId === selected)) select.value = selected;
+    } catch (error) {
+        state.wecomMembers = [];
+        select.disabled = true;
+        select.title = error.message;
+        select.innerHTML = '<option value="">通讯录接口无权限，请手工输入 userid</option>';
     }
 }
 
@@ -820,7 +843,9 @@ function renderWeComServicers(servicers) {
 async function addWeComServicers(event) {
     event.preventDefault();
     const openKfId = $('#wecom-account-select').value;
-    const userIds = [...new Set($('#wecom-servicer-userids').value.split(/[\s,，;；]+/).map(value => value.trim()).filter(Boolean))];
+    const selectedUserId = $('#wecom-member-select').value;
+    const manualUserIds = $('#wecom-servicer-userids').value.split(/[\s,，;；]+/).map(value => value.trim()).filter(Boolean);
+    const userIds = [...new Set([selectedUserId, ...manualUserIds].filter(Boolean))];
     if (!openKfId || !userIds.length) return showToast('请选择客服账号并填写接待人员 userid');
     const button = $('#wecom-servicer-add');
     button.disabled = true;

@@ -17,7 +17,9 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /** 微信客服 access_token、消息同步与文本回复客户端。 */
 @Component
@@ -97,6 +99,36 @@ public class WeComKfApiClient {
                 item.path("department_id").asLong(0L),
                 item.path("status").asInt(-1))));
         return List.copyOf(servicers);
+    }
+
+    /** 获取当前应用通讯录可见范围内的成员 userid，供后台选择接待人员。 */
+    public List<KfMemberId> listVisibleMemberIds() {
+        List<KfMemberId> members = new ArrayList<>();
+        Set<String> visitedCursors = new HashSet<>();
+        String cursor = "";
+        do {
+            if (!visitedCursors.add(cursor)) {
+                throw new IllegalStateException("WeCom member list returned a repeated cursor");
+            }
+            ObjectNode body = objectMapper.createObjectNode();
+            if (StringUtils.hasText(cursor)) {
+                body.put("cursor", cursor);
+            }
+            body.put("limit", 10000);
+            JsonNode response = postWithAccessToken("/cgi-bin/user/list_id", body, true);
+            response.path("dept_user").forEach(item -> {
+                List<Long> departmentIds = new ArrayList<>();
+                item.path("department").forEach(department ->
+                        departmentIds.add(department.asLong()));
+                members.add(new KfMemberId(
+                        item.path("userid").asText(""), List.copyOf(departmentIds)));
+            });
+            cursor = response.path("next_cursor").asText("");
+        } while (StringUtils.hasText(cursor));
+        return members.stream()
+                .filter(member -> StringUtils.hasText(member.userId()))
+                .distinct()
+                .toList();
     }
 
     public List<KfServicerResult> addServicers(String openKfId, List<String> userIds) {
@@ -301,6 +333,9 @@ public class WeComKfApiClient {
         public boolean active() {
             return StringUtils.hasText(userId) && status == 0;
         }
+    }
+
+    public record KfMemberId(String userId, List<Long> departmentIds) {
     }
 
     public record KfServicerResult(String userId, int errorCode, String errorMessage) {

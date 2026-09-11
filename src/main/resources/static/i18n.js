@@ -88,6 +88,8 @@
         '微信客服接待人员': 'WeCom service agents',
         '刷新': 'Refresh',
         '客服账号': 'Service account',
+        '从通讯录选择': 'Select from contacts',
+        '或手工输入 userid': 'Or enter userid manually',
         '接待人员 userid': 'Agent userid',
         '添加接待人员': 'Add agent',
         '接待人员 userid / 部门': 'Agent userid / Department',

@@ -14,6 +14,7 @@ import org.springframework.scheduling.TaskScheduler;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -141,6 +142,60 @@ class WeComKfSupportTests {
     }
 
     @Test
+    void keepsHumanAssignmentWhenOnlyHandoffNoticeFails() throws Exception {
+        WeComKfApiClient apiClient = mock(WeComKfApiClient.class);
+        WeComKfStateMapper stateMapper = mock(WeComKfStateMapper.class);
+        WeComKfPendingMessageMapper pendingMapper = mock(WeComKfPendingMessageMapper.class);
+        WeComKfProperties properties = new WeComKfProperties();
+        WeComKfMessageService service = service(
+                properties, apiClient, stateMapper, pendingMapper);
+        when(apiClient.getServiceState("kf-1", "user-1")).thenReturn(1);
+        when(apiClient.listServicers("kf-1")).thenReturn(java.util.List.of(
+                new WeComKfApiClient.KfServicer("advisor-1", 0L, 0)));
+        when(apiClient.transitionToHuman("kf-1", "user-1", "advisor-1"))
+                .thenReturn("handoff-code");
+        doThrow(new IllegalStateException("notice expired")).when(apiClient)
+                .sendEventText(eq("handoff-code"), startsWith("vr_"),
+                        eq(properties.getHandoffSuccessMessage()));
+
+        service.processMessage(new ObjectMapper().readTree("""
+                {"msgid":"message-notice-failed","open_kfid":"kf-1",
+                 "external_userid":"user-1","origin":3,"msgtype":"text",
+                 "text":{"content":"转人工"}}
+                """));
+
+        verify(apiClient).transitionToHuman("kf-1", "user-1", "advisor-1");
+        verify(stateMapper).insertProcessed(
+                "message-notice-failed", "kf-1", "user-1", "text");
+    }
+
+    @Test
+    void fallsBackToAssistantWhenHumanTransitionFails() throws Exception {
+        WeComKfApiClient apiClient = mock(WeComKfApiClient.class);
+        WeComKfStateMapper stateMapper = mock(WeComKfStateMapper.class);
+        WeComKfPendingMessageMapper pendingMapper = mock(WeComKfPendingMessageMapper.class);
+        WeComKfProperties properties = new WeComKfProperties();
+        WeComKfMessageService service = service(
+                properties, apiClient, stateMapper, pendingMapper);
+        when(apiClient.getServiceState("kf-1", "user-1")).thenReturn(1);
+        when(apiClient.listServicers("kf-1")).thenReturn(java.util.List.of(
+                new WeComKfApiClient.KfServicer("advisor-1", 0L, 0)));
+        when(apiClient.transitionToHuman("kf-1", "user-1", "advisor-1"))
+                .thenThrow(new IllegalStateException("handoff rejected"));
+
+        service.processMessage(new ObjectMapper().readTree("""
+                {"msgid":"message-handoff-failed","open_kfid":"kf-1",
+                 "external_userid":"user-1","origin":3,"msgtype":"text",
+                 "text":{"content":"转人工"}}
+                """));
+
+        verify(apiClient).sendText(eq("kf-1"), eq("user-1"), startsWith("vr_"),
+                eq(properties.getHandoffMessage()));
+        verify(stateMapper).insertProcessed(
+                "message-handoff-failed", "kf-1", "user-1", "text");
+    }
+
+    @Test
     void sendsConfiguredWelcomeMessageForEnterSessionEvent() throws Exception {
         WeComKfApiClient apiClient = mock(WeComKfApiClient.class);
         WeComKfStateMapper stateMapper = mock(WeComKfStateMapper.class);
@@ -185,6 +240,34 @@ class WeComKfSupportTests {
                 org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyString());
         verify(stateMapper).insertProcessed("message-2", "kf-1", "user-1", "text");
+    }
+
+    @Test
+    void endsWaitingSessionWhenAssignmentIsRejected() throws Exception {
+        WeComKfApiClient apiClient = mock(WeComKfApiClient.class);
+        WeComKfStateMapper stateMapper = mock(WeComKfStateMapper.class);
+        WeComKfPendingMessageMapper pendingMapper = mock(WeComKfPendingMessageMapper.class);
+        WeComKfProperties properties = new WeComKfProperties();
+        WeComKfMessageService service = service(
+                properties, apiClient, stateMapper, pendingMapper);
+        when(apiClient.getServiceState("kf-1", "user-1")).thenReturn(2);
+        when(apiClient.listServicers("kf-1")).thenReturn(java.util.List.of(
+                new WeComKfApiClient.KfServicer("advisor-1", 0L, 0)));
+        when(apiClient.transitionToHuman("kf-1", "user-1", "advisor-1"))
+                .thenThrow(new IllegalStateException("handoff rejected"));
+        when(apiClient.transitionToEnded("kf-1", "user-1")).thenReturn("event-code");
+
+        service.processMessage(new ObjectMapper().readTree("""
+                {"msgid":"message-waiting-rejected","open_kfid":"kf-1",
+                 "external_userid":"user-1","origin":3,"msgtype":"text",
+                 "text":{"content":"还在吗"}}
+                """));
+
+        verify(apiClient).transitionToEnded("kf-1", "user-1");
+        verify(apiClient).sendEventText(eq("event-code"), startsWith("vr_"),
+                eq(properties.getStuckSessionRecoveryMessage()));
+        verify(stateMapper).insertProcessed(
+                "message-waiting-rejected", "kf-1", "user-1", "text");
     }
 
     private static WeComKfMessageService service(

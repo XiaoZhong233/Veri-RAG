@@ -231,6 +231,13 @@ public class WeComKfMessageService {
                 } catch (RuntimeException ex) {
                     metrics.recordReply(Duration.ofNanos(System.nanoTime() - replyStarted), "error");
                     metrics.increment("failed");
+                    log.error("event=wecom.kf.message_processing_failed messageIds={} "
+                                    + "openKfId={} externalUserId={} error={}",
+                            messages.stream().map(item -> item.path("msgid").asText(""))
+                                    .toList(),
+                            messages.getFirst().path("open_kfid").asText(""),
+                            messages.getFirst().path("external_userid").asText(""),
+                            rootMessage(ex));
                     throw ex;
                 } finally {
                     messages.forEach(item -> inFlightMessageIds.remove(item.path("msgid").asText("")));
@@ -379,9 +386,17 @@ public class WeComKfMessageService {
         java.util.Optional<WeComKfApiClient.KfServicer> target = selectActiveServicer(
                 openKfId, externalUserId);
         if (target.isPresent()) {
-            transferToHuman(openKfId, externalUserId, messageId, target.get().userId());
-            return;
+            try {
+                transferToHuman(openKfId, externalUserId, messageId, target.get().userId());
+                return;
+            } catch (RuntimeException ex) {
+                metrics.increment("handoff_failed");
+                log.warn("event=wecom.kf.handoff_failed openKfId={} externalUserId={} "
+                                + "servicerUserId={} error={}",
+                        openKfId, externalUserId, target.get().userId(), rootMessage(ex));
+            }
         }
+        // 分配人工失败时继续保持机器人接待，不能让客户进入无人处理状态。
         ensureAssistantState(openKfId, externalUserId, serviceState);
         sendSystemText(openKfId, externalUserId, messageId, "handoff-unavailable",
                 properties.getHandoffMessage());
@@ -393,17 +408,34 @@ public class WeComKfMessageService {
         java.util.Optional<WeComKfApiClient.KfServicer> target = selectActiveServicer(
                 openKfId, externalUserId);
         if (target.isPresent()) {
-            transferToHuman(openKfId, externalUserId, inboundMessageId, target.get().userId());
-            return;
+            try {
+                transferToHuman(
+                        openKfId, externalUserId, inboundMessageId, target.get().userId());
+                return;
+            } catch (RuntimeException ex) {
+                metrics.increment("handoff_failed");
+                log.warn("event=wecom.kf.waiting_handoff_failed openKfId={} "
+                                + "externalUserId={} servicerUserId={} error={}",
+                        openKfId, externalUserId, target.get().userId(), rootMessage(ex));
+            }
         }
         String msgCode = apiClient.transitionToEnded(openKfId, externalUserId);
         if (!StringUtils.hasText(msgCode)) {
-            throw new IllegalStateException(
-                    "WeCom service_state/trans returned no msg_code for ended session");
+            log.warn("event=wecom.kf.stuck_session_recovered_without_notice openKfId={} "
+                    + "externalUserId={} reason=empty_msg_code", openKfId, externalUserId);
+        } else {
+            try {
+                String outgoingMessageId = replyMessageId(
+                        inboundMessageId, "stuck-session-recovery");
+                apiClient.sendEventText(msgCode, outgoingMessageId,
+                        truncateUtf8(properties.getStuckSessionRecoveryMessage(), MAX_TEXT_BYTES));
+            } catch (RuntimeException ex) {
+                // 状态已成功结束。提示消息失败不能导致同一入站消息无限重试。
+                log.warn("event=wecom.kf.stuck_session_notice_failed openKfId={} "
+                                + "externalUserId={} error={}",
+                        openKfId, externalUserId, rootMessage(ex));
+            }
         }
-        String outgoingMessageId = replyMessageId(inboundMessageId, "stuck-session-recovery");
-        apiClient.sendEventText(msgCode, outgoingMessageId,
-                truncateUtf8(properties.getStuckSessionRecoveryMessage(), MAX_TEXT_BYTES));
         metrics.increment("stuck_session_recovered");
         log.info("event=wecom.kf.stuck_session_recovered openKfId={} externalUserId={}",
                 openKfId, externalUserId);
@@ -429,12 +461,21 @@ public class WeComKfMessageService {
         String msgCode = apiClient.transitionToHuman(
                 openKfId, externalUserId, servicerUserId);
         if (!StringUtils.hasText(msgCode)) {
-            throw new IllegalStateException(
-                    "WeCom service_state/trans returned no msg_code for human handoff");
+            log.warn("event=wecom.kf.handoff_notice_skipped openKfId={} externalUserId={} "
+                            + "servicerUserId={} reason=empty_msg_code",
+                    openKfId, externalUserId, servicerUserId);
+        } else {
+            try {
+                apiClient.sendEventText(msgCode,
+                        replyMessageId(inboundMessageId, "handoff-success"),
+                        truncateUtf8(properties.getHandoffSuccessMessage(), MAX_TEXT_BYTES));
+            } catch (RuntimeException ex) {
+                // 人工分配已经成功；提示语失败不能回滚分配，也不能触发重复转接。
+                log.warn("event=wecom.kf.handoff_notice_failed openKfId={} "
+                                + "externalUserId={} servicerUserId={} error={}",
+                        openKfId, externalUserId, servicerUserId, rootMessage(ex));
+            }
         }
-        apiClient.sendEventText(msgCode,
-                replyMessageId(inboundMessageId, "handoff-success"),
-                truncateUtf8(properties.getHandoffSuccessMessage(), MAX_TEXT_BYTES));
         metrics.increment("handoff_success");
         log.info("event=wecom.kf.handoff_success openKfId={} externalUserId={} servicerUserId={}",
                 openKfId, externalUserId, servicerUserId);

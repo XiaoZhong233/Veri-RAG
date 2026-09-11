@@ -14,7 +14,7 @@ class PropertyIntentClassifierTests {
         org.mockito.Mockito.when(prompts.systemPrompt()).thenReturn("classify");
         org.mockito.Mockito.when(client.prompt().system(org.mockito.ArgumentMatchers.anyString())
                 .user(org.mockito.ArgumentMatchers.anyString())
-                .options(org.mockito.ArgumentMatchers.any(org.springframework.ai.openai.OpenAiChatOptions.class))
+                .options(org.mockito.ArgumentMatchers.any(org.springframework.ai.openai.OpenAiChatOptions.Builder.class))
                 .call().content()).thenReturn("HUMAN_HANDOFF");
         var classifier = new PropertyIntentClassifier(client, prompts);
         org.springframework.test.util.ReflectionTestUtils.setField(classifier, "enabled", true);

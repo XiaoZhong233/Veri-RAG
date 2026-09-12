@@ -113,6 +113,16 @@ public class PropertyIntentClassifier {
             if (!allowHumanHandoff && classified == PropertyQueryIntent.HUMAN_HANDOFF) {
                 classified = PropertyQueryIntent.NONE;
             }
+            // 转接是有副作用的动作：历史只能辅助房源咨询，不能充当本轮转接授权。
+            // 仅候选转人工且含历史时追加一次无历史确认，普通问题不增加调用。
+            if (classified == PropertyQueryIntent.HUMAN_HANDOFF && history != null && !history.isEmpty()) {
+                PropertyQueryIntent currentOnly = resolve(question, List.of(), true);
+                if (currentOnly != PropertyQueryIntent.HUMAN_HANDOFF) {
+                    log.info("event=property.intent.handoff_rejected reason=current_message_not_confirmed");
+                    // 按原历史重判房源意图，但禁止再次触发转接，避免丢失房源追问语境。
+                    return resolve(question, history, false);
+                }
+            }
             long durationMs = (System.nanoTime() - started) / 1_000_000L;
             logResolution(question, "MODEL_CLASSIFIER", classified,
                     classified.propertyHandled() ? "durationMs=" + durationMs

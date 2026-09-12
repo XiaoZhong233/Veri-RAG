@@ -7,6 +7,33 @@ import static org.assertj.core.api.Assertions.assertThat;
 class PropertyIntentClassifierTests {
 
     @Test
+    void historicalHandoffCannotAuthorizeCurrentPropertyQuestion() {
+        var client = org.mockito.Mockito.mock(org.springframework.ai.chat.client.ChatClient.class,
+                org.mockito.Mockito.RETURNS_DEEP_STUBS);
+        var prompts = org.mockito.Mockito.mock(com.example.verirag.prompt.PropertyIntentPromptManager.class);
+        org.mockito.Mockito.when(prompts.systemPrompt()).thenReturn("classify");
+        var systemSpec = client.prompt().system(org.mockito.ArgumentMatchers.anyString());
+        org.mockito.Mockito.when(systemSpec.user(org.mockito.ArgumentMatchers.anyString())
+                .options(org.mockito.ArgumentMatchers.any(org.springframework.ai.openai.OpenAiChatOptions.Builder.class))
+                .call().content()).thenReturn("HUMAN_HANDOFF", "NONE", "DETAIL");
+        var classifier = new PropertyIntentClassifier(client, prompts);
+        org.springframework.test.util.ReflectionTestUtils.setField(classifier, "enabled", true);
+        org.springframework.test.util.ReflectionTestUtils.setField(classifier, "timeout", java.time.Duration.ofSeconds(1));
+        var oldMessage = new com.example.verirag.entity.ChatMessage();
+        oldMessage.setRole("USER");
+        oldMessage.setContent("转人工，咨询Drapery Place");
+
+        assertThat(classifier.resolve("这个公寓交通怎么样", java.util.List.of(oldMessage), true))
+                .isEqualTo(PropertyQueryIntent.DETAIL);
+
+        var inputs = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(systemSpec, org.mockito.Mockito.times(3)).user(inputs.capture());
+        assertThat(inputs.getAllValues().get(0)).contains("转人工");
+        assertThat(inputs.getAllValues().get(1)).isEqualTo("当前用户请求：\n这个公寓交通怎么样");
+        assertThat(inputs.getAllValues().get(2)).contains("Drapery Place");
+    }
+
+    @Test
     void handoffUsesModelEvenWhenPropertyRulesAreEnabled() {
         var client = org.mockito.Mockito.mock(org.springframework.ai.chat.client.ChatClient.class,
                 org.mockito.Mockito.RETURNS_DEEP_STUBS);

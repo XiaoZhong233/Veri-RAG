@@ -17,6 +17,8 @@ class PropertyIntentPromptManagerTests {
 
         assertThat(manager.systemPrompt())
                 .contains("HUMAN_HANDOFF")
+                .contains("判断此标签必须忽略全部历史")
+                .contains("退出人工后不得沿用旧意图")
                 .contains("否定、撤回或拒绝转接不得输出该标签")
                 .contains("以最后的明确要求为准")
                 .contains("人工客服几点上班")

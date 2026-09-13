@@ -105,7 +105,7 @@ function showView(view) {
     if (view === 'residences') loadResidences();
     if (view === 'offers') loadOffers();
     if (view === 'recommendations') loadRecommendations();
-    if (view === 'wecom') loadWeComAccounts();
+    if (view === 'wecom') loadWeComAccounts(true);
 }
 
 async function loadCategories() {
@@ -776,16 +776,17 @@ async function saveRecommendation(event) {
     } catch (error) { $('#recommendation-form-error').textContent = error.message; }
 }
 
-async function loadWeComAccounts() {
+async function loadWeComAccounts(preferDefault = false) {
     if (!isAdmin()) return;
     const select = $('#wecom-account-select');
-    const selected = select.value;
+    const selected = preferDefault === true ? '' : select.value;
     try {
         const accounts = await request('/api/wecom/kf/admin/accounts');
         select.innerHTML = accounts.length
             ? accounts.map(account => `<option value="${escapeHtml(account.openKfId)}">${escapeHtml(account.name || account.openKfId)}</option>`).join('')
             : '<option value="">没有可管理的微信客服账号</option>';
-        const preferred = accounts.find(account => (account.name || '').trim() === 'Londonist 房源推荐客服');
+        const preferred = accounts.find(account =>
+            (account.name || '').replace(/\s+/g, '').toLowerCase() === 'londonist房源推荐客服');
         if (accounts.some(account => account.openKfId === selected)) {
             // 刷新时保留用户已手动选择的账号。
             select.value = selected;

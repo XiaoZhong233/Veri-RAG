@@ -785,7 +785,13 @@ async function loadWeComAccounts() {
         select.innerHTML = accounts.length
             ? accounts.map(account => `<option value="${escapeHtml(account.openKfId)}">${escapeHtml(account.name || account.openKfId)}</option>`).join('')
             : '<option value="">没有可管理的微信客服账号</option>';
-        if (accounts.some(account => account.openKfId === selected)) select.value = selected;
+        const preferred = accounts.find(account => (account.name || '').trim() === 'Londonist 房源推荐客服');
+        if (accounts.some(account => account.openKfId === selected)) {
+            // 刷新时保留用户已手动选择的账号。
+            select.value = selected;
+        } else if (preferred) {
+            select.value = preferred.openKfId;
+        }
         await Promise.all([loadWeComServicers(), loadWeComMembers()]);
     } catch (error) {
         select.innerHTML = '<option value="">客服接口不可用</option>';

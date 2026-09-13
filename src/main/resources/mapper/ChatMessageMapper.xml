@@ -36,6 +36,10 @@
         DELETE FROM t_chat_message WHERE session_id = #{sessionId}
     </delete>
 
+    <select id="countBySessionId" resultType="long">
+        SELECT COUNT(*) FROM t_chat_message WHERE session_id = #{sessionId}
+    </select>
+
     <select id="countAssistantToday" resultType="long">
         SELECT COUNT(*)
         FROM t_chat_message

@@ -1,9 +1,6 @@
 package com.example.verirag.memory;
 
 import com.example.verirag.entity.ChatMessage;
-import com.example.verirag.entity.ChatSession;
-import com.example.verirag.mapper.ChatMessageMapper;
-import com.example.verirag.mapper.ChatSessionMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.ai.chat.memory.ChatMemoryRepository;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -25,10 +22,7 @@ import java.util.ArrayList;
 @RequiredArgsConstructor
 public class MyBatisChatMemoryRepository implements ChatMemoryRepository {
 
-    private static final int RECENT_MESSAGES = 4;
-
-    private final ChatMessageMapper chatMessageMapper;
-    private final ChatSessionMapper chatSessionMapper;
+    private final ConversationContextService contextService;
 
     @Override
     public List<String> findConversationIds() {
@@ -42,17 +36,10 @@ public class MyBatisChatMemoryRepository implements ChatMemoryRepository {
         if (sessionId == null) {
             return List.of();
         }
-        ChatSession session = chatSessionMapper.selectById(sessionId);
-        if (session == null) {
-            return List.of();
-        }
-        List<ChatMessage> rows = chatMessageMapper.listRecentBySessionId(sessionId, RECENT_MESSAGES);
-        List<Message> result = new ArrayList<>(RECENT_MESSAGES + 1);
-        if (session.getMemorySummary() != null && !session.getMemorySummary().isBlank()) {
-            result.add(new SystemMessage("以下是本会话较早内容的压缩摘要，仅用于保持对话连续性：\n"
-                    + session.getMemorySummary().strip()));
-        }
-        rows.stream().map(this::toMessage).forEach(result::add);
+        var context = contextService.load(sessionId);
+        List<Message> result = new ArrayList<>();
+        result.add(new SystemMessage(ConversationContextService.HISTORY_NOTICE + context.summary()));
+        context.messages().stream().map(this::toMessage).forEach(result::add);
         return result;
     }
 

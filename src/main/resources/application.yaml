@@ -164,8 +164,6 @@ rag:
     # 对仅接受 system/user 角色的兼容模型，将摘要和历史压成纯文本拼进当前 user message。
     # 设为 false 时恢复 Spring AI ChatMemory Advisor 的原生多角色记忆。
     manual-history-enabled: ${RAG_MANUAL_HISTORY_ENABLED:false}
-    # 用于检索 Query 改写及手动历史拼接的最近消息条数；不影响数据库中保存的完整聊天记录。
-    history-max-messages: ${RAG_HISTORY_MAX_MESSAGES:6}
   ingest:
     # 单个向量 chunk 的最大 token 数；制度/流程类文档建议 500~800，越小召回越细、chunk 数越多。
     chunk-size: ${RAG_CHUNK_SIZE:500}
@@ -191,7 +189,10 @@ rag:
   memory:
     # 启用会话摘要：完整记录仍保留在 MySQL，模型仅接收摘要与最近原始消息。
     enabled: ${RAG_MEMORY_ENABLED:true}
-    # 始终保留的最新原始消息数；4 条约为最近两轮对话。
+    # 所有历史读取共用此值；8 条约为最近4轮。
     recent-messages: ${RAG_MEMORY_RECENT_MESSAGES:8}
-    # 未压缩消息累计到该值后，后台将较早消息合并到摘要中；6 条约为 3 轮对话。
-    summary-trigger-messages: ${RAG_MEMORY_SUMMARY_TRIGGER_MESSAGES:12}
+    # 超过最近窗口后，每积累2条旧消息就触发摘要；默认首次10条消息时触发。
+    summary-trigger-messages: ${RAG_MEMORY_SUMMARY_TRIGGER_MESSAGES:2}
+    # 摘要完成前临时保留未压缩原文的上限（最新优先）。
+    max-context-messages: ${RAG_MEMORY_MAX_CONTEXT_MESSAGES:16}
+    max-context-chars: ${RAG_MEMORY_MAX_CONTEXT_CHARS:8000}

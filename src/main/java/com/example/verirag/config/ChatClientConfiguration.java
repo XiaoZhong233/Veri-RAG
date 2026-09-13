@@ -15,11 +15,12 @@ import org.springframework.beans.factory.annotation.Qualifier;
 public class ChatClientConfiguration {
 
     @Bean
-    public ChatMemory chatMemory(MyBatisChatMemoryRepository repository) {
+    public ChatMemory chatMemory(MyBatisChatMemoryRepository repository,
+                                com.example.verirag.memory.ConversationContextService contextService) {
         return MessageWindowChatMemory.builder()
                 .chatMemoryRepository(repository)
-                // 一段摘要 SystemMessage + 最近两轮（4 条）原始消息。
-                .maxMessages(5)
+                // 原文上限 + 历史说明/摘要 + 当前问题；不再次截掉待压缩消息。
+                .maxMessages(contextService.maxContextMessages() + 2)
                 .build();
     }
 

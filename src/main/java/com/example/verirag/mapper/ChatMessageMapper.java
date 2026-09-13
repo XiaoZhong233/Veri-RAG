@@ -23,6 +23,8 @@ public interface ChatMessageMapper {
 
     int deleteBySessionId(@Param("sessionId") Long sessionId);
 
+    long countBySessionId(@Param("sessionId") Long sessionId);
+
     long countAssistantToday();
 
     List<Map<String, Object>> countAssistantByDayLast7();

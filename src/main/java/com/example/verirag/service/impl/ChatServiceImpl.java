@@ -77,7 +77,6 @@ public class ChatServiceImpl implements ChatService {
     private static final Pattern RESIDENCE_H2 =
             Pattern.compile("(?m)^##\\s+(.+?)\\s*$");
     private static final double DEFAULT_SIMILARITY_THRESHOLD = 0.75;
-    private static final int DEFAULT_HISTORY_MAX_MESSAGES = 6;
     private static final ZoneId LONDON_TIME_ZONE = ZoneId.of("Europe/London");
     private static final String PLAIN_TEXT_OUTPUT_INSTRUCTION = """
 
@@ -125,6 +124,7 @@ public class ChatServiceImpl implements ChatService {
     private final RagMetrics ragMetrics;
 
     private final ConversationSummaryService conversationSummaryService;
+    private final com.example.verirag.memory.ConversationContextService conversationContextService;
 
     private final RagPromptManager promptManager;
 
@@ -143,10 +143,6 @@ public class ChatServiceImpl implements ChatService {
 
     @Value("${rag.retrieval.top-k:" + DEFAULT_RAG_TOP_K + "}")
     private int retrievalTopK;
-
-    /** 用于检索改写和手动拼接的最近对话消息数量。 */
-    @Value("${rag.chat.history-max-messages:" + DEFAULT_HISTORY_MAX_MESSAGES + "}")
-    private int historyMaxMessages;
 
     /** 是否将会话摘要和历史手动压成 user message，而非由 ChatMemory 注入多角色消息。 */
     @Value("${rag.chat.manual-history-enabled:false}")
@@ -972,12 +968,7 @@ public class ChatServiceImpl implements ChatService {
         if (sessionId == null) {
             return Collections.emptyList();
         }
-        int limit = Math.max(historyMaxMessages, 0);
-        if (limit == 0) {
-            return Collections.emptyList();
-        }
-        List<ChatMessage> messages = chatMessageMapper.listRecentBySessionId(sessionId, limit);
-        return messages == null ? Collections.emptyList() : messages;
+        return conversationContextService.load(sessionId).messages();
     }
 
     /** 用上一轮用户问题补足“这个/它/哪里”等指代不明的追问检索语义。 */
@@ -1069,12 +1060,12 @@ public class ChatServiceImpl implements ChatService {
         if (!manualHistoryEnabled) {
             return question;
         }
-        StringBuilder input = new StringBuilder();
-        ChatSession session = sessionId == null ? null : chatSessionMapper.selectById(sessionId);
-        if (session != null && session.getMemorySummary() != null
-                && !session.getMemorySummary().isBlank()) {
+        var context = conversationContextService.load(sessionId);
+        history = context.messages();
+        StringBuilder input = new StringBuilder(com.example.verirag.memory.ConversationContextService.HISTORY_NOTICE);
+        if (!context.summary().isBlank()) {
             input.append("【较早对话摘要】\n")
-                    .append(session.getMemorySummary().strip())
+                    .append(context.summary())
                     .append("\n\n");
         }
         if (history != null && !history.isEmpty()) {
@@ -1097,11 +1088,12 @@ public class ChatServiceImpl implements ChatService {
             return question;
         }
 
-        StringBuilder input = new StringBuilder();
-        ChatSession session = sessionId == null ? null : chatSessionMapper.selectById(sessionId);
-        if (session != null && session.getMemorySummary() != null && !session.getMemorySummary().isBlank()) {
+        var context = conversationContextService.load(sessionId);
+        history = context.messages();
+        StringBuilder input = new StringBuilder(com.example.verirag.memory.ConversationContextService.HISTORY_NOTICE);
+        if (!context.summary().isBlank()) {
             input.append("【较早对话摘要】\n")
-                    .append(session.getMemorySummary().strip())
+                    .append(context.summary())
                     .append("\n\n");
         }
         if (history != null && !history.isEmpty()) {

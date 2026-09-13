@@ -48,6 +48,7 @@ public class WeComKfMessageService {
     private final TaskExecutor messageExecutor;
     private final WeComKfMetrics metrics;
     private final ObjectMapper objectMapper;
+    private final WeComCustomerService customers;
     private final ConcurrentHashMap<String, Object> accountLocks = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, CompletableFuture<Void>> customerQueues =
             new ConcurrentHashMap<>();
@@ -65,7 +66,7 @@ public class WeComKfMessageService {
             @Qualifier("wecomKfProgressScheduler") TaskScheduler progressScheduler,
             @Qualifier("wecomKfExecutor") TaskExecutor messageExecutor,
             WeComKfMetrics metrics,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper, WeComCustomerService customers) {
         this.properties = properties;
         this.apiClient = apiClient;
         this.stateMapper = stateMapper;
@@ -76,6 +77,7 @@ public class WeComKfMessageService {
         this.messageExecutor = messageExecutor;
         this.metrics = metrics;
         this.objectMapper = objectMapper;
+        this.customers = customers;
     }
 
     @PostConstruct
@@ -112,6 +114,7 @@ public class WeComKfMessageService {
         do {
             JsonNode page = apiClient.syncMessages(openKfId, callbackToken, cursor);
             page.path("msg_list").forEach(message -> {
+                customers.observe(message);
                 if (claimPendingMessage(message)) {
                     messages.add(message);
                 } else {
@@ -508,6 +511,8 @@ public class WeComKfMessageService {
                 apiClient.sendEventText(msgCode,
                         replyMessageId(inboundMessageId, "handoff-success"),
                         truncateUtf8(properties.getHandoffSuccessMessage(), MAX_TEXT_BYTES));
+                archiveSent(openKfId, externalUserId, replyMessageId(inboundMessageId, "handoff-success"),
+                        "SYSTEM", truncateUtf8(properties.getHandoffSuccessMessage(), MAX_TEXT_BYTES));
             } catch (RuntimeException ex) {
                 // 人工分配已经成功；提示语失败不能回滚分配，也不能触发重复转接。
                 log.warn("event=wecom.kf.handoff_notice_failed openKfId={} "
@@ -529,6 +534,8 @@ public class WeComKfMessageService {
         }
         apiClient.sendEventText(welcomeCode, replyMessageId(messageId, "welcome"),
                 truncateUtf8(properties.getWelcomeMessage(), MAX_TEXT_BYTES));
+        archiveSent(openKfId, externalUserId, replyMessageId(messageId, "welcome"),
+                "SYSTEM", truncateUtf8(properties.getWelcomeMessage(), MAX_TEXT_BYTES));
         metrics.increment("welcome_sent");
         log.info("event=wecom.kf.welcome_sent openKfId={} externalUserId={}",
                 openKfId, externalUserId);
@@ -599,10 +606,22 @@ public class WeComKfMessageService {
         if (lastError != null) {
             throw lastError;
         }
+        archiveSent(openKfId, externalUserId, outgoingMessageId,
+                messageKind.startsWith("final-") || "final".equals(messageKind) ? "BOT" : "SYSTEM", outgoingContent);
         log.info("event=wecom.kf.system_message_sent msgId={} replyTo={} openKfId={} "
                         + "externalUserId={} chars={}",
                 outgoingMessageId, inboundMessageId, openKfId, externalUserId,
                 outgoingContent.codePointCount(0, outgoingContent.length()));
+    }
+
+    /** 展示用存档不改变已经完成的发送结果。 */
+    private void archiveSent(String openKfId, String externalUserId, String messageId, String speaker, String content) {
+        try {
+            customers.record(openKfId, externalUserId, messageId, speaker, "text", content, java.time.LocalDateTime.now());
+        } catch (RuntimeException ex) {
+            // 已发送的消息不能因展示存档失败再次发送。
+            log.error("event=wecom.kf.outbound_archive_failed msgId={}", messageId);
+        }
     }
 
     /** 企业微信单条文本最多 2048 字节；按 UTF-8 边界拆分，避免静默丢失后半段内容。 */

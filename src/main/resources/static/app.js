@@ -792,6 +792,7 @@ async function loadWeComAccounts() {
         renderWeComServicers([]);
         showToast(error.message);
     }
+    window.reloadCustomerWorkspace?.();
 }
 
 async function loadWeComMembers() {

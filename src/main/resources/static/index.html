@@ -109,6 +109,28 @@
             </section>
 
             <section id="wecom-view" class="view-panel hidden">
+                <section class="panel customer-workspace" aria-label="客户会话">
+                    <div class="section-heading"><div><h2>客户会话</h2><p class="muted">按客服账号查看客户资料、聊天记录与服务摘要。仅管理员可见。</p></div><button id="customer-refresh" class="secondary-button" type="button">刷新客户</button></div>
+                    <div class="customer-layout">
+                        <aside class="customer-sidebar">
+                            <form id="customer-search-form" class="customer-search"><input id="customer-search" aria-label="搜索客户昵称或标识" maxlength="128" placeholder="搜索已获取昵称或客户标识"><button class="secondary-button" type="submit">搜索</button></form>
+                            <div id="customer-list" aria-live="polite"></div>
+                            <div class="customer-pagination"><button id="customer-prev" class="secondary-button" type="button">上一页</button><span id="customer-page"></span><button id="customer-next" class="secondary-button" type="button">下一页</button></div>
+                        </aside>
+                        <div id="customer-detail" class="customer-detail">
+                            <p id="customer-placeholder" class="empty-state">选择一位客户，查看咨询详情。</p>
+                            <div id="customer-content" class="hidden">
+                                <div class="customer-heading"><div id="customer-identity"></div><button id="customer-profile-refresh" class="secondary-button" type="button">更新微信资料</button></div>
+                                <p id="customer-profile-warning" class="muted" role="status"></p>
+                                <section class="customer-summary"><div class="section-heading"><h3>服务摘要</h3><button id="customer-summary-refresh" class="secondary-button" type="button">生成／更新摘要</button></div><p id="customer-summary-status" class="muted"></p><div id="customer-summary-text" class="customer-text"></div><p class="muted">AI辅助整理，请结合原始对话核实；摘要不会自动执行转接或预订。</p></section>
+                                <div class="section-heading"><h3>聊天记录</h3><select id="customer-history-source" aria-label="聊天记录来源"><option value="current">微信消息记录</option><option value="legacy">历史机器人记录</option></select></div>
+                                <p class="muted">微信消息从功能上线后开始留存；历史机器人记录仅覆盖此前已保存的问答。图片、语音等暂显示类型，不下载媒体。</p>
+                                <button id="customer-history-more" class="secondary-button hidden" type="button">加载更早消息</button>
+                                <div id="customer-messages" class="customer-messages" aria-live="polite"></div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
                 <section class="notice wecom-notice">自定义 API 模式由本系统管理接待人员和会话分配。只有状态为“正在接待”的成员会收到转人工会话；欢迎语由 enter_session 事件触发。</section>
                 <section class="panel">
                     <div class="section-heading"><div><h2>微信客服接待人员</h2><p class="muted">可从当前应用可见的企业成员中选择；添加后还需由成员将接待状态设为“正在接待”。</p></div><button id="wecom-refresh-button" class="secondary-button" type="button"><i class="ri-refresh-line" aria-hidden="true"></i>刷新</button></div>
@@ -139,6 +161,6 @@
 <dialog id="offer-import-dialog" class="user-dialog"><form id="offer-import-form"><div class="dialog-heading"><div><p class="eyebrow">BATCH IMPORT</p><h2>导入房型库存与报价</h2></div><button class="icon-button" data-close-dialog="offer-import-dialog" type="button">×</button></div><label>结构化模板 XLSX<input id="offer-import-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required></label><p class="tip">必须包含“房型库存导入”和“租期价格导入”两个工作表。公寓编码优先关联 MySQL 地址库；同一记录仅由更晚的业务时间覆盖。</p><div id="offer-import-result" class="import-result hidden"></div><p id="offer-import-error" class="form-error"></p><div class="dialog-actions"><button class="secondary-button" data-close-dialog="offer-import-dialog" type="button">取消</button><button id="offer-import-submit" class="primary-button" type="submit">开始导入</button></div></form></dialog>
 <dialog id="recommendation-dialog" class="user-dialog"><form id="recommendation-form"><div class="dialog-heading"><div><p class="eyebrow">SALES PREFERENCE</p><h2 id="recommendation-dialog-title">添加推荐公寓</h2></div><button class="icon-button" data-close-dialog="recommendation-dialog" type="button">×</button></div><input id="recommendation-id" type="hidden"><div class="form-grid"><label class="full-width">公寓<select id="recommendation-residence" required></select></label><label>同等条件优先级<input id="recommendation-priority" type="number" min="1" max="999" value="100" required></label><label>状态<select id="recommendation-enabled"><option value="1">启用</option><option value="0">停用</option></select></label><label class="full-width">内部备注 <span class="optional">（不会注入模型）</span><textarea id="recommendation-note" rows="3" maxlength="512" placeholder="例如：本月主推"></textarea></label></div><p class="tip">只有公寓已被位置资料选中且房型满足用户硬条件时，系统才会应用这个优先级。</p><p id="recommendation-form-error" class="form-error"></p><div class="dialog-actions"><button class="secondary-button" data-close-dialog="recommendation-dialog" type="button">取消</button><button class="primary-button" type="submit">保存推荐配置</button></div></form></dialog>
 <dialog id="reference-dialog" class="user-dialog reference-dialog"><div class="dialog-heading"><div><p class="eyebrow">REFERENCE</p><h2 id="reference-title">引用详情</h2></div><button class="icon-button" data-close-dialog="reference-dialog" type="button">×</button></div><p id="reference-file-name" class="muted"></p><section><h3>命中 Chunk</h3><p id="reference-snippet" class="reference-snippet"></p></section></dialog>
-<div id="toast" class="toast" role="status"></div><script src="i18n.js"></script><script src="app.js"></script>
+<div id="toast" class="toast" role="status"></div><script src="i18n.js"></script><script src="app.js"></script><script src="assets/customer-workspace.js"></script>
 </body>
 </html>

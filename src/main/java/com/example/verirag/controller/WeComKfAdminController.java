@@ -26,10 +26,36 @@ import java.util.List;
 public class WeComKfAdminController {
 
     private final WeComKfApiClient apiClient;
+    private final com.example.verirag.integration.wecom.WeComCustomerService customers;
 
-    public WeComKfAdminController(WeComKfApiClient apiClient) {
+    public WeComKfAdminController(WeComKfApiClient apiClient,
+                                  com.example.verirag.integration.wecom.WeComCustomerService customers) {
         this.apiClient = apiClient;
+        this.customers = customers;
     }
+
+    @GetMapping("/customers")
+    public R<?> customers(@org.springframework.web.bind.annotation.RequestParam(defaultValue="") String openKfId,
+                          @org.springframework.web.bind.annotation.RequestParam(defaultValue="") String keyword,
+                          @org.springframework.web.bind.annotation.RequestParam(defaultValue="1") int page) {
+        if(keyword.length()>128 || openKfId.length()>128) throw new IllegalArgumentException("查询条件过长");
+        return R.ok(customers.list(openKfId,keyword.strip(),page));
+    }
+    @GetMapping("/customers/{id}")
+    public R<?> customer(@PathVariable long id) { return R.ok(customers.detail(id)); }
+    @PostMapping("/customers/profiles/refresh")
+    public R<?> refreshProfiles(@Valid @RequestBody CustomerIds body) { return R.ok(customers.refreshProfiles(body.ids())); }
+    public record CustomerIds(@NotEmpty @Size(max=30) List<@jakarta.validation.constraints.NotNull Long> ids) {}
+    @GetMapping("/customers/{id}/messages")
+    public R<?> messages(@PathVariable long id,
+                         @org.springframework.web.bind.annotation.RequestParam(defaultValue="0") long before,
+                         @org.springframework.web.bind.annotation.RequestParam(defaultValue="false") boolean legacy) {
+        return R.ok(customers.history(id,before,legacy));
+    }
+    @PostMapping("/customers/{id}/profile/refresh")
+    public R<?> refreshCustomer(@PathVariable long id) { return R.ok(customers.refreshProfile(id)); }
+    @PostMapping("/customers/{id}/summary")
+    public R<?> summarizeCustomer(@PathVariable long id) { return R.ok(customers.summarize(id)); }
 
     @GetMapping("/accounts")
     public R<List<WeComKfApiClient.KfAccount>> accounts() {

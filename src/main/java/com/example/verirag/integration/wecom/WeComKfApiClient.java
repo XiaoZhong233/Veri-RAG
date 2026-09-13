@@ -90,6 +90,31 @@ public class WeComKfApiClient {
         return List.copyOf(accounts);
     }
 
+    /** 客户资料使用微信客服凭证，不使用通讯录凭证；只取后台展示所需字段。 */
+    public KfCustomer customer(String externalUserId) {
+        KfCustomer customer = customers(List.of(externalUserId)).get(externalUserId);
+        if(customer == null) throw new IllegalStateException("微信暂未返回该客户的基础资料");
+        return customer;
+    }
+
+    public java.util.Map<String, KfCustomer> customers(List<String> externalUserIds) {
+        if(externalUserIds.isEmpty() || externalUserIds.size()>100) throw new IllegalArgumentException("客户批次大小不合法");
+        ObjectNode body = objectMapper.createObjectNode();
+        var ids=body.putArray("external_userid_list");
+        externalUserIds.forEach(id -> ids.add(requireText(id,"external_userid")));
+        JsonNode response = postWithAccessToken("/cgi-bin/kf/customer/batchget", body, true);
+        var result = new java.util.HashMap<String, KfCustomer>();
+        for (JsonNode item : response.path("customer_list")) {
+            String id=item.path("external_userid").asText("");
+            if (externalUserIds.contains(id)) {
+                result.put(id,new KfCustomer(item.path("nickname").asText(""), item.path("avatar").asText("")));
+            }
+        }
+        return java.util.Map.copyOf(result);
+    }
+
+    public record KfCustomer(String nickname, String avatar) {}
+
     public List<KfServicer> listServicers(String openKfId) {
         String path = "/cgi-bin/kf/servicer/list?open_kfid="
                 + encode(requireText(openKfId, "open_kfid"));

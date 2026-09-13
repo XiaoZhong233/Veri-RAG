@@ -29,6 +29,37 @@ CREATE TABLE IF NOT EXISTS t_wecom_kf_message (
     KEY idx_wecom_kf_message_account_user (open_kf_id, external_user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='微信客服已处理消息去重';
 
+CREATE TABLE IF NOT EXISTS t_wecom_kf_customer (
+    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    open_kf_id VARCHAR(128) NOT NULL,
+    external_user_id VARCHAR(128) NOT NULL,
+    nickname VARCHAR(255) DEFAULT NULL,
+    avatar TEXT DEFAULT NULL,
+    profile_updated_at DATETIME DEFAULT NULL,
+    last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    service_summary TEXT DEFAULT NULL,
+    summary_updated_at DATETIME DEFAULT NULL,
+    UNIQUE KEY uk_kf_customer(open_kf_id, external_user_id),
+    KEY idx_customer_recent(last_seen_at,id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS t_wecom_kf_customer_message (
+    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    open_kf_id VARCHAR(128) NOT NULL,
+    external_user_id VARCHAR(128) NOT NULL,
+    message_id VARCHAR(128) NOT NULL,
+    speaker VARCHAR(24) NOT NULL,
+    message_type VARCHAR(32) NOT NULL,
+    content MEDIUMTEXT NOT NULL,
+    sent_at DATETIME NOT NULL,
+    UNIQUE KEY uk_customer_message(open_kf_id,message_id),
+    KEY idx_customer_history(open_kf_id,external_user_id,id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 从已有微信客服会话导入客户标识；昵称和头像按需从微信读取。
+INSERT IGNORE INTO t_wecom_kf_customer(open_kf_id,external_user_id,last_seen_at)
+SELECT SUBSTRING(bot_id,4),conversation_key,update_time FROM t_wecom_conversation WHERE bot_id LIKE 'kf:%';
+
 CREATE TABLE IF NOT EXISTS t_wecom_kf_pending_message (
     message_id       VARCHAR(128) NOT NULL COMMENT '企业微信客服消息ID',
     open_kf_id       VARCHAR(128) DEFAULT NULL COMMENT '微信客服账号ID',

@@ -374,6 +374,6 @@ class WeComKfSupportTests {
                 mock(TaskScheduler.class),
                 executor,
                 mock(WeComKfMetrics.class),
-                new ObjectMapper());
+                new ObjectMapper(), mock(WeComCustomerService.class));
     }
 }

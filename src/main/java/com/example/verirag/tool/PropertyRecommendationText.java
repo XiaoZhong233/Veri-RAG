@@ -36,10 +36,10 @@ public final class PropertyRecommendationText {
                 out.append(zh ? "；参考总价：" : "; reference total: ")
                         .append(money(room.estimatedTotalPrice(), room.currency()));
             }
-            if (room.matchedStartDate() != null) out.append("\n").append(zh ? "匹配起租日：" : "Matched start: ").append(room.matchedStartDate());
+            if (room.matchedStartDate() != null) out.append("\n").append(zh ? "可入住日期：" : "Move-in date: ").append(room.matchedStartDate());
             out.append("\n").append(zh ? "可租日期范围：" : "Available date range: ")
                     .append(room.earliestStartDate()).append(" — ").append(room.latestEndDate());
-            if (room.matchedEndDate() != null) out.append("\n").append(zh ? "匹配退房日：" : "Matched end: ").append(room.matchedEndDate());
+            if (room.matchedEndDate() != null) out.append("\n").append(zh ? "退房日期：" : "Move-out date: ").append(room.matchedEndDate());
             if (result.stayWeeks() != null) out.append("\n").append(zh ? "租期：" : "Stay: ").append(result.stayWeeks()).append(zh ? "周" : " weeks");
             out.append("\n").append(zh ? "库存：" : "Availability: ").append(status(room, zh));
         }
@@ -49,18 +49,69 @@ public final class PropertyRecommendationText {
             String travel = Objects.toString(place.travelDescription(), "");
             if (travel.isBlank()) travel = Objects.toString(place.travelMode(), "")
                     + (place.maxMinutes() == null ? "" : " " + place.maxMinutes() + (zh ? "分钟" : " min"));
-            out.append("\n").append(place.placeName()).append(": ").append(travel)
-                    .append(zh ? "（业务资料，非实时路线）" : " (business data, not live routing)");
+            out.append("\n").append(place.placeName()).append(": ").append(travel);
         }
+        String reason = recommendationReason(group, result, zh);
+        if (!reason.isBlank()) out.append("\n\n").append(zh ? "推荐理由：" : "Why consider it: ").append(reason);
         appendMissingCriteria(out, result, zh);
-        out.append("\n\n").append(zh ? "已按原查询条件重新核验；库存为业务数据快照。" :
-                "Rechecked against your original criteria; availability is a business-data snapshot.");
         return out.toString();
     }
 
+    /** 仅陈述此次查询返回的客观匹配依据，不读取销售优先级，也不推断未维护的卖点。 */
+    static String recommendationReason(ResidenceOfferGroup group, RoomOfferSearchResult result, boolean zh) {
+        RoomMatch available = group.rooms().stream()
+                .filter(room -> "AVAILABLE".equals(room.inventoryStatus()) || "LIMITED".equals(room.inventoryStatus()))
+                .findFirst().orElse(null);
+        if (available == null) return "";
+        var reasons = new java.util.ArrayList<String>();
+        if (result.nearbyPlaceKeyword() != null && !result.nearbyPlaceKeyword().isBlank()
+                && !group.nearbyMatches().isEmpty()) {
+            var place = group.nearbyMatches().getFirst();
+            if (place.placeName() != null && !place.placeName().isBlank()) {
+                if (place.maxMinutes() != null && place.travelMode() != null) {
+                    String mode = zh ? switch (place.travelMode()) {
+                        case "WALK" -> "步行";
+                        case "BIKE" -> "骑行";
+                        case "TUBE" -> "地铁";
+                        case "BUS" -> "公交";
+                        case "TRAIN" -> "火车";
+                        case "DLR" -> "DLR轻轨";
+                        case "PUBLIC_TRANSPORT" -> "公共交通";
+                        default -> "";
+                    } : place.travelMode();
+                    if (!mode.isBlank()) reasons.add(zh
+                            ? "前往" + place.placeName() + "，" + mode + "约" + place.maxMinutes() + "分钟"
+                            : "Around " + place.maxMinutes() + " minutes to " + place.placeName() + " by " + mode.toLowerCase(java.util.Locale.ROOT));
+                } else if (place.travelDescription() != null && !place.travelDescription().isBlank()) {
+                    reasons.add(place.placeName() + ": " + place.travelDescription());
+                }
+            }
+        }
+        if (result.startDateFrom() != null && available.matchedStartDate() != null) {
+            reasons.add(zh ? "有可从" + available.matchedStartDate() + "入住"
+                    + (result.stayWeeks() == null ? "的房型" : "、支持" + result.stayWeeks() + "周租期的房型")
+                    : "A room can start on " + available.matchedStartDate()
+                    + (result.stayWeeks() == null ? "" : " for a " + result.stayWeeks() + "-week stay"));
+        }
+        return String.join(zh ? "；" : "; ", reasons) + (reasons.isEmpty() ? "" : zh ? "。" : ".");
+    }
+
     private static void appendMissingCriteria(StringBuilder out, RoomOfferSearchResult result, boolean zh) {
-        if (result.startDateFrom() == null) out.append("\n").append(zh ? "尚未指定起租日，入住日期待核验。" : "Start date not specified; dates need checking.");
-        if (result.stayWeeks() == null) out.append("\n").append(zh ? "尚未指定租期，适用租期及价格待核验。" : "Stay length not specified; term and pricing need checking.");
+        boolean missingDate = result.startDateFrom() == null;
+        boolean missingStay = result.stayWeeks() == null;
+        if (!missingDate && !missingStay) return;
+        String question;
+        if (missingDate && missingStay) {
+            question = zh ? "你预计什么时候入住、打算住多久呀？告诉小伦同学，我再帮你看看～" :
+                    "When would you like to move in, and how long would you like to stay?";
+        } else if (missingDate) {
+            question = zh ? "你预计什么时候入住呀？告诉小伦同学，我再帮你看看～" :
+                    "When would you like to move in? I can help narrow down the options.";
+        } else {
+            question = zh ? "你打算住多久呀？告诉小伦同学预计租期，我再帮你看看～" :
+                    "How long would you like to stay? I can help narrow down the options.";
+        }
+        out.append("\n\n").append(question);
     }
 
     private static String price(RoomMatch room, boolean zh) {

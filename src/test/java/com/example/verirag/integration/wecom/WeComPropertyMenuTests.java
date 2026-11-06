@@ -71,7 +71,11 @@ class WeComPropertyMenuTests {
         assertTrue(detail.answer().startsWith("Property 2"));
         assertTrue(detail.answer().contains("2026-12-01"));
         assertTrue(detail.answer().contains("26周"));
-        assertTrue(detail.answer().contains("重新核验"));
+        assertFalse(detail.answer().contains("重新核验"));
+        assertFalse(detail.answer().contains("业务数据快照"));
+        assertTrue(detail.answer().contains("推荐理由：有可从2026-12-01入住、支持26周租期的房型"));
+        assertFalse(detail.answer().contains("优先级"));
+        assertFalse(detail.answer().contains("销售排序"));
         verify(tools).searchRoomOffers(eq("London"), isNull(), eq("Property 2"), eq("UCL"), eq(25), eq("TUBE,WALK"),
                 eq("2026-12-01"), eq("2026-12-01"), eq(26), eq("Studio"),
                 argThat(b -> b != null && b.compareTo(new BigDecimal("500")) == 0), eq(false), eq(4));
@@ -100,7 +104,7 @@ class WeComPropertyMenuTests {
         when(tools.searchRoomOffers(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(result(List.of()));
         var detail = menu.resolve("kf", "user", 7L, id);
-        assertTrue(detail.answer().contains("目前没有符合原查询条件"));
+        assertTrue(detail.answer().contains("目前没有符合你需求"));
         assertFalse(detail.answer().contains("£400"));
     }
 
@@ -117,8 +121,10 @@ class WeComPropertyMenuTests {
                 "REFERENCE", 1, 0, 1, List.of(group), List.of());
         String overview = PropertyRecommendationText.overview(r, true);
         assertTrue(overview.contains("售罄"));
-        assertTrue(overview.contains("尚未指定起租日"));
-        assertTrue(overview.contains("尚未指定租期"));
+        assertTrue(overview.contains("你预计什么时候入住、打算住多久呀？"));
+        assertEquals(1, overview.split("告诉小伦同学", -1).length - 1);
+        assertFalse(overview.contains("尚未指定"));
+        assertFalse(overview.contains("待核验"));
         assertFalse(overview.contains("可预订"));
     }
 

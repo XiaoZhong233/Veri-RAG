@@ -90,8 +90,8 @@ public class WeComPropertyMenu {
                 .findFirst().orElse(null);
         String name = selected.path("name").asText();
         String answer = group == null
-                ? name + (zh ? "\n重新核验后，目前没有符合原查询条件的房型。可以修改日期、预算或租期后再查询。" :
-                "\nNo rooms currently match your original criteria. Try changing the dates, budget or length of stay.")
+                ? name + (zh ? "\n这个公寓目前没有符合你需求的房型。要不要调整一下入住时间、租期或预算？" :
+                "\nThere are currently no rooms that fit your needs here. Would you like to adjust your move-in date, stay length or budget?")
                 : details(group, refreshed, zh);
         Detail detail = new Detail(session, (zh ? "查看 " : "View ") + name, answer + "\n\n" + notice(zh));
         // 让后续“这个还有其它房型吗”等自然语言追问能看到用户刚点击的对象。

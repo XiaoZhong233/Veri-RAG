@@ -17,9 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 
 /** 微信客服 access_token、消息同步与文本回复客户端。 */
 @Component
@@ -127,31 +125,24 @@ public class WeComKfApiClient {
         return List.copyOf(servicers);
     }
 
-    /** 获取当前应用通讯录可见范围内的成员 userid，供后台选择接待人员。 */
+    /**
+     * 获取当前自建应用可见范围内的成员 userid，供后台选择接待人员。
+     *
+     * <p>{@code /cgi-bin/user/list_id} 要求更高的全量通讯录权限，普通自建应用
+     * 可能返回 48002。这里使用可见范围成员接口，既满足客服人员选择需求，
+     * 也避免申请超出业务所需的通讯录权限。</p>
+     */
     public List<KfMemberId> listVisibleMemberIds() {
+        JsonNode response = getWithContactsAccessToken(
+                "/cgi-bin/user/simplelist?department_id=1&fetch_child=1", true);
         List<KfMemberId> members = new ArrayList<>();
-        Set<String> visitedCursors = new HashSet<>();
-        String cursor = "";
-        do {
-            if (!visitedCursors.add(cursor)) {
-                throw new IllegalStateException("WeCom member list returned a repeated cursor");
-            }
-            ObjectNode body = objectMapper.createObjectNode();
-            if (StringUtils.hasText(cursor)) {
-                body.put("cursor", cursor);
-            }
-            body.put("limit", 10000);
-            JsonNode response = postWithContactsAccessToken(
-                    "/cgi-bin/user/list_id", body, true);
-            response.path("dept_user").forEach(item -> {
-                List<Long> departmentIds = new ArrayList<>();
-                item.path("department").forEach(department ->
-                        departmentIds.add(department.asLong()));
-                members.add(new KfMemberId(
-                        item.path("userid").asText(""), List.copyOf(departmentIds)));
-            });
-            cursor = response.path("next_cursor").asText("");
-        } while (StringUtils.hasText(cursor));
+        response.path("userlist").forEach(item -> {
+            List<Long> departmentIds = new ArrayList<>();
+            item.path("department").forEach(department ->
+                    departmentIds.add(department.asLong()));
+            members.add(new KfMemberId(
+                    item.path("userid").asText(""), List.copyOf(departmentIds)));
+        });
         return members.stream()
                 .filter(member -> StringUtils.hasText(member.userId()))
                 .distinct()
@@ -234,6 +225,23 @@ public class WeComKfApiClient {
         if (retryInvalidToken && (errorCode == 40014 || errorCode == 42001)) {
             accessToken = null;
             response = get(path + separator + "access_token=" + encode(getAccessToken()));
+            errorCode = response.path("errcode").asInt(-1);
+        }
+        if (errorCode != 0) {
+            throw apiError(path, response);
+        }
+        return response;
+    }
+
+    private JsonNode getWithContactsAccessToken(String path, boolean retryInvalidToken) {
+        String separator = path.contains("?") ? "&" : "?";
+        JsonNode response = get(path + separator + "access_token="
+                + encode(getContactsAccessToken()));
+        int errorCode = response.path("errcode").asInt(-1);
+        if (retryInvalidToken && (errorCode == 40014 || errorCode == 42001)) {
+            contactsAccessToken = null;
+            response = get(path + separator + "access_token="
+                    + encode(getContactsAccessToken()));
             errorCode = response.path("errcode").asInt(-1);
         }
         if (errorCode != 0) {

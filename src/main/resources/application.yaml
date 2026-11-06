@@ -10,7 +10,7 @@ spring:
       base-url: ${DASHSCOPE_BASE_URL:https://llm-1yauwtsqkmv66e2w.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}
       chat:
 #        model: qwen3.7-plus
-        model: ${LLM_CHAT_MODEL:qwen3.8-flash}
+        model: ${LLM_CHAT_MODEL:deepseek-v4.1-flash-1017}
 #        model: qwen-flash
         # 模型单次 HTTP 请求总超时；与业务层回答超时默认统一为3分钟。
         timeout: ${LLM_TIMEOUT:3m}

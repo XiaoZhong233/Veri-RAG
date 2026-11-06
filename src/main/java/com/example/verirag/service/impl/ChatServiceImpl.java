@@ -152,7 +152,7 @@ public class ChatServiceImpl implements ChatService {
     @Value("${rag.chat.response-timeout:40s}")
     private Duration llmResponseTimeout;
 
-    @Value("${rag.chat.property-max-tokens:420}")
+    @Value("${rag.chat.property-max-tokens:10000}")
     private int propertyMaxTokens;
 
     @Value("${rag.chat.property-thinking-enabled:true}")

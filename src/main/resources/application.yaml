@@ -161,8 +161,8 @@ rag:
   chat:
     # 用户问答的模型生成上限；同步 Tool 循环超过该时间也会被取消。
     response-timeout: ${RAG_CHAT_RESPONSE_TIMEOUT:40s}
-    # 房源 Tool 回答比普通知识库问答更适合短输出；不改变全局 LLM_MAX_TOKENS。
-    property-max-tokens: ${RAG_PROPERTY_MAX_TOKENS:420}
+    # 房源 Tool 回答的独立生成上限；不改变全局 LLM_MAX_TOKENS。
+    property-max-tokens: ${RAG_PROPERTY_MAX_TOKENS:10000}
     # 部分 Qwen 兼容模型关闭思考后会跳过 Tool 并直接生成答案，因此默认保持开启以保证调用可靠性。
     property-thinking-enabled: ${RAG_PROPERTY_THINKING_ENABLED:true}
     # 对仅接受 system/user 角色的兼容模型，将摘要和历史压成纯文本拼进当前 user message。

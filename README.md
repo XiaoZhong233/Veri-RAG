@@ -298,7 +298,7 @@ export SPRING_DATA_REDIS_PASSWORD="veri_rag_dev"
 | `WECOM_KF_SUMMARY_MAX_TOKENS` | `10000` | 客服服务摘要最大输出 Token（包含思考 Token） |
 | `WECOM_KF_SUMMARY_TIMEOUT` | `60s` | 客服服务摘要生成超时 |
 | `WECOM_KF_SUMMARY_MAX_CHARS` | `2000` | 客服服务摘要正文最大中文字符数 |
-| `RAG_PROPERTY_MAX_TOKENS` | `600` | 房源 Tool 回答最大输出 Token，不影响普通知识库问答 |
+| `RAG_PROPERTY_MAX_TOKENS` | `10000` | 房源 Tool 回答最大输出 Token，不影响普通知识库问答 |
 | `RAG_PROPERTY_THINKING_ENABLED` | `true` | 是否为房源 Tool 回答启用模型思考；当前模型关闭后可能跳过 Tool，默认开启以保证准确率 |
 | `RAG_INTENT_CLASSIFIER_ENABLED` | `true` | 是否启用房源意图分类 |
 | `RAG_INTENT_JAVA_RULES_ENABLED` | `false` | 是否先使用 Java 确定性规则 |

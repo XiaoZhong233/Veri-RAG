@@ -14,8 +14,8 @@ spring:
 #        model: qwen-flash
         # 模型单次 HTTP 请求总超时；与业务层回答超时默认统一为3分钟。
         timeout: ${LLM_TIMEOUT:3m}
-        # 限制单次输出，避免冗长回答拉高 LLM 完整生成 P90；可通过 LLM_MAX_TOKENS 覆盖。
-        max-tokens: ${LLM_MAX_TOKENS:1000}
+        # 主聊天需要给推理模型预留思考与正文空间；可通过 LLM_MAX_TOKENS 覆盖。
+        max-tokens: ${LLM_MAX_TOKENS:10000}
         # 企业知识库问答以稳定、简洁为主，降低随机性和重复输出概率。
         temperature: ${LLM_TEMPERATURE:0.2}
       embedding:
@@ -87,6 +87,10 @@ wecom:
     handoff-success-message: ${WECOM_KF_HANDOFF_SUCCESS_MESSAGE:已为您转接人工顾问，请稍候。}
     # 用于修复旧版本已经错误进入待接入池（service_state=2）的会话。
     stuck-session-recovery-message: ${WECOM_KF_STUCK_SESSION_RECOVERY_MESSAGE:智能客服会话已恢复，请重新发送一次刚才的问题。}
+    # 客服服务摘要单独控制生成预算，避免受主聊天输出长度影响。
+    summary-max-tokens: ${WECOM_KF_SUMMARY_MAX_TOKENS:10000}
+    summary-timeout: ${WECOM_KF_SUMMARY_TIMEOUT:60s}
+    summary-max-chars: ${WECOM_KF_SUMMARY_MAX_CHARS:2000}
 
 file:
   upload:

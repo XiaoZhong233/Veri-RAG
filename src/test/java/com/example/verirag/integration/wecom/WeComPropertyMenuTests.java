@@ -51,7 +51,7 @@ class WeComPropertyMenuTests {
     void offersFourDeterministicMenuItemsAndConciseOverview() throws Exception {
         var reply = create();
         assertEquals(4, reply.items().size());
-        assertTrue(reply.overview().contains("4. Property 4"));
+        assertTrue(reply.overview().contains("4. 🏠 Property 4"));
         assertTrue(reply.overview().contains("£400/周"));
         assertFalse(reply.overview().contains("完整地址"));
         assertFalse(reply.overview().contains("2027-09-01"));
@@ -69,7 +69,7 @@ class WeComPropertyMenuTests {
                 .thenReturn(result(List.of(group(2))));
         var detail = menu.resolve("kf", "user", 7L, reply.items().get(1).id());
         assertNotNull(detail);
-        assertTrue(detail.answer().startsWith("Property 2"));
+        assertTrue(detail.answer().startsWith("🏠 Property 2"));
         assertTrue(detail.answer().contains("2026-12-01"));
         assertTrue(detail.answer().contains("26周"));
         assertFalse(detail.answer().contains("重新核验"));

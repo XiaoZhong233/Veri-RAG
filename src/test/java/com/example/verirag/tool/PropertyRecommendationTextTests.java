@@ -14,7 +14,7 @@ class PropertyRecommendationTextTests {
     void overviewUsesExactlyTheRequestedTwoLineFormat() {
         var group = group(List.of(room("AVAILABLE", 2)), true);
         String out = PropertyRecommendationText.overview(result(group, true, null), true);
-        assertEquals("找到1个匹配的公寓：\n\n1. Property\nStudio｜参考 £400/周｜可预订", out);
+        assertEquals("找到1个匹配的公寓：\n\n1. 🏠 Property\nStudio｜参考 £400/周｜可预订", out);
         assertEquals(2, out.split("\n\n")[1].split("\n").length);
         assertTrue(PropertyRecommendationText.menuHeading(result(group, true, null), true).contains("你打算住多久"));
     }

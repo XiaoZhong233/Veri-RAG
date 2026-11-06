@@ -20,7 +20,7 @@ public final class PropertyRecommendationText {
                 "Found " + groups.size() + " matching properties:");
         for (int i = 0; i < groups.size(); i++) {
             var group = groups.get(i);
-            out.append("\n\n").append(i + 1).append(". ").append(group.residenceName());
+            out.append("\n\n").append(i + 1).append(". 🏠 ").append(group.residenceName());
             if (!group.rooms().isEmpty()) {
                 var room = group.rooms().getFirst();
                 out.append("\n").append(room.rootType()).append("｜").append(price(room, zh))
@@ -34,28 +34,28 @@ public final class PropertyRecommendationText {
     public static String menuHeading(RoomOfferSearchResult result, boolean zh) {
         StringBuilder heading = new StringBuilder();
         appendMissingCriteria(heading, result, zh);
-        String choose = zh ? "点击公寓查看房型、日期及库存，也可以直接回复公寓名称：" :
-                "Choose a property for details, or reply with its name:";
+        String choose = zh ? "👇 点击公寓查看房型、日期及库存，也可以直接回复公寓名称：" :
+                "👇 Choose a property for details, or reply with its name:";
         return heading.isEmpty() ? choose : heading.toString().strip() + "\n" + choose;
     }
 
     public static String details(ResidenceOfferGroup group, RoomOfferSearchResult result, boolean zh) {
-        StringBuilder out = new StringBuilder(group.residenceName());
+        StringBuilder out = new StringBuilder("🏠 ").append(group.residenceName());
         boolean commonDates = !group.rooms().isEmpty() && group.rooms().stream()
                 .map(room -> dates(room, zh)).distinct().count() == 1;
         for (var room : group.rooms()) {
-            out.append("\n\n").append(zh ? "房型：" : "Room: ").append(room.roomName())
-                    .append("\n").append(price(room, zh));
+            out.append("\n\n").append(zh ? "🔑 房型：" : "🔑 Room: ").append(room.roomName())
+                    .append("\n💷 ").append(price(room, zh));
             if (room.estimatedTotalPrice() != null) {
                 out.append(zh ? "；参考总价：" : "; reference total: ")
                         .append(money(room.estimatedTotalPrice(), room.currency()));
             }
-            out.append("\n").append(zh ? "库存：" : "Availability: ").append(status(room, zh));
+            out.append("\n").append(zh ? "📌 库存：" : "📌 Availability: ").append(status(room, zh));
             if (!commonDates && !dates(room, zh).isBlank()) out.append("\n").append(dates(room, zh));
         }
         if (commonDates && !dates(group.rooms().getFirst(), zh).isBlank()) out.append("\n\n").append(dates(group.rooms().getFirst(), zh));
-        if (result.stayWeeks() != null) out.append("\n").append(zh ? "租期：" : "Stay: ").append(result.stayWeeks()).append(zh ? "周" : " weeks");
-        if (group.address() != null) out.append("\n\n").append(zh ? "地址：" : "Address: ").append(group.address());
+        if (result.stayWeeks() != null) out.append("\n").append(zh ? "⏳ 租期：" : "⏳ Stay: ").append(result.stayWeeks()).append(zh ? "周" : " weeks");
+        if (group.address() != null) out.append("\n\n").append(zh ? "📍 地址：" : "📍 Address: ").append(group.address());
         if (!group.nearbyMatches().isEmpty()) {
             String travel = commute(group.nearbyMatches().getFirst(), zh);
             if (!travel.isBlank()) out.append("\n").append(travel);
@@ -66,13 +66,13 @@ public final class PropertyRecommendationText {
 
     private static String dates(RoomMatch room, boolean zh) {
         if (room.matchedStartDate() != null && room.matchedEndDate() != null) return zh
-                ? "入住：" + room.matchedStartDate() + "｜退房：" + room.matchedEndDate()
-                : "Move in: " + room.matchedStartDate() + " | Move out: " + room.matchedEndDate();
-        if (room.matchedStartDate() != null) return (zh ? "可从" : "Move in from ") + room.matchedStartDate()
+                ? "📅 入住：" + room.matchedStartDate() + "｜退房：" + room.matchedEndDate()
+                : "📅 Move in: " + room.matchedStartDate() + " | Move out: " + room.matchedEndDate();
+        if (room.matchedStartDate() != null) return (zh ? "📅 可从" : "📅 Move in from ") + room.matchedStartDate()
                 + (zh ? "入住" : "") + (room.latestEndDate() == null ? "" : (zh ? "，最晚" : "; latest move-out ")
                 + room.latestEndDate() + (zh ? "退房" : ""));
         if (room.earliestStartDate() == null || room.latestEndDate() == null) return "";
-        return (zh ? "可租时间：" : "Available dates: ") + room.earliestStartDate() + " — " + room.latestEndDate();
+        return (zh ? "📅 可租时间：" : "📅 Available dates: ") + room.earliestStartDate() + " — " + room.latestEndDate();
     }
 
     private static String commute(NearbyPlaceItem place, boolean zh) {
@@ -93,7 +93,7 @@ public final class PropertyRecommendationText {
             description = mode + (zh ? "约" : " ~") + minutes + (zh ? "分钟" : " min");
         }
         if (description.isBlank()) return "";
-        return (Objects.toString(place.placeName(), "").isBlank() ? "" : place.placeName() + "：") + description;
+        return "🧭 " + (Objects.toString(place.placeName(), "").isBlank() ? "" : place.placeName() + "：") + description;
     }
 
     private static void appendMissingCriteria(StringBuilder out, RoomOfferSearchResult result, boolean zh) {

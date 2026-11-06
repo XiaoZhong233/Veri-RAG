@@ -85,7 +85,7 @@ public class ChatServiceImpl implements ChatService {
             即使前文要求使用 Markdown 表格，也以本条为准，改为数字序号和换行；
             每个房源单独编号，各字段采用“字段：内容”的形式，链接直接输出完整 URL。
             面向微信客服时先给一句结论；默认最多展示 4 个不同公寓，每个只保留一个代表房型、
-            参考周价和关键限制，详细日期、库存及位置按需展开。不要重复规则、不要复述完整用户问题。
+            参考周价和可订状态；通勤、日期和库存数量放到详情中。不要重复规则、不要复述完整用户问题。
             """;
     /** 微信客服走短提示词：保留数据与安全边界，避免每次附带网页版的完整表格规则。 */
     private static final String WECHAT_PROPERTY_SYSTEM_PROMPT = """
@@ -99,11 +99,11 @@ public class ChatServiceImpl implements ChatService {
 
             输出纯文本，不使用 Markdown。先给一句结论；推荐时最多列 4 个不同公寓，
             search_room_offers 的 limitResidences 必须传4；没有足够结果时不能凑数。
-            每个公寓使用“1. 公寓名”及一行代表房型、参考周价和库存状态，保留影响匹配的重要限制。
+            每个公寓只用两行：“1. 公寓名”及一行房型大类、参考周价和可订状态。
             不要自行指定用户未要求的退房日期或租期；保持 Tool 返回顺序，遵守 warnings。
             不要向用户展示“尚未指定”“待核验”“按原查询条件重新核验”“业务数据快照”等内部过程提示。
             缺少入住日期或租期时，自然地询问缺少的条件即可，每条回复只问一次，不要再附加缺失条件说明。
-            展开公寓详情时可补一句基于 Tool 证据的推荐理由，例如通勤及日期、租期匹配；资料不足时省略。
+            公寓详情只展示客观字段，不生成或追加“推荐理由”等主观推荐段落。
             不得披露或暗示后台推荐优先级、销售排序，也不得编造地段、设施、性价比等推荐理由。
             没有结果时直接说明，并给出最多两个可调整条件。结尾仅在涉及价格或库存时说明：
             “参考价格及可订状态须由 Londonist 顾问最终确认。”
@@ -284,8 +284,7 @@ public class ChatServiceImpl implements ChatService {
                 && completedTool.get() != null
                 && completedTool.get().result() instanceof com.example.verirag.tool.PropertyQueryTools.RoomOfferSearchResult offers
                 && (directRecommendation || !offers.residences().isEmpty())
-                ? com.example.verirag.tool.PropertyRecommendationText.overview(offers, containsHan(req.getQuestion()),
-                        req.getQuestion(), completedTool.get().parameters())
+                ? com.example.verirag.tool.PropertyRecommendationText.overview(offers, containsHan(req.getQuestion()))
                 : directRecommendation ? (containsHan(req.getQuestion())
                         ? "这次暂时没能查到房源信息，请稍后再试一下，或告诉小伦同学更具体的需求～"
                         : "I couldn't check the properties just now. Please try again shortly or share a little more about your needs.")

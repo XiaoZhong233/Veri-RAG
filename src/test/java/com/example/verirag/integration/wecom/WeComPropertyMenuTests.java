@@ -122,8 +122,10 @@ class WeComPropertyMenuTests {
                 "REFERENCE", 1, 0, 1, List.of(group), List.of());
         String overview = PropertyRecommendationText.overview(r, true);
         assertTrue(overview.contains("售罄"));
-        assertTrue(overview.contains("你预计什么时候入住、打算住多久呀？"));
-        assertEquals(1, overview.split("告诉小伦同学", -1).length - 1);
+        assertFalse(overview.contains("什么时候入住"));
+        String heading = PropertyRecommendationText.menuHeading(r, true);
+        assertTrue(heading.contains("你预计什么时候入住、打算住多久呀？"));
+        assertEquals(1, heading.split("告诉小伦同学", -1).length - 1);
         assertFalse(overview.contains("尚未指定"));
         assertFalse(overview.contains("待核验"));
         assertFalse(overview.contains("可预订"));
@@ -131,7 +133,7 @@ class WeComPropertyMenuTests {
 
     @Test
     void handlesEnglishAndEmptyResultsWithoutInventingProperties() throws Exception {
-        assertTrue(PropertyRecommendationText.overview(result(List.of(group(1))), false).contains("properties to consider"));
+        assertTrue(PropertyRecommendationText.overview(result(List.of(group(1))), false).contains("matching properties"));
         assertNull(menu.create("kf", "user", "msg", 7L, "Find a room",
                 new ToolCallEventContext.Event(ToolCallEventContext.Phase.COMPLETED,
                         "search_room_offers", result(List.of()), filters())));
@@ -140,20 +142,13 @@ class WeComPropertyMenuTests {
     }
 
     @Test
-    void optionalReasonUsesOnlyTheClickedResidencesOwnFacilities() throws Exception {
+    void detailsDoNotQueryFacilitiesForRecommendationReasons() throws Exception {
         var reply = create();
         when(tools.searchRoomOffers(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(result(List.of(group(2))));
-        var other = new ResidenceDetailItem(99L, "source", "Other property", "London", null, "1", "Address", "Station",
-                null, null, null, null, null, null, null, List.of("Gym"), List.of(), null);
-        when(tools.getResidenceDetails("Property 2", 1)).thenReturn(new ResidenceDetailResult("Property 2", 1, List.of(other)));
-        assertFalse(menu.resolve("kf", "user", 7L, reply.items().get(1).id()).answer().contains("推荐理由"));
-        var own = new ResidenceDetailItem(2L, "source", "Property 2", "London", null, "1", "Address", "Station",
-                null, null, null, null, null, null, null, List.of("Gym", "Study Room"), List.of(), null);
-        when(tools.getResidenceDetails("Property 2", 1)).thenReturn(new ResidenceDetailResult("Property 2", 1, List.of(own)));
         String answer = menu.resolve("kf", "user", 7L, reply.items().get(1).id()).answer();
-        assertTrue(answer.contains("健身房配套"));
-        assertFalse(answer.contains("学习空间"));
+        assertFalse(answer.contains("推荐理由"));
+        verify(tools, never()).getResidenceDetails(anyString(), any());
     }
 
     @Test

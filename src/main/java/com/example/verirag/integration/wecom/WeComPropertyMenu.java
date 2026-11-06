@@ -80,7 +80,7 @@ public class WeComPropertyMenu {
         }
         redis.opsForValue().set(key(kf, user, token), mapper.writeValueAsString(snapshot), Duration.ofHours(48));
         redis.opsForValue().set(activeKey(kf, user), token, Duration.ofHours(48));
-        return new Recommendation(overview(result, zh, question, event.parameters()), zh ? "点击公寓查看房型、日期及库存：" : "Choose a property for details:",
+        return new Recommendation(overview(result, zh), menuHeading(result, zh),
                 List.copyOf(items));
     }
 
@@ -111,7 +111,7 @@ public class WeComPropertyMenu {
         String answer = group == null
                 ? name + (zh ? "\n这个公寓目前没有符合你需求的房型。要不要调整一下入住时间、租期或预算？" :
                 "\nThere are currently no rooms that fit your needs here. Would you like to adjust your move-in date, stay length or budget?")
-                : details(group, refreshed, zh, facilities(group));
+                : details(group, refreshed, zh);
         Detail detail = new Detail(session, (zh ? "查看 " : "View ") + name, answer + "\n\n" + notice(zh));
         // 让后续“这个还有其它房型吗”等自然语言追问能看到用户刚点击的对象。
         transactions.executeWithoutResult(status -> {
@@ -127,20 +127,6 @@ public class WeComPropertyMenu {
             sessions.touchUpdateTime(session);
         });
         return detail;
-    }
-
-    private List<String> facilities(ResidenceOfferGroup group) {
-        try {
-            var result = tools.getResidenceDetails(group.residenceName(), 1);
-            if (result == null) return List.of();
-            return result.residences().stream()
-                    .filter(r -> Objects.equals(r.residenceId(), group.residenceId()))
-                    .map(ResidenceDetailItem::facilities).filter(Objects::nonNull)
-                    .findFirst().orElse(List.of());
-        } catch (RuntimeException ex) {
-            // 配套资料仅用于可选推荐理由，缺失或查询失败不能阻断主要房型详情。
-            return List.of();
-        }
     }
 
 

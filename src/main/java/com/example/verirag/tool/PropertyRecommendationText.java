@@ -9,10 +9,6 @@ public final class PropertyRecommendationText {
     private PropertyRecommendationText() {}
 
     public static String overview(RoomOfferSearchResult result, boolean zh) {
-        return overview(result, zh, "", java.util.Map.of());
-    }
-
-    public static String overview(RoomOfferSearchResult result, boolean zh, String question, java.util.Map<String, Object> filters) {
         var groups = result.residences().stream().limit(4).toList();
         if (groups.isEmpty()) {
             StringBuilder empty = new StringBuilder(zh ? "目前暂时没有找到符合这些条件的公寓。" : "I haven't found any properties that fit these criteria.");
@@ -20,39 +16,30 @@ public final class PropertyRecommendationText {
             else empty.append(zh ? "\n\n要不要调整一下入住时间、预算或位置？" : "\n\nWould you like to adjust the dates, budget or location?");
             return empty.toString();
         }
-        StringBuilder out = new StringBuilder(zh ? "先帮你找到" + groups.size() + "个可参考的公寓：" :
-                "Here are " + groups.size() + " properties to consider:");
-        boolean nearby = result.nearbyPlaceKeyword() != null && !result.nearbyPlaceKeyword().isBlank();
-        boolean budgetFocus = Objects.toString(question, "").toLowerCase(java.util.Locale.ROOT)
-                .matches("(?s).*(便宜|最省|性价比|价格优先|预算优先|cheapest|cheaper|price first|budget first).*")
-                || (!nearby && filters != null && filters.get("maxWeeklyPrice") != null);
+        StringBuilder out = new StringBuilder(zh ? "找到" + groups.size() + "个匹配的公寓：" :
+                "Found " + groups.size() + " matching properties:");
         for (int i = 0; i < groups.size(); i++) {
             var group = groups.get(i);
             out.append("\n\n").append(i + 1).append(". ").append(group.residenceName());
             if (!group.rooms().isEmpty()) {
                 var room = group.rooms().getFirst();
                 out.append("\n").append(room.rootType()).append("｜").append(price(room, zh))
-                        .append("｜").append(status(room, zh));
-                if (!budgetFocus && nearby && !group.nearbyMatches().isEmpty()) {
-                    String travel = commute(group.nearbyMatches().getFirst(), zh);
-                    if (!travel.isBlank()) out.append("\n").append(travel);
-                } else if (!budgetFocus && !nearby && result.startDateFrom() != null) {
-                    String dates = dates(room, zh);
-                    if (!dates.isBlank()) out.append("\n").append(dates);
-                }
+                        .append("｜").append(status(room, zh, false));
             }
         }
-        out.append("\n\n").append(zh ? "想了解哪间？直接回复公寓名称就好，也可以补充找房条件～" :
-                "Tell me which property you'd like to see, or share any changes to your search.");
-        appendMissingCriteria(out, result, zh);
-        return out.append("\n").append(notice(zh)).toString();
+        return out.toString();
+    }
+
+    /** 补充条件的追问留在菜单里一次，不占用简短概览，也不在各公寓详情里重复。 */
+    public static String menuHeading(RoomOfferSearchResult result, boolean zh) {
+        StringBuilder heading = new StringBuilder();
+        appendMissingCriteria(heading, result, zh);
+        String choose = zh ? "点击公寓查看房型、日期及库存，也可以直接回复公寓名称：" :
+                "Choose a property for details, or reply with its name:";
+        return heading.isEmpty() ? choose : heading.toString().strip() + "\n" + choose;
     }
 
     public static String details(ResidenceOfferGroup group, RoomOfferSearchResult result, boolean zh) {
-        return details(group, result, zh, java.util.List.of());
-    }
-
-    public static String details(ResidenceOfferGroup group, RoomOfferSearchResult result, boolean zh, java.util.List<String> facilities) {
         StringBuilder out = new StringBuilder(group.residenceName());
         boolean commonDates = !group.rooms().isEmpty() && group.rooms().stream()
                 .map(room -> dates(room, zh)).distinct().count() == 1;
@@ -73,26 +60,8 @@ public final class PropertyRecommendationText {
             String travel = commute(group.nearbyMatches().getFirst(), zh);
             if (!travel.isBlank()) out.append("\n").append(travel);
         }
-        String reason = recommendationReason(group, facilities, zh);
-        if (!reason.isBlank()) out.append("\n\n").append(zh ? "推荐理由：" : "Why consider it: ").append(reason);
         // 只在本轮概览中追问；浏览不同公寓时不重复催问租期。
         return out.toString();
-    }
-
-    /** 推荐理由只补充未展示的配套信息，不复述通勤/日期，也不读取商业优先级。 */
-    private static String recommendationReason(ResidenceOfferGroup group, java.util.List<String> facilities, boolean zh) {
-        if (facilities == null || group.rooms().stream().noneMatch(room ->
-                "AVAILABLE".equals(room.inventoryStatus()) || "LIMITED".equals(room.inventoryStatus()))) return "";
-        for (String facility : facilities) {
-            String value = Objects.toString(facility, "").strip().toLowerCase(java.util.Locale.ROOT);
-            if (java.util.List.of("gym", "fitness room", "健身房").contains(value)) return zh
-                    ? "如果你平时有健身习惯，可以关注它的健身房配套。" : "If you enjoy working out, its on-site gym may be useful.";
-            if (java.util.List.of("study room", "study rooms", "study area", "自习室", "学习空间").contains(value)) return zh
-                    ? "配有学习空间，想在公寓内自习时可以考虑。" : "Its study space is an option for studying within the residence.";
-            if (java.util.List.of("laundry", "laundry room", "洗衣房", "洗衣设施").contains(value)) return zh
-                    ? "提供洗衣设施，日常可在公寓内安排洗衣。" : "On-site laundry facilities offer a place to do your washing.";
-        }
-        return "";
     }
 
     private static String dates(RoomMatch room, boolean zh) {
@@ -156,12 +125,16 @@ public final class PropertyRecommendationText {
     }
 
     private static String status(RoomMatch room, boolean zh) {
+        return status(room, zh, true);
+    }
+
+    private static String status(RoomMatch room, boolean zh, boolean detailed) {
         String state = Objects.toString(room.inventoryStatus(), "UNKNOWN");
         if ("SOLD_OUT".equals(state)) return zh ? "售罄" : "Sold out";
         if (!java.util.List.of("AVAILABLE", "LIMITED").contains(state)
                 || (room.remainingQuantity() != null && room.remainingQuantity() <= 0)) return zh ? "待确认" : "To confirm";
-        String quantity = room.remainingQuantity() == null ? "" : (zh ? "（剩余" : " (") + room.remainingQuantity() + (zh ? "间）" : " left)");
-        return ("LIMITED".equals(state) && room.remainingQuantity() != null
+        String quantity = !detailed || room.remainingQuantity() == null ? "" : (zh ? "（剩余" : " (") + room.remainingQuantity() + (zh ? "间）" : " left)");
+        return (detailed && "LIMITED".equals(state) && room.remainingQuantity() != null
                 ? (zh ? "库存紧张" : "Limited") : (zh ? "可预订" : "Available")) + quantity;
     }
 

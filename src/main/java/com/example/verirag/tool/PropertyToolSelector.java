@@ -26,6 +26,11 @@ public class PropertyToolSelector {
     }
 
     public ToolCallback[] callbacksFor(PropertyQueryIntent intent) {
+        return callbacksFor(intent, false);
+    }
+
+    /** 仅本次微信推荐请求使用独立包装，绝不修改共用工具的全局 metadata。 */
+    public ToolCallback[] callbacksFor(PropertyQueryIntent intent, boolean returnRecommendationDirectly) {
         if (intent == null || !intent.structured()) {
             return new ToolCallback[0];
         }
@@ -34,6 +39,31 @@ public class PropertyToolSelector {
             throw new IllegalStateException(
                     "Property Tool is not registered: " + intent.toolName());
         }
-        return new ToolCallback[]{callback};
+        if (!returnRecommendationDirectly || intent != PropertyQueryIntent.RECOMMEND) {
+            return new ToolCallback[]{callback};
+        }
+        return new ToolCallback[]{new ToolCallback() {
+            @Override
+            public org.springframework.ai.tool.definition.ToolDefinition getToolDefinition() {
+                return callback.getToolDefinition();
+            }
+
+            @Override
+            public org.springframework.ai.tool.metadata.ToolMetadata getToolMetadata() {
+                return org.springframework.ai.tool.metadata.ToolMetadata.builder().returnDirect(true).build();
+            }
+
+            @Override
+            public String call(String input) {
+                callback.call(input);
+                return "Property search completed.";
+            }
+
+            @Override
+            public String call(String input, org.springframework.ai.chat.model.ToolContext context) {
+                callback.call(input, context);
+                return "Property search completed.";
+            }
+        }};
     }
 }

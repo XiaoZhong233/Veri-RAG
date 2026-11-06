@@ -40,4 +40,17 @@ class ChatAcknowledgementTests {
         assertThat(ChatServiceImpl.acknowledgementAnswer("OK, thanks"))
                 .isEqualTo("Of course. Let me know whenever you need anything else.");
     }
+
+    @Test
+    void webCannotEnableWeComFastPathOrInjectStructuredSearchHistory() throws Exception {
+        var request = new com.fasterxml.jackson.databind.ObjectMapper().readValue(
+                "{\"question\":\"找房\",\"plainText\":true,\"weComKf\":true,\"propertySearchContext\":{\"maxWeeklyPrice\":1}}",
+                com.example.verirag.dto.ChatAskRequest.class);
+        assertThat(request.isWeComKf()).isFalse();
+        assertThat(request.getPropertySearchContext()).isNull();
+        assertThat(ChatServiceImpl.directWeComRecommendation(request, com.example.verirag.tool.PropertyQueryIntent.RECOMMEND)).isFalse();
+        request.setWeComKf(true);
+        assertThat(ChatServiceImpl.directWeComRecommendation(request, com.example.verirag.tool.PropertyQueryIntent.RECOMMEND)).isTrue();
+        assertThat(ChatServiceImpl.directWeComRecommendation(request, com.example.verirag.tool.PropertyQueryIntent.DETAIL)).isFalse();
+    }
 }

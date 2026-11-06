@@ -62,10 +62,59 @@ class WeComMenuFlowTests {
         doThrow(new IllegalStateException("menu rejected")).when(api).sendMenu(any(), any(), any(), any(), any());
         service.processMessage(mapper.readTree(message("找房", "")));
         verify(chat, times(1)).ask(any(), any());
-        verify(api, times(1)).sendText(any(), any(), any(), eq("简短概览"));
+        verify(api, times(1)).sendText(any(), any(), any(), any());
         verify(api, times(3)).sendMenu(any(), any(), any(), any(), any());
-        verify(api).sendText(any(), any(), any(), contains("菜单暂不可用"));
+        verify(api).sendText(any(), any(), any(), eq("简短概览"));
         verify(state).insertProcessed("msg", "kf", "user", "text");
+    }
+
+    @Test
+    void noMatchesSendsOnlyAnswerAndNoMenuUnavailableNotice() throws Exception {
+        var result = new ChatAskResult();
+        result.setSessionId(7L);
+        result.setAnswer("目前没有匹配房源，要不要调整一下预算？");
+        var empty = new com.example.verirag.tool.PropertyQueryTools.RoomOfferSearchResult(
+                "London", null, List.of(), "UCL", 25, null, null, 13, "REFERENCE", 0, 0, 0, List.of(), List.of());
+        result.setPropertyRecommendation(new com.example.verirag.tool.ToolCallEventContext.Event(
+                com.example.verirag.tool.ToolCallEventContext.Phase.COMPLETED, "search_room_offers", empty));
+        when(chat.ask(any(), any())).thenReturn(result);
+        service.processMessage(mapper.readTree(message("300镑以内，三个月", "")));
+        verify(api, times(1)).sendText(any(), any(), any(), any());
+        verify(api, times(1)).sendText(any(), any(), any(), eq(result.getAnswer()));
+        verify(api, never()).sendMenu(any(), any(), any(), any(), any());
+        verify(state).insertProcessed("msg", "kf", "user", "text");
+    }
+
+    @Test
+    void cacheFailureDoesNotSendTechnicalNoticeOrPromiseAMissingMenu() throws Exception {
+        var result = new ChatAskResult();
+        result.setSessionId(7L);
+        result.setAnswer("可参考的公寓：Great Court。回复公寓名称查看详情～");
+        when(chat.ask(any(), any())).thenReturn(result);
+        when(menu.create(any(), any(), any(), any(), any(), any())).thenThrow(new IllegalStateException("Redis unavailable"));
+        service.processMessage(mapper.readTree(message("找房", "")));
+        verify(api, times(1)).sendText(any(), any(), any(), any());
+        verify(api, times(1)).sendText(any(), any(), any(), eq(result.getAnswer()));
+        verify(api, never()).sendMenu(any(), any(), any(), any(), any());
+        verify(state).insertProcessed("msg", "kf", "user", "text");
+    }
+
+    @Test
+    void shortFollowUpCarriesStructuredConditionsAndInvalidatesOldMenu() throws Exception {
+        var conditions = java.util.Map.<String, Object>of("nearbyPlaceKeyword", "UCL",
+                "startDateFrom", "2026-12-01", "maxWeeklyPrice", 500);
+        when(menu.lastContext("kf", "user", 7L)).thenReturn(conditions);
+        var result = new ChatAskResult();
+        result.setSessionId(7L);
+        result.setAnswer("更新后的推荐");
+        when(chat.ask(any(), any())).thenReturn(result);
+        service.processMessage(mapper.readTree(message("半年", "")));
+        var captured = org.mockito.ArgumentCaptor.forClass(com.example.verirag.dto.ChatAskRequest.class);
+        verify(chat).ask(any(), captured.capture());
+        org.junit.jupiter.api.Assertions.assertTrue(captured.getValue().isWeComKf());
+        org.junit.jupiter.api.Assertions.assertEquals("半年", captured.getValue().getQuestion());
+        org.junit.jupiter.api.Assertions.assertEquals(conditions, captured.getValue().getPropertySearchContext());
+        verify(menu).invalidate("kf", "user");
     }
 
     @Test
@@ -81,7 +130,7 @@ class WeComMenuFlowTests {
     @Test
     void expiredMenuExplainsHowToRestartWithoutQueryingModel() throws Exception {
         service.processMessage(mapper.readTree(message("查看 Great Court", "property:token:0")));
-        verify(api).sendText(eq("kf"), eq("user"), anyString(), contains("推荐菜单已失效"));
+        verify(api).sendText(eq("kf"), eq("user"), anyString(), contains("之前的推荐"));
         verifyNoInteractions(chat);
     }
 

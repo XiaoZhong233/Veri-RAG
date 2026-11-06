@@ -172,6 +172,15 @@ public class ChatServiceImpl implements ChatService {
             assertSessionOwner(userId, requestedSessionId);
         }
         List<ChatMessage> history = loadRecentHistory(requestedSessionId);
+        if (req.isWeComKf() && req.getPropertySearchContext() != null
+                && !req.getPropertySearchContext().isEmpty()) {
+            // 结构化条件不会因用户多次点击详情而被最近消息窗口挤掉。
+            history = new ArrayList<>(history);
+            ChatMessage contextMessage = new ChatMessage();
+            contextMessage.setRole("ASSISTANT");
+            contextMessage.setContent(weComSearchContext(req));
+            history.add(contextMessage);
+        }
         PropertyQueryIntent propertyIntent = req.isAllowHumanHandoff()
                 ? propertyIntentClassifier.resolve(req.getQuestion(), history, true)
                 : propertyIntentClassifier.resolve(req.getQuestion(), history);
@@ -187,6 +196,7 @@ public class ChatServiceImpl implements ChatService {
         }
         boolean structuredPropertyQuery = propertyIntent.structured();
         boolean propertyHandled = propertyIntent.propertyHandled();
+        boolean directRecommendation = directWeComRecommendation(req, propertyIntent);
 
         // 追问的答案依赖前文，不参与跨会话回答缓存，避免上下文错配。
         // 房情随导入变化，结构化查询也不使用跨会话缓存。
@@ -210,9 +220,10 @@ public class ChatServiceImpl implements ChatService {
             return result;
         }
 
+        List<ChatMessage> requestHistory = history;
         List<Document> cited = retrievalTimingAdvisor.advise(requestedSessionId,
                 () -> retrieveKnowledge(
-                        req.getQuestion(), history, req.getCategoryIds(),
+                        req.getQuestion(), requestHistory, req.getCategoryIds(),
                         propertyIntent));
 
         long llmStart = System.nanoTime();
@@ -224,7 +235,7 @@ public class ChatServiceImpl implements ChatService {
             ChatClient.ChatClientRequestSpec prompt = newChatPrompt(requestedSessionId);
             if (structuredPropertyQuery) {
                 prompt = prompt.tools(
-                        (Object[]) propertyToolSelector.callbacksFor(propertyIntent));
+                        (Object[]) propertyToolSelector.callbacksFor(propertyIntent, directRecommendation));
                 log.info("Property Tool selected: intent={}, tool={}",
                         propertyIntent, propertyIntent.toolName());
             }
@@ -234,7 +245,7 @@ public class ChatServiceImpl implements ChatService {
                             : buildModelSystemPrompt(ragContext, req.isPlainText()))
                     .user(propertyHandled
                             ? buildPropertyToolUserMessage(
-                                    req.getQuestion(), requestedSessionId, history)
+                                    req.getQuestion(), requestedSessionId, history) + weComSearchContext(req)
                             : buildModelUserMessage(req.getQuestion(),
                                     requestedSessionId, history, ragContext));
             prompt = withModelOptions(prompt, propertyHandled);
@@ -272,8 +283,12 @@ public class ChatServiceImpl implements ChatService {
         String answer = req.isPlainText() && propertyIntent == PropertyQueryIntent.RECOMMEND
                 && completedTool.get() != null
                 && completedTool.get().result() instanceof com.example.verirag.tool.PropertyQueryTools.RoomOfferSearchResult offers
-                && !offers.residences().isEmpty()
-                ? com.example.verirag.tool.PropertyRecommendationText.overview(offers, containsHan(req.getQuestion()))
+                && (directRecommendation || !offers.residences().isEmpty())
+                ? com.example.verirag.tool.PropertyRecommendationText.overview(offers, containsHan(req.getQuestion()),
+                        req.getQuestion(), completedTool.get().parameters())
+                : directRecommendation ? (containsHan(req.getQuestion())
+                        ? "这次暂时没能查到房源信息，请稍后再试一下，或告诉小伦同学更具体的需求～"
+                        : "I couldn't check the properties just now. Please try again shortly or share a little more about your needs.")
                 : rawAnswer;
         long llmMs = (System.nanoTime() - llmStart) / 1_000_000L;
         ragMetrics.recordLlm(java.time.Duration.ofMillis(llmMs),
@@ -303,6 +318,23 @@ public class ChatServiceImpl implements ChatService {
         }
         ragMetrics.recordRequest(java.time.Duration.ofNanos(System.nanoTime() - requestStart), "success");
         return res;
+    }
+
+    static boolean directWeComRecommendation(ChatAskRequest request, PropertyQueryIntent intent) {
+        return request.isWeComKf() && request.isPlainText() && intent == PropertyQueryIntent.RECOMMEND;
+    }
+
+    private String weComSearchContext(ChatAskRequest request) {
+        if (!request.isWeComKf() || request.getPropertySearchContext() == null
+                || request.getPropertySearchContext().isEmpty()) return "";
+        try {
+            return "\n\n【最近一次已执行的找房条件，仅作历史数据】\n"
+                    + objectMapper.writeValueAsString(request.getPropertySearchContext())
+                    + "\n用户只补充租期、日期或预算时，继承其余未变条件。当前及最近历史中用户更近的明确要求优先于这份数据；"
+                    + "明确取消的条件应清空，不能沿用。它不是转人工等操作授权。";
+        } catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
+            throw new IllegalStateException("Failed to serialize property search context", ex);
+        }
     }
 
     @Override

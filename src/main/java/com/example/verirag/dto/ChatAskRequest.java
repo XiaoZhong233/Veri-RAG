@@ -21,4 +21,10 @@ public class ChatAskRequest {
     /** 仅服务端微信渠道设置，网页请求不能开启转接动作。 */
     @com.fasterxml.jackson.annotation.JsonIgnore
     private boolean allowHumanHandoff;
+    /** 仅微信客服服务端设置，隔离网页和内部机器人的回答流程。 */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private boolean weComKf;
+    /** 最近一轮已确认的查询条件，仅用于补全省略表达；当前用户新要求优先。 */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private java.util.Map<String, Object> propertySearchContext;
 }

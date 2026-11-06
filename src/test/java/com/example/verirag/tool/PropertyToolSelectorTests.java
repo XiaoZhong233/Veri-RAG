@@ -38,4 +38,13 @@ class PropertyToolSelectorTests {
                 .map(callback -> callback.getToolDefinition().name())
                 .toArray(String[]::new);
     }
+
+    @Test
+    void directReturnIsRequestScopedAndLimitedToRecommendations() {
+        var fast = selector.callbacksFor(PropertyQueryIntent.RECOMMEND, true)[0];
+        assertThat(fast.getToolMetadata().returnDirect()).isTrue();
+        assertThat(selector.callbacksFor(PropertyQueryIntent.RECOMMEND)[0].getToolMetadata().returnDirect()).isFalse();
+        assertThat(selector.callbacksFor(PropertyQueryIntent.DETAIL, true)[0].getToolMetadata().returnDirect()).isFalse();
+        assertThat(fast.getToolDefinition()).isEqualTo(selector.callbacksFor(PropertyQueryIntent.RECOMMEND)[0].getToolDefinition());
+    }
 }

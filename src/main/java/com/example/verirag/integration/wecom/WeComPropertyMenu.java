@@ -38,10 +38,23 @@ public class WeComPropertyMenu {
         return id != null && id.startsWith(PREFIX);
     }
 
+    /** 保留查询条件用于省略式追问，但新咨询开始后旧菜单不再可点击。 */
+    public java.util.Map<String, Object> lastContext(String kf, String user, Long session) throws Exception {
+        String json = redis.opsForValue().get(contextKey(kf, user));
+        if (json == null) return java.util.Map.of();
+        JsonNode snapshot = mapper.readTree(json);
+        if (!Objects.equals(session, snapshot.path("sessionId").asLong())) return java.util.Map.of();
+        return mapper.convertValue(snapshot.path("filters"), new com.fasterxml.jackson.core.type.TypeReference<>() {});
+    }
+
+    public void invalidate(String kf, String user) {
+        redis.delete(activeKey(kf, user));
+    }
+
     public Recommendation create(String kf, String user, String messageId, Long sessionId,
                                  String question, ToolCallEventContext.Event event) throws Exception {
-        if (event == null || !(event.result() instanceof RoomOfferSearchResult result)
-                || result.residences().isEmpty() || event.parameters().isEmpty()) {
+        if (sessionId == null || event == null || !(event.result() instanceof RoomOfferSearchResult result)
+                || event.parameters().isEmpty()) {
             return null;
         }
         boolean zh = question.codePoints().anyMatch(c -> Character.UnicodeScript.of(c) == Character.UnicodeScript.HAN);
@@ -51,6 +64,10 @@ public class WeComPropertyMenu {
         snapshot.put("sessionId", sessionId);
         snapshot.put("chinese", zh);
         snapshot.set("filters", mapper.valueToTree(event.parameters()));
+        // 即使新条件没有结果，也保留最新条件，并使上一轮的菜单失效。
+        redis.opsForValue().set(contextKey(kf, user), mapper.writeValueAsString(snapshot), Duration.ofHours(48));
+        invalidate(kf, user);
+        if (result.residences().isEmpty()) return null;
         var residences = snapshot.putArray("residences");
         var groups = result.residences().stream().limit(4).toList();
         var items = new java.util.ArrayList<WeComKfApiClient.MenuItem>();
@@ -62,13 +79,15 @@ public class WeComPropertyMenu {
                     WeComKfMessageService.truncateUtf8(label, 128)));
         }
         redis.opsForValue().set(key(kf, user, token), mapper.writeValueAsString(snapshot), Duration.ofHours(48));
-        return new Recommendation(overview(result, zh), zh ? "点击公寓查看房型、日期及库存：" : "Choose a property for details:",
+        redis.opsForValue().set(activeKey(kf, user), token, Duration.ofHours(48));
+        return new Recommendation(overview(result, zh, question, event.parameters()), zh ? "点击公寓查看房型、日期及库存：" : "Choose a property for details:",
                 List.copyOf(items));
     }
 
     public Detail resolve(String kf, String user, Long currentSession, String menuId) throws Exception {
         if (menuId == null || !menuId.matches("property:[a-f0-9]{24}:[0-3]")) return null;
         String[] parts = menuId.split(":");
+        if (!parts[1].equals(redis.opsForValue().get(activeKey(kf, user)))) return null;
         String json = redis.opsForValue().get(key(kf, user, parts[1]));
         if (json == null) return null;
         JsonNode snapshot = mapper.readTree(json);
@@ -92,7 +111,7 @@ public class WeComPropertyMenu {
         String answer = group == null
                 ? name + (zh ? "\n这个公寓目前没有符合你需求的房型。要不要调整一下入住时间、租期或预算？" :
                 "\nThere are currently no rooms that fit your needs here. Would you like to adjust your move-in date, stay length or budget?")
-                : details(group, refreshed, zh);
+                : details(group, refreshed, zh, facilities(group));
         Detail detail = new Detail(session, (zh ? "查看 " : "View ") + name, answer + "\n\n" + notice(zh));
         // 让后续“这个还有其它房型吗”等自然语言追问能看到用户刚点击的对象。
         transactions.executeWithoutResult(status -> {
@@ -110,10 +129,26 @@ public class WeComPropertyMenu {
         return detail;
     }
 
+    private List<String> facilities(ResidenceOfferGroup group) {
+        try {
+            var result = tools.getResidenceDetails(group.residenceName(), 1);
+            if (result == null) return List.of();
+            return result.residences().stream()
+                    .filter(r -> Objects.equals(r.residenceId(), group.residenceId()))
+                    .map(ResidenceDetailItem::facilities).filter(Objects::nonNull)
+                    .findFirst().orElse(List.of());
+        } catch (RuntimeException ex) {
+            // 配套资料仅用于可选推荐理由，缺失或查询失败不能阻断主要房型详情。
+            return List.of();
+        }
+    }
+
 
     private static String key(String kf, String user, String token) {
         return "wecom:kf:property-menu:" + kf + ":" + user + ":" + token;
     }
+    private static String activeKey(String kf, String user) { return "wecom:kf:property-menu:active:" + kf + ":" + user; }
+    private static String contextKey(String kf, String user) { return "wecom:kf:property-menu:context:" + kf + ":" + user; }
     private static String text(JsonNode node, String field) { return node.path(field).isTextual() ? node.path(field).asText() : null; }
     private static Integer integer(JsonNode node, String field) { return node.path(field).isIntegralNumber() ? node.path(field).asInt() : null; }
 }

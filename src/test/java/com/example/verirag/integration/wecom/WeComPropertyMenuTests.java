@@ -38,6 +38,7 @@ class WeComPropertyMenuTests {
         doAnswer(call -> { cache.put(call.getArgument(0), call.getArgument(1)); return null; })
                 .when(values).set(anyString(), anyString(), eq(Duration.ofHours(48)));
         when(values.get(anyString())).thenAnswer(call -> cache.get(call.getArgument(0)));
+        when(redis.delete(anyString())).thenAnswer(call -> cache.remove(call.getArgument(0)) != null);
         when(sessions.selectById(anyLong())).thenReturn(new com.example.verirag.entity.ChatSession());
         doAnswer(call -> {
             java.util.function.Consumer<org.springframework.transaction.TransactionStatus> action = call.getArgument(0);
@@ -73,7 +74,7 @@ class WeComPropertyMenuTests {
         assertTrue(detail.answer().contains("26周"));
         assertFalse(detail.answer().contains("重新核验"));
         assertFalse(detail.answer().contains("业务数据快照"));
-        assertTrue(detail.answer().contains("推荐理由：有可从2026-12-01入住、支持26周租期的房型"));
+        assertFalse(detail.answer().contains("推荐理由："));
         assertFalse(detail.answer().contains("优先级"));
         assertFalse(detail.answer().contains("销售排序"));
         verify(tools).searchRoomOffers(eq("London"), isNull(), eq("Property 2"), eq("UCL"), eq(25), eq("TUBE,WALK"),
@@ -130,11 +131,64 @@ class WeComPropertyMenuTests {
 
     @Test
     void handlesEnglishAndEmptyResultsWithoutInventingProperties() throws Exception {
-        assertTrue(PropertyRecommendationText.overview(result(List.of(group(1))), false).contains("matching properties"));
+        assertTrue(PropertyRecommendationText.overview(result(List.of(group(1))), false).contains("properties to consider"));
         assertNull(menu.create("kf", "user", "msg", 7L, "Find a room",
                 new ToolCallEventContext.Event(ToolCallEventContext.Phase.COMPLETED,
                         "search_room_offers", result(List.of()), filters())));
-        assertTrue(cache.isEmpty());
+        assertTrue(menu.lastContext("kf", "user", 7L).containsKey("stayWeeks"));
+        assertFalse(cache.keySet().stream().anyMatch(key -> key.contains(":active:")));
+    }
+
+    @Test
+    void optionalReasonUsesOnlyTheClickedResidencesOwnFacilities() throws Exception {
+        var reply = create();
+        when(tools.searchRoomOffers(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(result(List.of(group(2))));
+        var other = new ResidenceDetailItem(99L, "source", "Other property", "London", null, "1", "Address", "Station",
+                null, null, null, null, null, null, null, List.of("Gym"), List.of(), null);
+        when(tools.getResidenceDetails("Property 2", 1)).thenReturn(new ResidenceDetailResult("Property 2", 1, List.of(other)));
+        assertFalse(menu.resolve("kf", "user", 7L, reply.items().get(1).id()).answer().contains("推荐理由"));
+        var own = new ResidenceDetailItem(2L, "source", "Property 2", "London", null, "1", "Address", "Station",
+                null, null, null, null, null, null, null, List.of("Gym", "Study Room"), List.of(), null);
+        when(tools.getResidenceDetails("Property 2", 1)).thenReturn(new ResidenceDetailResult("Property 2", 1, List.of(own)));
+        String answer = menu.resolve("kf", "user", 7L, reply.items().get(1).id()).answer();
+        assertTrue(answer.contains("健身房配套"));
+        assertFalse(answer.contains("学习空间"));
+    }
+
+    @Test
+    void invalidatesOldMenuOnNewQuestionButKeepsConditionsForShortFollowUp() throws Exception {
+        String id = create().items().getFirst().id();
+        menu.invalidate("kf", "user");
+        assertNull(menu.resolve("kf", "user", 7L, id));
+        var context = menu.lastContext("kf", "user", 7L);
+        assertEquals("UCL", context.get("nearbyPlaceKeyword"));
+        assertEquals("2026-12-01", context.get("startDateFrom"));
+        assertEquals("TUBE,WALK", context.get("preferredTravelModes"));
+        assertTrue(menu.lastContext("kf", "user", 8L).isEmpty());
+        verifyNoInteractions(tools);
+    }
+
+    @Test
+    void latestQueryReplacesOldMenuEvenWhenNewBudgetHasNoResults() throws Exception {
+        String old = create().items().getFirst().id();
+        var changed = new java.util.HashMap<>(filters());
+        changed.put("maxWeeklyPrice", new BigDecimal("300"));
+        assertNull(menu.create("kf", "user", "new-budget", 7L, "预算改成300", new ToolCallEventContext.Event(
+                ToolCallEventContext.Phase.COMPLETED, "search_room_offers", result(List.of()), changed)));
+        assertNull(menu.resolve("kf", "user", 7L, old));
+        assertEquals(300, ((Number) menu.lastContext("kf", "user", 7L).get("maxWeeklyPrice")).intValue());
+        verifyNoInteractions(tools);
+    }
+
+    @Test
+    void newerSuccessfulRecommendationInvalidatesPreviousToken() throws Exception {
+        String old = create().items().getFirst().id();
+        var newer = menu.create("kf", "user", "new-query", 7L, "换个区域", new ToolCallEventContext.Event(
+                ToolCallEventContext.Phase.COMPLETED, "search_room_offers", result(List.of(group(2))), filters()));
+        assertNotEquals(old, newer.items().getFirst().id());
+        assertNull(menu.resolve("kf", "user", 7L, old));
+        verifyNoInteractions(tools);
     }
 
     private WeComPropertyMenu.Recommendation create() throws Exception {

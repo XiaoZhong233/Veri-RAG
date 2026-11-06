@@ -69,6 +69,31 @@ public class WeComKfApiClient {
         postWithAccessToken("/cgi-bin/kf/send_msg", body, true, true);
     }
 
+    /** 聊天气泡中的可点击回复菜单；不是输入框上方的常驻导航。 */
+    public void sendMenu(String openKfId, String externalUserId, String messageId,
+                         String heading, List<MenuItem> items) {
+        if (items == null || items.isEmpty() || items.size() > 4) {
+            throw new IllegalArgumentException("property menu requires 1–4 items");
+        }
+        ObjectNode body = objectMapper.createObjectNode();
+        body.put("touser", requireText(externalUserId, "external_userid"));
+        body.put("open_kfid", requireText(openKfId, "open_kfid"));
+        body.put("msgid", requireText(messageId, "msgid"));
+        body.put("msgtype", "msgmenu");
+        ObjectNode menu = body.putObject("msgmenu");
+        menu.put("head_content", requireText(heading, "menu heading"));
+        var list = menu.putArray("list");
+        for (MenuItem item : items) {
+            ObjectNode entry = list.addObject();
+            entry.put("type", "click");
+            entry.putObject("click").put("id", requireText(item.id(), "menu id"))
+                    .put("content", requireText(item.content(), "menu content"));
+        }
+        postWithAccessToken("/cgi-bin/kf/send_msg", body, true, true);
+    }
+
+    public record MenuItem(String id, String content) {}
+
     public int getServiceState(String openKfId, String externalUserId) {
         ObjectNode body = objectMapper.createObjectNode();
         body.put("open_kfid", requireText(openKfId, "open_kfid"));

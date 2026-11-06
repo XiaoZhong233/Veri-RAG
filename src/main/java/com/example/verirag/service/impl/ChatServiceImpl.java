@@ -84,12 +84,12 @@ public class ChatServiceImpl implements ChatService {
             不要输出 Markdown 标题、表格、加粗、链接语法、代码围栏或引用符号；
             即使前文要求使用 Markdown 表格，也以本条为准，改为数字序号和换行；
             每个房源单独编号，各字段采用“字段：内容”的形式，链接直接输出完整 URL。
-            面向微信客服时先给一句结论；默认最多展示 3 个房源，每个房源最多保留房型、
-            参考价格、入住时间、库存和通勤这 5 项。不要重复规则、不要复述完整用户问题。
+            面向微信客服时先给一句结论；默认最多展示 4 个不同公寓，每个只保留一个代表房型、
+            参考周价和关键限制，详细日期、库存及位置按需展开。不要重复规则、不要复述完整用户问题。
             """;
     /** 微信客服走短提示词：保留数据与安全边界，避免每次附带网页版的完整表格规则。 */
     private static final String WECHAT_PROPERTY_SYSTEM_PROMPT = """
-            你是亲切、专业的英国学生公寓微信客服。必须使用用户当前消息的主要语言回答。
+            你叫“小伦同学”，是亲切、专业的英国学生公寓微信客服。必须使用用户当前消息的主要语言回答。
 
             业务数据只能来自本次提供的 Tool；直接调用当前唯一可用 Tool，不要调用、讨论或猜测其它 Tool。
             可以展示 Tool 返回的参考周价与参考总价，但必须称为“参考价格”；它不是最终报价，
@@ -97,8 +97,10 @@ public class ChatServiceImpl implements ChatService {
             不得承诺锁房、锁价、确认预订或预订成功；需要时只说顾问将核验需求并说明后续流程。
             AVAILABLE/LIMITED 可称为可预订，SOLD_OUT 必须写售罄，UNKNOWN 只能写待确认。
 
-            输出纯文本，不使用 Markdown。先给一句结论；推荐时最多列 3 个不同公寓，每个公寓
-            使用“1. 公寓名”及不超过五行字段：房型、参考价格、入住时间、库存、通勤/位置。
+            输出纯文本，不使用 Markdown。先给一句结论；推荐时最多列 4 个不同公寓，
+            search_room_offers 的 limitResidences 必须传4；没有足够结果时不能凑数。
+            每个公寓使用“1. 公寓名”及一行代表房型、参考周价和库存状态，保留影响匹配的重要限制。
+            不要自行指定用户未要求的退房日期或租期；保持 Tool 返回顺序，遵守 warnings。
             没有结果时直接说明，并给出最多两个可调整条件。结尾仅在涉及价格或库存时说明：
             “参考价格及可订状态须由 Londonist 顾问最终确认。”
             """;
@@ -262,7 +264,13 @@ public class ChatServiceImpl implements ChatService {
                 throw ex;
             }
         }
-        String answer = rawAnswer;
+        // 微信首轮只展示概览，使用工具原始结果生成，并把同一份内容写入历史。
+        String answer = req.isPlainText() && propertyIntent == PropertyQueryIntent.RECOMMEND
+                && completedTool.get() != null
+                && completedTool.get().result() instanceof com.example.verirag.tool.PropertyQueryTools.RoomOfferSearchResult offers
+                && !offers.residences().isEmpty()
+                ? com.example.verirag.tool.PropertyRecommendationText.overview(offers, containsHan(req.getQuestion()))
+                : rawAnswer;
         long llmMs = (System.nanoTime() - llmStart) / 1_000_000L;
         ragMetrics.recordLlm(java.time.Duration.ofMillis(llmMs),
                 fallbackUsed ? "sync_tool_fallback" : "sync", "success");
@@ -284,6 +292,11 @@ public class ChatServiceImpl implements ChatService {
         res.setSessionId(sessionId);
         res.setAnswer(answer);
         res.setReferences(refs);
+        if (req.isPlainText() && propertyIntent == PropertyQueryIntent.RECOMMEND
+                && completedTool.get() != null
+                && "search_room_offers".equals(completedTool.get().toolName())) {
+            res.setPropertyRecommendation(completedTool.get());
+        }
         ragMetrics.recordRequest(java.time.Duration.ofNanos(System.nanoTime() - requestStart), "success");
         return res;
     }

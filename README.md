@@ -193,6 +193,8 @@ URL 校验通过并取得微信客服 Secret 后，再设置 `WECOM_KF_SECRET` �
 
 微信客服回答超过 `WECOM_KF_PROGRESS_DELAY` 时，会先发送一条独立的检索提示。最终回答使用纯文本渠道提示词，并在发送前将模型偶尔返回的 Markdown 表格、标题、链接等转换为微信中易读的编号列表；网页版仍保留 Markdown 和流式展示。
 
+微信房源推荐首轮最多展示4个不同公寓，每个仅保留代表房型、参考周价和库存状态，再发送可点击的公寓菜单。菜单绑定客服账号、客户和本轮查询条件，保存在 Redis 中48小时；点击后沿用原日期、租期、预算、房型和交通条件重新核验，仅展开所选公寓。菜单点击不会与连续文字消息合并，也不会在人工接待期间抢答；过期菜单提示重新查询。详情写入本地会话历史，支持后续自然语言追问。菜单发送失败时保留已发送概览，并提示回复公寓名称继续咨询。
+
 ### 2. 构建并启动
 
 ```bash
@@ -328,7 +330,7 @@ export SPRING_DATA_REDIS_PASSWORD="veri_rag_dev"
 | `WECOM_KF_API_BASE_URL` | `https://qyapi.weixin.qq.com` | 企业微信 API 地址，测试时可覆盖 |
 | `WECOM_KF_SYNC_LIMIT` | `1000` | 单次 `sync_msg` 拉取上限 |
 | `WECOM_KF_PROGRESS_DELAY` | `1500ms` | 回答超过该时长后发送“正在检索”提示 |
-| `WECOM_KF_PROGRESS_MESSAGE` | `正在检索资料，请稍候…` | 微信客服等待提示；留空可关闭 |
+| `WECOM_KF_PROGRESS_MESSAGE` | `auto` | 按用户语言选择多种“小伦同学”轻松等待文案（带少量 emoji）；同一消息重试时保持一致。自定义文本固定发送，留空关闭；兼容原默认文案自动升级 |
 
 Embedding 服务单次最多接受 20 条文本，因此 `RAG_EMBEDDING_BATCH_SIZE` 不应配置为大于 20。房源、报价和库存查询已经由数据库 Tool 处理，不需要通过提高 RAG `top-k` 解决召回问题。
 

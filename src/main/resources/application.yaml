@@ -77,7 +77,7 @@ wecom:
     progress-delay: ${WECOM_KF_PROGRESS_DELAY:1500ms}
     # 同一客户连续发送的碎片化文字在该窗口内合并为一次问答，避免多次重复调用模型。
     message-merge-window: ${WECOM_KF_MESSAGE_MERGE_WINDOW:900ms}
-    progress-message: ${WECOM_KF_PROGRESS_MESSAGE:正在检索资料，请稍候…}
+    progress-message: ${WECOM_KF_PROGRESS_MESSAGE:auto}
     # API 管理模式下，enter_session 事件会携带 welcome_code，由应用负责发送欢迎语。
     welcome-message: "${WECOM_KF_WELCOME_MESSAGE:Hello💓 This is Londonist DMC Team! 为了更快为您匹配房源，麻烦告知下您的租期、意向位置、预算，我这边马上为您筛选合适的公寓。}"
     unsupported-message: ${WECOM_KF_UNSUPPORTED_MESSAGE:您好，目前智能客服仅支持文字消息，请用文字描述您的问题。}

@@ -49,6 +49,7 @@ public class WeComKfMessageService {
     private final WeComKfMetrics metrics;
     private final ObjectMapper objectMapper;
     private final WeComCustomerService customers;
+    private final WeComPropertyMenu propertyMenu;
     private final ConcurrentHashMap<String, Object> accountLocks = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, CompletableFuture<Void>> customerQueues =
             new ConcurrentHashMap<>();
@@ -66,7 +67,7 @@ public class WeComKfMessageService {
             @Qualifier("wecomKfProgressScheduler") TaskScheduler progressScheduler,
             @Qualifier("wecomKfExecutor") TaskExecutor messageExecutor,
             WeComKfMetrics metrics,
-            ObjectMapper objectMapper, WeComCustomerService customers) {
+            ObjectMapper objectMapper, WeComCustomerService customers, WeComPropertyMenu propertyMenu) {
         this.properties = properties;
         this.apiClient = apiClient;
         this.stateMapper = stateMapper;
@@ -78,6 +79,7 @@ public class WeComKfMessageService {
         this.metrics = metrics;
         this.objectMapper = objectMapper;
         this.customers = customers;
+        this.propertyMenu = propertyMenu;
     }
 
     @PostConstruct
@@ -195,6 +197,8 @@ public class WeComKfMessageService {
     private boolean isMergeableCustomerText(JsonNode message) {
         return message.path("origin").asInt(0) == 3
                 && "text".equals(message.path("msgtype").asText(""))
+                // 菜单点击必须单独处理，不能合并掉 menu_id 或串入另一条找房条件。
+                && !StringUtils.hasText(message.path("text").path("menu_id").asText(""))
                 && StringUtils.hasText(message.path("open_kfid").asText(""))
                 && StringUtils.hasText(message.path("external_userid").asText(""));
     }
@@ -402,6 +406,12 @@ public class WeComKfMessageService {
             return;
         }
         ensureAssistantState(openKfId, externalUserId, serviceState);
+        String menuId = message.path("text").path("menu_id").asText("");
+        if (propertyMenu.isMenu(menuId)) {
+            answerMenuClick(messageId, openKfId, externalUserId, menuId);
+            markProcessed(messageId, openKfId, externalUserId, messageType);
+            return;
+        }
         answerQuestion(messageId, openKfId, externalUserId, question);
         markProcessed(messageId, openKfId, externalUserId, messageType);
     }
@@ -551,7 +561,7 @@ public class WeComKfMessageService {
         request.setSessionId(conversationMapper.selectSessionId(
                 channelId, externalUserId, properties.getUserId()));
         ProgressNotice progressNotice = new ProgressNotice(
-                openKfId, externalUserId, messageId);
+                openKfId, externalUserId, messageId, question);
         progressNotice.start();
         ChatAskResult result;
         try {
@@ -575,10 +585,73 @@ public class WeComKfMessageService {
                     apiClient.getServiceState(openKfId, externalUserId));
             return;
         }
-        sendSystemTexts(openKfId, externalUserId, messageId, "final",
-                WeComPlainTextFormatter.format(result.getAnswer()));
+        WeComPropertyMenu.Recommendation recommendation = null;
+        try {
+            recommendation = propertyMenu.create(openKfId, externalUserId, messageId,
+                    result.getSessionId(), question, result.getPropertyRecommendation());
+        } catch (Exception ex) {
+            log.warn("event=wecom.kf.property_menu_create_failed error={}", rootMessage(ex));
+        }
+        if (recommendation == null) {
+            sendSystemTexts(openKfId, externalUserId, messageId, "final",
+                    WeComPlainTextFormatter.format(result.getAnswer()));
+            if (result.getPropertyRecommendation() != null) {
+                sendMenuFallback(openKfId, externalUserId, messageId);
+            }
+        } else {
+            sendSystemTexts(openKfId, externalUserId, messageId, "final", recommendation.overview());
+            sendPropertyMenu(openKfId, externalUserId, messageId, recommendation);
+        }
         log.info("event=wecom.kf.answer_sent openKfId={} externalUserId={} sessionId={}",
                 openKfId, externalUserId, result.getSessionId());
+    }
+
+    private void answerMenuClick(String messageId, String kf, String user, String menuId) {
+        WeComPropertyMenu.Detail detail;
+        try {
+            detail = propertyMenu.resolve(kf, user, conversationMapper.selectSessionId(
+                    "kf:" + kf, user, properties.getUserId()), menuId);
+        } catch (Exception ex) {
+            log.warn("event=wecom.kf.property_menu_lookup_failed error={}", rootMessage(ex));
+            sendSystemText(kf, user, messageId, "final", "暂时无法核验房源，请稍后再点一次菜单。 Please try again shortly.");
+            return;
+        }
+        if (detail == null) {
+            // 过期或跨客户的菜单不能使用文字标签猜测对象，也不能落回模型扩大查询。
+            sendSystemText(kf, user, messageId, "final",
+                    "此推荐菜单已失效，请重新发送找房条件。 This menu has expired; please send your search criteria again.");
+            return;
+        }
+        sendSystemTexts(kf, user, messageId, "final", detail.answer());
+    }
+
+    private void sendPropertyMenu(String kf, String user, String inboundId,
+                                  WeComPropertyMenu.Recommendation recommendation) {
+        String id = replyMessageId(inboundId, "property-menu");
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            try {
+                apiClient.sendMenu(kf, user, id, recommendation.heading(), recommendation.items());
+                String archived = recommendation.heading() + "\n" + recommendation.items().stream()
+                        .map(WeComKfApiClient.MenuItem::content).collect(java.util.stream.Collectors.joining("\n"));
+                archiveSent(kf, user, id, "BOT", archived);
+                return;
+            } catch (RuntimeException ex) {
+                if (attempt == 3) {
+                    // 概览已经发送；菜单失败时仅补充文字入口，不能重跑模型或重复发送概览。
+                    log.warn("event=wecom.kf.property_menu_send_failed error={}", rootMessage(ex));
+                    sendMenuFallback(kf, user, inboundId);
+                }
+            }
+        }
+    }
+
+    private void sendMenuFallback(String kf, String user, String inboundId) {
+        try {
+            sendSystemText(kf, user, inboundId, "menu-fallback",
+                    "菜单暂不可用，可以回复公寓名称查看详情。 Menu unavailable; reply with a property name for details.");
+        } catch (RuntimeException ex) {
+            log.warn("event=wecom.kf.property_menu_fallback_failed error={}", rootMessage(ex));
+        }
     }
 
     private void sendSystemText(
@@ -645,18 +718,20 @@ public class WeComKfMessageService {
         private final String openKfId;
         private final String externalUserId;
         private final String inboundMessageId;
+        private final String content;
         private boolean finished;
         private ScheduledFuture<?> future;
 
         private ProgressNotice(
-                String openKfId, String externalUserId, String inboundMessageId) {
+                String openKfId, String externalUserId, String inboundMessageId, String question) {
             this.openKfId = openKfId;
             this.externalUserId = externalUserId;
             this.inboundMessageId = inboundMessageId;
+            this.content = WeComWaitingMessages.select(properties.getProgressMessage(), question, inboundMessageId);
         }
 
         private void start() {
-            if (!StringUtils.hasText(properties.getProgressMessage())) {
+            if (!StringUtils.hasText(content)) {
                 return;
             }
             Duration delay = properties.getProgressDelay();
@@ -670,7 +745,7 @@ public class WeComKfMessageService {
                     }
                     try {
                         sendSystemText(openKfId, externalUserId, inboundMessageId,
-                                "progress", properties.getProgressMessage());
+                                "progress", content);
                     } catch (Exception ex) {
                         log.warn("event=wecom.kf.progress_failed openKfId={} "
                                         + "externalUserId={} error={}",

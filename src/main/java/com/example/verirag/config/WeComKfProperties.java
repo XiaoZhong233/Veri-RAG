@@ -26,7 +26,8 @@ public class WeComKfProperties {
     private int syncLimit = 1000;
     private Duration progressDelay = Duration.ofMillis(1500);
     private Duration messageMergeWindow = Duration.ofMillis(900);
-    private String progressMessage = "正在检索资料，请稍候…";
+    /** auto 按用户语言选择小伦同学的等待文案；自定义文本固定发送；空白关闭。 */
+    private String progressMessage = "auto";
     private String welcomeMessage = "您好！为了更快为您匹配房源，请告知租期、意向位置和预算。";
     private String unsupportedMessage = "您好，目前智能客服仅支持文字消息，请用文字描述您的问题。";
     private String errorMessage = "抱歉，智能客服暂时无法处理您的问题，请稍后再试或联系人工客服。";

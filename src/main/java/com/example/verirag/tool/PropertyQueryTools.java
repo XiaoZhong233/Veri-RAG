@@ -142,7 +142,31 @@ public class PropertyQueryTools {
                         "matchedResidenceCount", result.matchedResidenceCount(),
                         "availableResidenceCount", result.availableResidenceCount(),
                         "soldOutResidenceCount", result.soldOutResidenceCount(),
-                        "warningCount", result.warnings().size()));
+                        "warningCount", result.warnings().size()),
+                searchParameters(city, residenceKeyword, residenceNames, nearbyPlaceKeyword,
+                        normalizedMaxTravelMinutes, preferredTravelModes, startDateFrom, startDateTo,
+                        normalizedStayWeeks, rootTypes, normalizedMaxWeeklyPrice, includeSoldOut));
+    }
+
+    /** 保留原始硬条件供微信菜单再次核验，不能从模型回答中反向推测条件。 */
+    private static Map<String, Object> searchParameters(
+            String city, String keyword, String names, String nearby, Integer minutes,
+            String modes, String from, String to, Integer weeks, String types,
+            BigDecimal budget, Boolean soldOut) {
+        Map<String, Object> values = new java.util.LinkedHashMap<>();
+        values.put("city", city);
+        values.put("residenceKeyword", keyword);
+        values.put("residenceNames", names);
+        values.put("nearbyPlaceKeyword", nearby);
+        values.put("maxTravelMinutes", minutes);
+        values.put("preferredTravelModes", modes);
+        values.put("startDateFrom", from);
+        values.put("startDateTo", to);
+        values.put("stayWeeks", weeks);
+        values.put("rootTypes", types);
+        values.put("maxWeeklyPrice", budget);
+        values.put("includeSoldOut", soldOut);
+        return java.util.Collections.unmodifiableMap(values);
     }
 
     private RoomOfferSearchResult searchRoomOffersInternal(
@@ -227,6 +251,7 @@ public class PropertyQueryTools {
         LocalDate finalStartTo = startTo;
 
         List<MatchedRoom> matches = inventories.stream()
+                .filter(item -> residenceById.containsKey(item.getResidenceId()))
                 .filter(item -> requestedRootTypes.isEmpty()
                         || requestedRootTypes.contains(normalize(item.getRootType())))
                 .filter(item -> withSoldOut || !"SOLD_OUT".equals(item.getInventoryStatus()))
@@ -511,6 +536,11 @@ public class PropertyQueryTools {
 
     private <T> T executeTool(String name, String arguments, Supplier<T> action,
                               Function<T, String> resultSummary) {
+        return executeTool(name, arguments, action, resultSummary, Map.of());
+    }
+
+    private <T> T executeTool(String name, String arguments, Supplier<T> action,
+                              Function<T, String> resultSummary, Map<String, Object> parameters) {
         long start = System.nanoTime();
         log.info("event=ai.tool.started name={} arguments={}", name, arguments);
         ToolCallEventContext.started(name);
@@ -518,7 +548,7 @@ public class PropertyQueryTools {
             T result = action.get();
             log.info("event=ai.tool.completed name={} durationMs={} result={}",
                     name, elapsedMillis(start), resultSummary.apply(result));
-            ToolCallEventContext.completed(name, result);
+            ToolCallEventContext.completed(name, result, parameters);
             return result;
         }
         catch (RuntimeException exception) {

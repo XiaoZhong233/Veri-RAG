@@ -41,6 +41,10 @@ public final class ToolCallEventContext {
         publish(new Event(Phase.COMPLETED, toolName, result));
     }
 
+    static void completed(String toolName, Object result, java.util.Map<String, Object> parameters) {
+        publish(new Event(Phase.COMPLETED, toolName, result, parameters));
+    }
+
     static void failed(String toolName) {
         publish(new Event(Phase.FAILED, toolName, null));
     }
@@ -58,6 +62,10 @@ public final class ToolCallEventContext {
         FAILED
     }
 
-    public record Event(Phase phase, String toolName, Object result) {
+    public record Event(Phase phase, String toolName, Object result,
+                        java.util.Map<String, Object> parameters) {
+        public Event(Phase phase, String toolName, Object result) {
+            this(phase, toolName, result, java.util.Map.of());
+        }
     }
 }
